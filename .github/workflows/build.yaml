@@ -1,0 +1,71 @@
+name: build helyim
+
+on:
+  pull_request:
+  push:
+    branches:
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo
+      - name: Install DPDK/SPDK
+        uses: yoursunny/setup-dpdk@main # you may use commit SHA instead of 'main' to ensure stability
+        with:
+          dpdk-version: v23.07        # required
+#          dpdk-patches: '12345,67890' # optional, patch series numbers on https://patches.dpdk.org/project/dpdk/list/
+          spdk-version: v23.05        # optional, default is not installing SPDK
+          target-arch: haswell        # optional
+          setup-hugepages: 4096       # optional, default is 4096MB, 0 to disable
+        env:
+          CC: clang # optional; compiler must be installed
+      - name: Check code format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo
+      - name: Install DPDK/SPDK
+        uses: yoursunny/setup-dpdk@main # you may use commit SHA instead of 'main' to ensure stability
+        with:
+          dpdk-version: v23.07        # required
+          #          dpdk-patches: '12345,67890' # optional, patch series numbers on https://patches.dpdk.org/project/dpdk/list/
+          spdk-version: v23.05        # optional, default is not installing SPDK
+          target-arch: haswell        # optional
+          setup-hugepages: 4096       # optional, default is 4096MB, 0 to disable
+        env:
+          CC: clang # optional; compiler must be installed
+      - uses: taiki-e/install-action@nextest
+      - name: Test
+        run: cargo nextest run --no-fail-fast --all-features
+
