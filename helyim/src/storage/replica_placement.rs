@@ -4,6 +4,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{Error, Result};
 
+/// The meaning of replication type
+///
+/// ```txt
+/// 000 no replication, just one copy
+/// 001 replicate once on the same rack
+/// 010 replicate once on a different rack in the same data center
+/// 100 replicate once on a different data center
+/// 200 replicate twice on two other different data center
+/// 110 replicate once on a different rack, and once on a different data center
+/// ```
+///
+/// So if the replication type is xyz
+///
+/// ```txt
+/// x number of replica in other data centers
+/// y number of replica in other racks in the same data center
+/// z number of replica in other servers in the same rack
+/// ```
+///
+/// x,y,z each can be 0, 1, or 2. So there are 9 possible replication types,
+/// and can be easily extended. Each replication type will physically create x+y+z+1 copies
+/// of volume data files.
 #[derive(Serialize, Deserialize, Debug, Default, Copy, Clone)]
 pub struct ReplicaPlacement {
     pub same_rack_count: u8,
