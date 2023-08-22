@@ -190,8 +190,11 @@ impl Helyim for GrpcServer {
                     Ok(heartbeat) => {
                         info!("received {:?}", heartbeat);
 
-                        let mut topology = topology.lock().await;
-                        topology.sequence.set_max(heartbeat.max_file_key);
+                        topology
+                            .lock()
+                            .await
+                            .sequence
+                            .set_max(heartbeat.max_file_key);
                         let mut ip = heartbeat.ip.clone();
                         if heartbeat.ip.is_empty() {
                             ip = addr.ip().to_string();
@@ -200,7 +203,10 @@ impl Helyim for GrpcServer {
                         let data_center = get_or_default(heartbeat.data_center);
                         let rack = get_or_default(heartbeat.rack);
 
-                        let data_center = topology.get_or_create_data_center(&data_center);
+                        let data_center = topology
+                            .lock()
+                            .await
+                            .get_or_create_data_center(&data_center);
                         let rack = data_center.lock().await.get_or_create_rack(&rack);
                         rack.lock().await.data_center = Arc::downgrade(&data_center);
 
@@ -225,11 +231,17 @@ impl Helyim for GrpcServer {
                         let deleted_volumes = node.lock().await.update_volumes(infos.clone()).await;
 
                         for v in infos {
-                            topology.register_volume_layout(v, node.clone()).await;
+                            topology
+                                .lock()
+                                .await
+                                .register_volume_layout(v, node.clone())
+                                .await;
                         }
 
                         for v in deleted_volumes.iter() {
                             topology
+                                .lock()
+                                .await
                                 .unregister_volume_layout(v.clone(), node.clone())
                                 .await;
                         }

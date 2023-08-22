@@ -79,7 +79,7 @@ pub async fn assign_handler(
 
     let mut topology = ctx.topology.lock().await;
     if !topology.has_writable_volume(&option).await {
-        if topology.free_volumes().await <= 0 {
+        if topology.free_volumes().await? <= 0 {
             return Err(Error::NoFreeSpace("no free volumes".to_string()));
         }
         let volume_grow = ctx.volume_grow.lock().await;
@@ -100,12 +100,12 @@ pub async fn assign_handler(
 #[derive(Debug, Deserialize)]
 pub struct LookupRequest {
     volume_id: String,
-    collection: String,
+    collection: Option<String>,
 }
 
 pub async fn lookup_handler(
     State(ctx): State<DirectoryContext>,
-    Json(request): Json<LookupRequest>,
+    Query(request): Query<LookupRequest>,
 ) -> Result<Json<Lookup>> {
     if request.volume_id.is_empty() {
         return Err(Error::String("volume_id can't be empty".to_string()));
@@ -114,9 +114,14 @@ pub async fn lookup_handler(
     if let Some(idx) = volume_id.rfind(',') {
         volume_id = volume_id[..idx].to_string();
     }
-    let mut topology = ctx.topology.lock().await;
     let mut locations = vec![];
-    match topology.lookup(request.collection, volume_id.parse::<u32>()?) {
+    let collection = request.collection.unwrap_or_default();
+    match ctx
+        .topology
+        .lock()
+        .await
+        .lookup(collection, volume_id.parse::<u32>()?)
+    {
         Some(nodes) => {
             for dn in nodes.iter() {
                 let dn = dn.lock().await;

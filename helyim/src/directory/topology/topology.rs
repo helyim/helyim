@@ -1,15 +1,22 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures::lock::Mutex;
+use futures::{
+    channel::{
+        mpsc::{unbounded, UnboundedSender},
+        oneshot,
+    },
+    lock::Mutex,
+};
 use rand;
 use serde::Serialize;
 
 use crate::{
     directory::topology::{
-        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout,
-        DataCenter, DataNode,
+        collection::Collection, data_center::DataCenterEvent, data_center_loop,
+        volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataCenter, DataNode,
     },
     errors::Result,
+    rt_spawn,
     sequence::{MemorySequencer, Sequencer},
     storage::{FileId, ReplicaPlacement, Ttl, VolumeId, VolumeInfo},
 };
@@ -23,6 +30,8 @@ pub struct Topology {
     pub volume_size_limit: u64,
     #[serde(skip)]
     pub data_centers: HashMap<String, Arc<Mutex<DataCenter>>>,
+    #[serde(skip)]
+    pub data_centers_tx: HashMap<String, UnboundedSender<DataCenterEvent>>,
 }
 
 unsafe impl Send for Topology {}
@@ -35,13 +44,26 @@ impl Topology {
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
+            data_centers_tx: HashMap::new(),
         }
     }
 
+    #[deprecated]
     pub fn get_or_create_data_center(&mut self, name: &str) -> Arc<Mutex<DataCenter>> {
         self.data_centers
             .entry(name.to_string())
             .or_insert(Arc::new(Mutex::new(DataCenter::new(name))))
+            .clone()
+    }
+
+    pub fn get_or_create_data_center_tx(&mut self, name: &str) -> UnboundedSender<DataCenterEvent> {
+        self.data_centers_tx
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                let (tx, rx) = unbounded();
+                rt_spawn(data_center_loop(DataCenter::new(name), rx));
+                tx
+            })
             .clone()
     }
 
@@ -85,13 +107,18 @@ impl Topology {
         vl.active_volume_count(option).await > 0
     }
 
-    pub async fn free_volumes(&self) -> i64 {
+    pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for dc in self.data_centers.values() {
-            let dc = dc.lock().await;
-            free += dc.max_volumes().await - dc.has_volumes().await;
+        for dc_tx in self.data_centers_tx.values() {
+            let (tx, max_volumes_rx) = oneshot::channel();
+            dc_tx.unbounded_send(DataCenterEvent::MaxVolumes(tx))?;
+
+            let (tx, has_volumes_rx) = oneshot::channel();
+            dc_tx.unbounded_send(DataCenterEvent::HasVolumes(tx))?;
+
+            free += max_volumes_rx.await?? - has_volumes_rx.await??;
         }
-        free
+        Ok(free)
     }
 
     pub async fn pick_for_write(
@@ -126,21 +153,23 @@ impl Topology {
             .unregister_volume(&vi, dn);
     }
 
-    pub async fn get_max_volume_id(&self) -> VolumeId {
-        let mut vid: VolumeId = 0;
-        for (_, dc) in self.data_centers.iter() {
-            let other = dc.lock().await.max_volume_id;
+    pub async fn get_max_volume_id(&self) -> Result<VolumeId> {
+        let mut vid = 0;
+        for (_, dc_tx) in self.data_centers_tx.iter() {
+            let (tx, rx) = oneshot::channel();
+            dc_tx.unbounded_send(DataCenterEvent::MaxVolumeId(tx))?;
+            let other = rx.await?;
             if other > vid {
                 vid = other;
             }
         }
 
-        vid
+        Ok(vid)
     }
 
-    pub async fn next_volume_id(&mut self) -> VolumeId {
-        let vid = self.get_max_volume_id().await;
+    pub async fn next_volume_id(&mut self) -> Result<VolumeId> {
+        let vid = self.get_max_volume_id().await?;
 
-        vid + 1
+        Ok(vid + 1)
     }
 }

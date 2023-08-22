@@ -248,7 +248,7 @@ impl VolumeGrowth {
     ) -> Result<usize> {
         let nodes = self.find_empty_slots(option, topology).await?;
         let len = nodes.len();
-        let vid = topology.next_volume_id().await;
+        let vid = topology.next_volume_id().await?;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
