@@ -121,6 +121,7 @@ impl Topology {
         Ok(free)
     }
 
+    #[deprecated]
     pub async fn pick_for_write(
         &mut self,
         count: u64,

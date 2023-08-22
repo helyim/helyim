@@ -15,7 +15,10 @@ use rand::random;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{data_node_loop, DataCenter, DataCenterEvent, DataNode, DataNodeEvent},
+    directory::topology::{
+        data_center::DataCenterEventTx, data_node_loop, DataCenter, DataCenterEvent, DataNode,
+        DataNodeEvent, DataNodeEventTx,
+    },
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
@@ -27,12 +30,12 @@ pub struct Rack {
     #[serde(skip)]
     pub nodes: HashMap<String, Arc<Mutex<DataNode>>>,
     #[serde(skip)]
-    pub nodes_tx: HashMap<String, UnboundedSender<DataNodeEvent>>,
+    pub nodes_tx: HashMap<String, DataNodeEventTx>,
     pub max_volume_id: VolumeId,
     #[serde(skip)]
     pub data_center: Weak<Mutex<DataCenter>>,
     #[serde(skip)]
-    pub data_center_tx: Option<UnboundedSender<DataCenterEvent>>,
+    pub data_center_tx: Option<DataCenterEventTx>,
 }
 
 impl Rack {
@@ -86,14 +89,14 @@ impl Rack {
         port: i64,
         public_url: &str,
         max_volumes: i64,
-    ) -> UnboundedSender<DataNodeEvent> {
+    ) -> DataNodeEventTx {
         self.nodes_tx
             .entry(String::from(id))
             .or_insert_with(|| {
                 let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
                 let (tx, rx) = unbounded();
                 rt_spawn(data_node_loop(data_node, rx));
-                tx
+                DataNodeEventTx::new(tx)
             })
             .clone()
     }
@@ -117,9 +120,7 @@ impl Rack {
     pub async fn has_volumes_tx(&self) -> Result<i64> {
         let mut count = 0;
         for dn_tx in self.nodes_tx.values() {
-            let (tx, rx) = oneshot::channel();
-            let _ = dn_tx.unbounded_send(DataNodeEvent::HasVolumes(tx));
-            count += rx.await?;
+            count += dn_tx.has_volumes().await?;
         }
         Ok(count)
     }
@@ -136,9 +137,7 @@ impl Rack {
     pub async fn max_volumes_tx(&self) -> Result<i64> {
         let mut max_volumes = 0;
         for dn_tx in self.nodes_tx.values() {
-            let (tx, rx) = oneshot::channel();
-            let _ = dn_tx.unbounded_send(DataNodeEvent::MaxVolumes(tx));
-            max_volumes += rx.await?;
+            max_volumes += dn_tx.max_volumes().await?;
         }
         Ok(max_volumes)
     }
@@ -155,13 +154,12 @@ impl Rack {
     pub async fn free_volumes_tx(&self) -> Result<i64> {
         let mut free_volumes = 0;
         for dn_tx in self.nodes_tx.values() {
-            let (tx, rx) = oneshot::channel();
-            let _ = dn_tx.unbounded_send(DataNodeEvent::FreeVolumes(tx));
-            free_volumes += rx.await?;
+            free_volumes += dn_tx.free_volumes().await?;
         }
         Ok(free_volumes)
     }
 
+    #[deprecated]
     pub async fn reserve_one_volume(&self) -> Result<Arc<Mutex<DataNode>>> {
         // randomly select
         let mut free_volumes = 0;
@@ -183,13 +181,35 @@ impl Rack {
             self.id
         )))
     }
+
+    pub async fn reserve_one_volume_tx(&self) -> Result<DataNodeEventTx> {
+        // randomly select
+        let mut free_volumes = 0;
+        for (_, dn_tx) in self.nodes_tx.iter() {
+            free_volumes += dn_tx.free_volumes().await?;
+        }
+
+        let idx = random::<u32>() as i64 % free_volumes;
+
+        for (_, dn_tx) in self.nodes_tx.iter() {
+            free_volumes -= dn_tx.free_volumes().await?;
+            if free_volumes == idx {
+                return Ok(dn_tx.clone());
+            }
+        }
+
+        Err(Error::NoFreeSpace(format!(
+            "reserve one volume on rack {} fail",
+            self.id
+        )))
+    }
 }
 
 pub enum RackEvent {
     HasVolumes(oneshot::Sender<Result<i64>>),
     MaxVolumes(oneshot::Sender<Result<i64>>),
     FreeVolumes(oneshot::Sender<Result<i64>>),
-    SetDataCenter(UnboundedSender<DataCenterEvent>),
+    SetDataCenter(DataCenterEventTx),
 }
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
@@ -208,5 +228,38 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
                 rack.data_center_tx = Some(tx);
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RackEventTx(UnboundedSender<RackEvent>);
+
+impl RackEventTx {
+    pub fn new(tx: UnboundedSender<RackEvent>) -> Self {
+        RackEventTx(tx)
+    }
+
+    pub async fn has_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::HasVolumes(tx))?;
+        Ok(rx.await??)
+    }
+
+    pub async fn max_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::MaxVolumes(tx))?;
+        Ok(rx.await??)
+    }
+
+    pub async fn free_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::FreeVolumes(tx))?;
+        Ok(rx.await??)
+    }
+
+    pub fn set_data_center(&self, data_center: DataCenterEventTx) -> Result<()> {
+        self.0
+            .unbounded_send(RackEvent::SetDataCenter(data_center))?;
+        Ok(())
     }
 }

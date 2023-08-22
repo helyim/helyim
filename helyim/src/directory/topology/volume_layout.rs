@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use futures::lock::Mutex;
+use futures::{channel::mpsc::UnboundedSender, lock::Mutex};
 use rand;
 use serde::Serialize;
 
@@ -24,6 +24,8 @@ pub struct VolumeLayout {
     pub oversize_volumes: HashSet<VolumeId>,
     #[serde(skip)]
     pub locations: HashMap<VolumeId, Vec<Arc<Mutex<DataNode>>>>,
+    #[serde(skip)]
+    pub locations_tx: HashMap<VolumeId, Vec<UnboundedSender<DataNode>>>,
 }
 
 impl VolumeLayout {
@@ -36,6 +38,7 @@ impl VolumeLayout {
             readonly_volumes: HashSet::new(),
             oversize_volumes: HashSet::new(),
             locations: HashMap::new(),
+            locations_tx: HashMap::new(),
         }
     }
 
@@ -63,6 +66,7 @@ impl VolumeLayout {
         count
     }
 
+    #[deprecated]
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
@@ -128,7 +132,10 @@ impl VolumeLayout {
             VolumeLayout::set_node(list, dn.clone()).await;
         }
 
-        let list = self.locations.get(&v.id).unwrap().clone();
+        let list = match self.locations.get(&v.id) {
+            Some(locations) => locations.clone(),
+            None => Vec::new(),
+        };
 
         for node in list.iter() {
             match node.lock().await.volumes.get(&v.id) {

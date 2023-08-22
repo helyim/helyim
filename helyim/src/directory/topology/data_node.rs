@@ -4,7 +4,10 @@ use std::{
 };
 
 use futures::{
-    channel::{mpsc::UnboundedReceiver, oneshot},
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     lock::Mutex,
     StreamExt,
 };
@@ -12,6 +15,7 @@ use serde::Serialize;
 
 use crate::{
     directory::topology::rack::Rack,
+    errors::Result,
     storage::{VolumeId, VolumeInfo},
 };
 
@@ -106,8 +110,8 @@ impl DataNode {
             volumes.insert(info.id);
         }
 
-        let mut deleted_id: Vec<VolumeId> = vec![];
-        let mut deleted: Vec<VolumeInfo> = vec![];
+        let mut deleted_id = vec![];
+        let mut deleted = vec![];
 
         for (id, volume) in self.volumes.iter_mut() {
             if !volumes.contains(id) {
@@ -151,5 +155,32 @@ pub async fn data_node_loop(
                 let _ = tx.send(data_node.free_volumes());
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DataNodeEventTx(UnboundedSender<DataNodeEvent>);
+
+impl DataNodeEventTx {
+    pub fn new(tx: UnboundedSender<DataNodeEvent>) -> Self {
+        DataNodeEventTx(tx)
+    }
+
+    pub async fn has_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::HasVolumes(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn max_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::MaxVolumes(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn free_volumes(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::FreeVolumes(tx))?;
+        Ok(rx.await?)
     }
 }
