@@ -10,6 +10,7 @@ use futures::{
         oneshot,
     },
     lock::Mutex,
+    StreamExt,
 };
 use rand::random;
 use serde::Serialize;
