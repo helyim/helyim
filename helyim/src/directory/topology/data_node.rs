@@ -137,10 +137,16 @@ pub enum DataNodeEvent {
     HasVolumes(oneshot::Sender<i64>),
     MaxVolumes(oneshot::Sender<i64>),
     FreeVolumes(oneshot::Sender<i64>),
+    Url(oneshot::Sender<String>),
+    AddOrUpdateVolume(VolumeInfo),
+    Ip(oneshot::Sender<String>),
+    Port(oneshot::Sender<i64>),
+    GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
+    Id(oneshot::Sender<String>),
 }
 
 pub async fn data_node_loop(
-    data_node: DataNode,
+    mut data_node: DataNode,
     mut data_node_rx: UnboundedReceiver<DataNodeEvent>,
 ) {
     while let Some(event) = data_node_rx.next().await {
@@ -153,6 +159,24 @@ pub async fn data_node_loop(
             }
             DataNodeEvent::FreeVolumes(tx) => {
                 let _ = tx.send(data_node.free_volumes());
+            }
+            DataNodeEvent::Url(tx) => {
+                let _ = tx.send(data_node.url());
+            }
+            DataNodeEvent::AddOrUpdateVolume(v) => {
+                data_node.add_or_update_volume(v).await;
+            }
+            DataNodeEvent::Ip(tx) => {
+                let _ = tx.send(data_node.ip.clone());
+            }
+            DataNodeEvent::Port(tx) => {
+                let _ = tx.send(data_node.port);
+            }
+            DataNodeEvent::GetVolume(vid, tx) => {
+                let _ = tx.send(data_node.volumes.get(&vid).cloned());
+            }
+            DataNodeEvent::Id(tx) => {
+                let _ = tx.send(data_node.id.clone());
             }
         }
     }
@@ -181,6 +205,41 @@ impl DataNodeEventTx {
     pub async fn free_volumes(&self) -> Result<i64> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::FreeVolumes(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn url(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::Url(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn add_or_update_volume(&self, v: VolumeInfo) -> Result<()> {
+        self.0.unbounded_send(DataNodeEvent::AddOrUpdateVolume(v))?;
+        Ok(())
+    }
+
+    pub async fn ip(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::Ip(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn port(&self) -> Result<i64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::Port(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn get_volume(&self, vid: VolumeId) -> Result<Option<VolumeInfo>> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::GetVolume(vid, tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::Id(tx))?;
         Ok(rx.await?)
     }
 }

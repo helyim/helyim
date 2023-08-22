@@ -3,12 +3,12 @@ use std::{
     sync::Arc,
 };
 
-use futures::{channel::mpsc::UnboundedSender, lock::Mutex};
+use futures::lock::Mutex;
 use rand;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_grow::VolumeGrowOption, DataNode},
+    directory::topology::{volume_grow::VolumeGrowOption, DataNode, DataNodeEventTx},
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
 };
@@ -25,7 +25,7 @@ pub struct VolumeLayout {
     #[serde(skip)]
     pub locations: HashMap<VolumeId, Vec<Arc<Mutex<DataNode>>>>,
     #[serde(skip)]
-    pub locations_tx: HashMap<VolumeId, Vec<UnboundedSender<DataNode>>>,
+    pub locations_tx: HashMap<VolumeId, Vec<DataNodeEventTx>>,
 }
 
 impl VolumeLayout {
@@ -105,6 +105,7 @@ impl VolumeLayout {
         Err(Error::NoWritableVolumes)
     }
 
+    #[deprecated]
     async fn set_node(locations: &mut Vec<Arc<Mutex<DataNode>>>, dn: Arc<Mutex<DataNode>>) {
         let mut same: Option<usize> = None;
         let mut i = 0;
@@ -126,6 +127,29 @@ impl VolumeLayout {
         }
     }
 
+    async fn set_node2(locations: &mut Vec<DataNodeEventTx>, dn: DataNodeEventTx) -> Result<()> {
+        let mut same: Option<usize> = None;
+        let mut i = 0;
+        for location in locations.iter() {
+            if location.ip().await? != dn.ip().await? || location.port().await? != dn.port().await?
+            {
+                i += 1;
+                continue;
+            }
+
+            same = Some(i);
+            break;
+        }
+        if let Some(idx) = same {
+            locations[idx] = dn.clone();
+        } else {
+            locations.push(dn.clone())
+        }
+
+        Ok(())
+    }
+
+    #[deprecated]
     pub async fn register_volume(&mut self, v: &VolumeInfo, dn: Arc<Mutex<DataNode>>) {
         {
             let list = self.locations.entry(v.id).or_default();
@@ -160,6 +184,44 @@ impl VolumeLayout {
             self.remove_from_writable(v.id);
             self.set_oversize_if_need(v);
         }
+    }
+
+    pub async fn register_volume2(&mut self, v: &VolumeInfo, dn: DataNodeEventTx) -> Result<()> {
+        {
+            let list = self.locations_tx.entry(v.id).or_default();
+            VolumeLayout::set_node2(list, dn).await?;
+        }
+
+        let mut locations = vec![];
+        if let Some(list) = self.locations_tx.get(&v.id) {
+            locations.extend_from_slice(list);
+        }
+
+        for location in locations.iter() {
+            match location.get_volume(v.id).await? {
+                Some(v) => {
+                    if v.read_only {
+                        self.remove_from_writable(v.id);
+                        self.readonly_volumes.insert(v.id);
+                    }
+                }
+                None => {
+                    self.remove_from_writable(v.id);
+                    self.readonly_volumes.remove(&v.id);
+                }
+            }
+        }
+
+        if locations.len() == self.rp.get_copy_count() && self.is_writable(v) {
+            if self.oversize_volumes.get(&v.id).is_none() {
+                self.add_to_writable(v.id);
+            }
+        } else {
+            self.remove_from_writable(v.id);
+            self.set_oversize_if_need(v);
+        }
+
+        Ok(())
     }
 
     fn set_oversize_if_need(&mut self, v: &VolumeInfo) {

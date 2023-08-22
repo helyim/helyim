@@ -12,7 +12,7 @@ use rand::random;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{data_node::DataNode, rack_loop, Rack, RackEvent, RackEventTx},
+    directory::topology::{data_node::DataNode, rack_loop, DataNodeEventTx, Rack, RackEventTx},
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
@@ -114,6 +114,7 @@ impl DataCenter {
         Ok(free_volumes)
     }
 
+    #[deprecated]
     pub async fn reserve_one_volume(&self) -> Result<Arc<Mutex<DataNode>>> {
         // randomly select one
         let mut free_volumes = 0;
@@ -135,6 +136,28 @@ impl DataCenter {
             self.id
         )))
     }
+
+    pub async fn reserve_one_volume2(&self) -> Result<DataNodeEventTx> {
+        // randomly select one
+        let mut free_volumes = 0;
+        for (_, rack) in self.racks_tx.iter() {
+            free_volumes += rack.free_volumes().await?;
+        }
+
+        let idx = random::<u32>() as i64 % free_volumes;
+
+        for (_, rack) in self.racks_tx.iter() {
+            free_volumes -= rack.free_volumes().await?;
+            if free_volumes == idx {
+                return rack.reserve_one_volume().await;
+            }
+        }
+
+        Err(Error::NoFreeSpace(format!(
+            "reserve_one_volume on dc {} fail",
+            self.id
+        )))
+    }
 }
 
 pub enum DataCenterEvent {
@@ -142,6 +165,9 @@ pub enum DataCenterEvent {
     MaxVolumes(oneshot::Sender<Result<i64>>),
     FreeVolumes(oneshot::Sender<Result<i64>>),
     MaxVolumeId(oneshot::Sender<VolumeId>),
+    Id(oneshot::Sender<String>),
+    Racks(oneshot::Sender<HashMap<String, RackEventTx>>),
+    ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
 }
 
 pub async fn data_center_loop(
@@ -161,6 +187,15 @@ pub async fn data_center_loop(
             }
             DataCenterEvent::MaxVolumeId(tx) => {
                 let _ = tx.send(data_center.max_volume_id);
+            }
+            DataCenterEvent::Id(tx) => {
+                let _ = tx.send(data_center.id.clone());
+            }
+            DataCenterEvent::Racks(tx) => {
+                let _ = tx.send(data_center.racks_tx.clone());
+            }
+            DataCenterEvent::ReserveOneVolume(tx) => {
+                let _ = tx.send(data_center.reserve_one_volume2().await);
             }
         }
     }
@@ -196,5 +231,24 @@ impl DataCenterEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::MaxVolumeId(tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataCenterEvent::Id(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn racks(&self) -> Result<HashMap<String, RackEventTx>> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataCenterEvent::Racks(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataCenterEvent::ReserveOneVolume(tx))?;
+        Ok(rx.await??)
     }
 }

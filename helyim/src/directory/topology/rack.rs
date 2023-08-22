@@ -16,8 +16,7 @@ use serde::Serialize;
 
 use crate::{
     directory::topology::{
-        data_center::DataCenterEventTx, data_node_loop, DataCenter, DataCenterEvent, DataNode,
-        DataNodeEvent, DataNodeEventTx,
+        data_center::DataCenterEventTx, data_node_loop, DataCenter, DataNode, DataNodeEventTx,
     },
     errors::{Error, Result},
     rt_spawn,
@@ -210,6 +209,9 @@ pub enum RackEvent {
     MaxVolumes(oneshot::Sender<Result<i64>>),
     FreeVolumes(oneshot::Sender<Result<i64>>),
     SetDataCenter(DataCenterEventTx),
+    ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
+    DataNodes(oneshot::Sender<HashMap<String, DataNodeEventTx>>),
+    Id(oneshot::Sender<String>),
 }
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
@@ -226,6 +228,15 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
             }
             RackEvent::SetDataCenter(tx) => {
                 rack.data_center_tx = Some(tx);
+            }
+            RackEvent::ReserveOneVolume(tx) => {
+                let _ = tx.send(rack.reserve_one_volume_tx().await);
+            }
+            RackEvent::DataNodes(tx) => {
+                let _ = tx.send(rack.nodes_tx.clone());
+            }
+            RackEvent::Id(tx) => {
+                let _ = tx.send(rack.id.clone());
             }
         }
     }
@@ -261,5 +272,23 @@ impl RackEventTx {
         self.0
             .unbounded_send(RackEvent::SetDataCenter(data_center))?;
         Ok(())
+    }
+
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::ReserveOneVolume(tx))?;
+        Ok(rx.await??)
+    }
+
+    pub async fn data_nodes(&self) -> Result<HashMap<String, DataNodeEventTx>> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::DataNodes(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::Id(tx))?;
+        Ok(rx.await?)
     }
 }
