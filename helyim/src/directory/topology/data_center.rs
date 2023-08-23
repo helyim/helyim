@@ -12,7 +12,7 @@ use rand::random;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{data_node::DataNode, rack_loop, DataNodeEventTx, Rack, RackEventTx},
+    directory::topology::{rack_loop, DataNode, DataNodeEventTx, Rack, RackEventTx},
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,

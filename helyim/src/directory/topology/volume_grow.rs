@@ -570,7 +570,7 @@ impl VolumeGrowth {
 }
 
 pub enum VolumeGrowthEvent {
-    GrowByType
+    GrowByType,
 }
 
 #[derive(Debug, Default)]

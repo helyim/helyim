@@ -111,12 +111,12 @@ pub async fn assign_handler2(
     let option = request.volume_grow_option()?;
 
     let mut topology = ctx.topology.lock().await;
-    if !topology.has_writable_volume(&option).await {
+    if !topology.has_writable_volume2(&option).await? {
         if topology.free_volumes().await? <= 0 {
             return Err(Error::NoFreeSpace("no free volumes".to_string()));
         }
         let volume_grow = ctx.volume_grow.lock().await;
-        volume_grow.grow_by_type(&option, &mut topology).await?;
+        volume_grow.grow_by_type2(&option, &mut topology).await?;
     }
     let (fid, count, node) = topology.pick_for_write2(count, &option).await?;
     let assignment = Assignment {

@@ -1,8 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures::{channel::mpsc::unbounded, lock::Mutex};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    lock::Mutex,
+    StreamExt,
+};
 use rand;
 use serde::Serialize;
+use tokio::sync::oneshot;
 
 use crate::{
     directory::topology::{
@@ -115,10 +120,17 @@ impl Topology {
             .get_or_create_volume_layout(rp, Some(ttl))
     }
 
+    #[deprecated]
     pub async fn has_writable_volume(&mut self, option: &VolumeGrowOption) -> bool {
         let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
 
         vl.active_volume_count(option).await > 0
+    }
+
+    pub async fn has_writable_volume2(&mut self, option: &VolumeGrowOption) -> Result<bool> {
+        let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
+
+        Ok(vl.active_volume_count2(option).await? > 0)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
@@ -212,3 +224,23 @@ impl Topology {
         Ok(vid + 1)
     }
 }
+
+pub enum TopologyEvent {
+    GetOrCreateDataCenter(String, oneshot::Sender<DataCenterEventTx>),
+}
+
+pub async fn topology_loop(
+    mut topology: Topology,
+    mut data_center_rx: UnboundedReceiver<TopologyEvent>,
+) {
+    while let Some(event) = data_center_rx.next().await {
+        match event {
+            TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
+                let _ = tx.send(topology.get_or_create_data_center_tx(&data_center));
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TopologyEventTx(UnboundedSender<TopologyEvent>);
