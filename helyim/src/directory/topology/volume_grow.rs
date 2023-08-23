@@ -1,13 +1,21 @@
 use std::{ops::Deref, sync::Arc};
 
-use futures::lock::Mutex;
+use futures::{
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    lock::Mutex,
+    StreamExt,
+};
 use rand::{prelude::SliceRandom, random};
 use serde_json::Value;
 
 use crate::{
     directory::topology::{
-        data_center::DataCenterEventTx, topology::Topology, DataCenter, DataNode, DataNodeEventTx,
-        Rack, RackEventTx,
+        data_center::DataCenterEventTx,
+        topology::{Topology, TopologyEventTx},
+        DataCenter, DataNode, DataNodeEventTx, Rack, RackEventTx,
     },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
@@ -22,20 +30,10 @@ impl VolumeGrowth {
         Self
     }
 
-    #[deprecated]
-    pub async fn grow_by_type(
-        &self,
-        option: &VolumeGrowOption,
-        topology: &mut Topology,
-    ) -> Result<usize> {
-        let count = self.find_volume_count(option.replica_placement.get_copy_count());
-        self.grow_by_count_and_type(count, option, topology).await
-    }
-
     pub async fn grow_by_type2(
         &self,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
         let count = self.find_volume_count(option.replica_placement.get_copy_count());
         self.grow_by_count_and_type2(count, option, topology).await
@@ -261,7 +259,7 @@ impl VolumeGrowth {
     async fn find_empty_slots2(
         &self,
         option: &VolumeGrowOption,
-        topology: &Topology,
+        topology: TopologyEventTx,
     ) -> Result<Vec<DataNodeEventTx>> {
         let mut main_dc: Option<DataCenterEventTx> = None;
         let mut main_rack: Option<RackEventTx> = None;
@@ -272,8 +270,9 @@ impl VolumeGrowth {
 
         let rp = option.replica_placement;
         let mut valid_main_counts = 0;
+        let data_centers = topology.data_centers().await?;
         // find main data center
-        for (_, dc_tx) in topology.data_centers_tx.iter() {
+        for (_, dc_tx) in data_centers.iter() {
             if !option.data_center.is_empty() && dc_tx.id().await? != option.data_center {
                 continue;
             }
@@ -320,7 +319,7 @@ impl VolumeGrowth {
         let main_dc_tx = main_dc.unwrap();
 
         if rp.diff_data_center_count > 0 {
-            for (dc_id, dc_tx) in topology.data_centers_tx.iter() {
+            for (dc_id, dc_tx) in data_centers.iter() {
                 if *dc_id == main_dc_tx.id().await? || dc_tx.free_volumes().await? < 1 {
                     continue;
                 }
@@ -472,9 +471,9 @@ impl VolumeGrowth {
     async fn find_and_grow2(
         &self,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
-        let nodes = self.find_empty_slots2(option, topology).await?;
+        let nodes = self.find_empty_slots2(option, topology.clone()).await?;
         let len = nodes.len();
         let vid = topology.next_volume_id().await?;
         self.grow2(vid, option, topology, nodes).await?;
@@ -500,11 +499,11 @@ impl VolumeGrowth {
         &self,
         count: usize,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
         let mut grow_count = 0;
         for _ in 0..count {
-            grow_count += self.find_and_grow2(option, topology).await?;
+            grow_count += self.find_and_grow2(option, topology.clone()).await?;
         }
 
         Ok(grow_count)
@@ -546,7 +545,7 @@ impl VolumeGrowth {
         &self,
         vid: VolumeId,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
         nodes: Vec<DataNodeEventTx>,
     ) -> Result<()> {
         for dn in nodes {
@@ -563,17 +562,61 @@ impl VolumeGrowth {
 
             dn.add_or_update_volume(volume_info.clone()).await?;
 
-            topology.register_volume_layout2(volume_info, dn).await?;
+            topology.register_volume_layout(volume_info, dn).await?;
         }
         Ok(())
     }
 }
 
 pub enum VolumeGrowthEvent {
-    GrowByType,
+    GrowByType {
+        option: VolumeGrowOption,
+        topology: TopologyEventTx,
+        tx: oneshot::Sender<Result<usize>>,
+    },
 }
 
-#[derive(Debug, Default)]
+pub async fn volume_growth_loop(
+    mut volume_grow: VolumeGrowth,
+    mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
+) {
+    while let Some(event) = volume_grow_rx.next().await {
+        match event {
+            VolumeGrowthEvent::GrowByType {
+                option,
+                topology,
+                tx,
+            } => {
+                let _ = tx.send(volume_grow.grow_by_type2(&option, topology).await);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeGrowthEventTx(UnboundedSender<VolumeGrowthEvent>);
+
+impl VolumeGrowthEventTx {
+    pub fn new(tx: UnboundedSender<VolumeGrowthEvent>) -> Self {
+        Self(tx)
+    }
+
+    pub async fn grow_by_type(
+        &self,
+        option: VolumeGrowOption,
+        topology: TopologyEventTx,
+    ) -> Result<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeGrowthEvent::GrowByType {
+            option,
+            topology,
+            tx,
+        })?;
+        Ok(rx.await??)
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct VolumeGrowOption {
     pub collection: String,
     pub replica_placement: ReplicaPlacement,

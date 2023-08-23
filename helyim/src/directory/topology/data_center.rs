@@ -168,10 +168,11 @@ pub enum DataCenterEvent {
     Id(oneshot::Sender<String>),
     Racks(oneshot::Sender<HashMap<String, RackEventTx>>),
     ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
+    GetOrCreateRack(String, oneshot::Sender<RackEventTx>),
 }
 
 pub async fn data_center_loop(
-    data_center: DataCenter,
+    mut data_center: DataCenter,
     mut data_center_rx: UnboundedReceiver<DataCenterEvent>,
 ) {
     while let Some(event) = data_center_rx.next().await {
@@ -196,6 +197,9 @@ pub async fn data_center_loop(
             }
             DataCenterEvent::ReserveOneVolume(tx) => {
                 let _ = tx.send(data_center.reserve_one_volume2().await);
+            }
+            DataCenterEvent::GetOrCreateRack(id, tx) => {
+                let _ = tx.send(data_center.get_or_create_rack_tx(&id));
             }
         }
     }
@@ -250,5 +254,12 @@ impl DataCenterEventTx {
         self.0
             .unbounded_send(DataCenterEvent::ReserveOneVolume(tx))?;
         Ok(rx.await??)
+    }
+
+    pub async fn get_or_create_rack(&self, id: String) -> Result<RackEventTx> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataCenterEvent::GetOrCreateRack(id, tx))?;
+        Ok(rx.await?)
     }
 }

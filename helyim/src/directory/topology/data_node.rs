@@ -165,6 +165,8 @@ pub enum DataNodeEvent {
     Id(oneshot::Sender<String>),
     RackId(oneshot::Sender<Result<String>>),
     DataCenterId(oneshot::Sender<Result<String>>),
+    SetRack(RackEventTx),
+    UpdateVolumes(Vec<VolumeInfo>, oneshot::Sender<Vec<VolumeInfo>>),
 }
 
 pub async fn data_node_loop(
@@ -208,6 +210,12 @@ pub async fn data_node_loop(
             }
             DataNodeEvent::DataCenterId(tx) => {
                 let _ = tx.send(data_node.data_center_id2().await);
+            }
+            DataNodeEvent::SetRack(tx) => {
+                data_node.rack_tx = Some(tx);
+            }
+            DataNodeEvent::UpdateVolumes(volumes, tx) => {
+                let _ = tx.send(data_node.update_volumes(volumes).await);
             }
         }
     }
@@ -290,5 +298,17 @@ impl DataNodeEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::DataCenterId(tx))?;
         Ok(rx.await??)
+    }
+
+    pub async fn set_rack(&self, rack: RackEventTx) -> Result<()> {
+        self.0.unbounded_send(DataNodeEvent::SetRack(rack))?;
+        Ok(())
+    }
+
+    pub async fn update_volumes(&self, volumes: Vec<VolumeInfo>) -> Result<Vec<VolumeInfo>> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::UpdateVolumes(volumes, tx))?;
+        Ok(rx.await?)
     }
 }

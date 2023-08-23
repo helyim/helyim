@@ -221,6 +221,14 @@ pub enum RackEvent {
     DataNodes(oneshot::Sender<HashMap<String, DataNodeEventTx>>),
     Id(oneshot::Sender<String>),
     DataCenterId(oneshot::Sender<Result<String>>),
+    GetOrCreateDataNode {
+        id: String,
+        ip: String,
+        port: i64,
+        public_url: String,
+        max_volumes: i64,
+        tx: oneshot::Sender<DataNodeEventTx>,
+    },
 }
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
@@ -249,6 +257,22 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
             }
             RackEvent::DataCenterId(tx) => {
                 let _ = tx.send(rack.data_center_id2().await);
+            }
+            RackEvent::GetOrCreateDataNode {
+                id,
+                ip,
+                port,
+                public_url,
+                max_volumes,
+                tx,
+            } => {
+                let _ = tx.send(rack.get_or_create_data_node_tx(
+                    &id,
+                    &ip,
+                    port,
+                    &public_url,
+                    max_volumes,
+                ));
             }
         }
     }
@@ -308,5 +332,25 @@ impl RackEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(RackEvent::DataCenterId(tx))?;
         Ok(rx.await??)
+    }
+
+    pub async fn get_or_create_data_node(
+        &self,
+        id: String,
+        ip: String,
+        port: i64,
+        public_url: String,
+        max_volumes: i64,
+    ) -> Result<DataNodeEventTx> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::GetOrCreateDataNode {
+            id,
+            ip,
+            port,
+            public_url,
+            max_volumes,
+            tx,
+        })?;
+        Ok(rx.await?)
     }
 }
