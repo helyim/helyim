@@ -22,6 +22,7 @@ impl VolumeGrowth {
         Self
     }
 
+    #[deprecated]
     pub async fn grow_by_type(
         &self,
         option: &VolumeGrowOption,
@@ -29,6 +30,15 @@ impl VolumeGrowth {
     ) -> Result<usize> {
         let count = self.find_volume_count(option.replica_placement.get_copy_count());
         self.grow_by_count_and_type(count, option, topology).await
+    }
+
+    pub async fn grow_by_type2(
+        &self,
+        option: &VolumeGrowOption,
+        topology: &mut Topology,
+    ) -> Result<usize> {
+        let count = self.find_volume_count(option.replica_placement.get_copy_count());
+        self.grow_by_count_and_type2(count, option, topology).await
     }
 
     /// one replication type may need rp.get_copy_count() actual volumes
@@ -559,7 +569,9 @@ impl VolumeGrowth {
     }
 }
 
-pub enum VolumeGrowthEvent {}
+pub enum VolumeGrowthEvent {
+    GrowByType
+}
 
 #[derive(Debug, Default)]
 pub struct VolumeGrowOption {
