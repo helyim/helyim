@@ -65,6 +65,7 @@ impl AssignRequest {
     }
 }
 
+#[deprecated]
 pub async fn assign_handler(
     State(ctx): State<DirectoryContext>,
     Query(request): Query<AssignRequest>,
@@ -97,12 +98,44 @@ pub async fn assign_handler(
     Ok(Json(assignment))
 }
 
+pub async fn assign_handler2(
+    State(ctx): State<DirectoryContext>,
+    Query(request): Query<AssignRequest>,
+) -> Result<Json<Assignment>> {
+    let mut count = 1;
+    if let Some(c) = request.count {
+        if c > 1 {
+            count = c;
+        }
+    }
+    let option = request.volume_grow_option()?;
+
+    let mut topology = ctx.topology.lock().await;
+    if !topology.has_writable_volume(&option).await {
+        if topology.free_volumes().await? <= 0 {
+            return Err(Error::NoFreeSpace("no free volumes".to_string()));
+        }
+        let volume_grow = ctx.volume_grow.lock().await;
+        volume_grow.grow_by_type(&option, &mut topology).await?;
+    }
+    let (fid, count, node) = topology.pick_for_write2(count, &option).await?;
+    let assignment = Assignment {
+        fid: fid.to_string(),
+        url: node.url().await?,
+        public_url: node.public_url().await?,
+        count,
+        error: String::from(""),
+    };
+    Ok(Json(assignment))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LookupRequest {
     volume_id: String,
     collection: Option<String>,
 }
 
+#[deprecated]
 pub async fn lookup_handler(
     State(ctx): State<DirectoryContext>,
     Query(request): Query<LookupRequest>,
@@ -128,6 +161,44 @@ pub async fn lookup_handler(
                 locations.push(Location {
                     url: dn.url(),
                     public_url: dn.public_url.clone(),
+                });
+            }
+
+            let lookup = Lookup {
+                volume_id,
+                locations,
+                error: String::new(),
+            };
+            Ok(Json(lookup))
+        }
+        None => Err(Error::String("cannot find any locations".to_string())),
+    }
+}
+
+pub async fn lookup_handler2(
+    State(ctx): State<DirectoryContext>,
+    Query(request): Query<LookupRequest>,
+) -> Result<Json<Lookup>> {
+    if request.volume_id.is_empty() {
+        return Err(Error::String("volume_id can't be empty".to_string()));
+    }
+    let mut volume_id = request.volume_id;
+    if let Some(idx) = volume_id.rfind(',') {
+        volume_id = volume_id[..idx].to_string();
+    }
+    let mut locations = vec![];
+    let collection = request.collection.unwrap_or_default();
+    match ctx
+        .topology
+        .lock()
+        .await
+        .lookup2(collection, volume_id.parse::<u32>()?)
+    {
+        Some(nodes) => {
+            for dn in nodes.iter() {
+                locations.push(Location {
+                    url: dn.url().await?,
+                    public_url: dn.public_url().await?,
                 });
             }
 

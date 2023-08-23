@@ -45,6 +45,7 @@ impl VolumeGrowth {
     // TODO: too long func...
     // will specify data_node but no data center find a wrong data center to be the
     // main data center first, then no valid data_node ???
+    #[deprecated]
     async fn find_empty_slots(
         &self,
         option: &VolumeGrowOption,
@@ -445,6 +446,7 @@ impl VolumeGrowth {
         Ok(ret)
     }
 
+    #[deprecated]
     async fn find_and_grow(
         &self,
         option: &VolumeGrowOption,
@@ -457,6 +459,19 @@ impl VolumeGrowth {
         Ok(len)
     }
 
+    async fn find_and_grow2(
+        &self,
+        option: &VolumeGrowOption,
+        topology: &mut Topology,
+    ) -> Result<usize> {
+        let nodes = self.find_empty_slots2(option, topology).await?;
+        let len = nodes.len();
+        let vid = topology.next_volume_id().await?;
+        self.grow2(vid, option, topology, nodes).await?;
+        Ok(len)
+    }
+
+    #[deprecated]
     async fn grow_by_count_and_type(
         &self,
         count: usize,
@@ -466,6 +481,20 @@ impl VolumeGrowth {
         let mut grow_count = 0;
         for _ in 0..count {
             grow_count += self.find_and_grow(option, topology).await?;
+        }
+
+        Ok(grow_count)
+    }
+
+    async fn grow_by_count_and_type2(
+        &self,
+        count: usize,
+        option: &VolumeGrowOption,
+        topology: &mut Topology,
+    ) -> Result<usize> {
+        let mut grow_count = 0;
+        for _ in 0..count {
+            grow_count += self.find_and_grow2(option, topology).await?;
         }
 
         Ok(grow_count)
@@ -529,6 +558,8 @@ impl VolumeGrowth {
         Ok(())
     }
 }
+
+pub enum VolumeGrowthEvent {}
 
 #[derive(Debug, Default)]
 pub struct VolumeGrowOption {

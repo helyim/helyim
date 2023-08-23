@@ -100,10 +100,18 @@ impl Rack {
             .clone()
     }
 
+    #[deprecated]
     pub async fn data_center_id(&self) -> String {
         match self.data_center.upgrade() {
             Some(data_center) => data_center.lock().await.id.clone(),
             None => String::from(""),
+        }
+    }
+
+    pub async fn data_center_id2(&self) -> Result<String> {
+        match self.data_center_tx.as_ref() {
+            Some(data_center) => data_center.id().await,
+            None => Ok(String::from("")),
         }
     }
 
@@ -212,6 +220,7 @@ pub enum RackEvent {
     ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
     DataNodes(oneshot::Sender<HashMap<String, DataNodeEventTx>>),
     Id(oneshot::Sender<String>),
+    DataCenterId(oneshot::Sender<Result<String>>),
 }
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
@@ -237,6 +246,9 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
             }
             RackEvent::Id(tx) => {
                 let _ = tx.send(rack.id.clone());
+            }
+            RackEvent::DataCenterId(tx) => {
+                let _ = tx.send(rack.data_center_id2().await);
             }
         }
     }
@@ -290,5 +302,11 @@ impl RackEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(RackEvent::Id(tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn data_center_id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(RackEvent::DataCenterId(tx))?;
+        Ok(rx.await??)
     }
 }

@@ -242,7 +242,7 @@ impl Helyim for GrpcServer {
                             topology
                                 .lock()
                                 .await
-                                .unregister_volume_layout(v.clone(), node.clone())
+                                .unregister_volume_layout(v.clone())
                                 .await;
                         }
 

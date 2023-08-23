@@ -14,7 +14,7 @@ use futures::{
 use serde::Serialize;
 
 use crate::{
-    directory::topology::rack::Rack,
+    directory::topology::{rack::Rack, RackEventTx},
     errors::Result,
     storage::{VolumeId, VolumeInfo},
 };
@@ -28,6 +28,8 @@ pub struct DataNode {
     pub last_seen: i64,
     #[serde(skip)]
     pub rack: Weak<Mutex<Rack>>,
+    #[serde(skip)]
+    pub rack_tx: Option<RackEventTx>,
     pub volumes: HashMap<VolumeId, VolumeInfo>,
     pub max_volumes: i64,
     pub max_volume_id: VolumeId,
@@ -50,6 +52,7 @@ impl DataNode {
             public_url: String::from(public_url),
             last_seen: 0,
             rack: Weak::default(),
+            rack_tx: None,
             volumes: HashMap::new(),
             max_volumes,
             max_volume_id: 0,
@@ -90,6 +93,7 @@ impl DataNode {
         self.max_volumes() - self.has_volumes()
     }
 
+    #[deprecated]
     pub async fn rack_id(&self) -> String {
         match self.rack.upgrade() {
             Some(rack) => rack.lock().await.id.clone(),
@@ -97,10 +101,25 @@ impl DataNode {
         }
     }
 
+    pub async fn rack_id2(&self) -> Result<String> {
+        match self.rack_tx.as_ref() {
+            Some(rack) => rack.id().await,
+            None => Ok(String::from("")),
+        }
+    }
+
+    #[deprecated]
     pub async fn data_center_id(&self) -> String {
         match self.rack.upgrade() {
             Some(rack) => rack.lock().await.data_center_id().await,
             None => String::from(""),
+        }
+    }
+
+    pub async fn data_center_id2(&self) -> Result<String> {
+        match self.rack_tx.as_ref() {
+            Some(rack) => rack.data_center_id().await,
+            None => Ok(String::from("")),
         }
     }
 
@@ -138,11 +157,14 @@ pub enum DataNodeEvent {
     MaxVolumes(oneshot::Sender<i64>),
     FreeVolumes(oneshot::Sender<i64>),
     Url(oneshot::Sender<String>),
+    PublicUrl(oneshot::Sender<String>),
     AddOrUpdateVolume(VolumeInfo),
     Ip(oneshot::Sender<String>),
     Port(oneshot::Sender<i64>),
     GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
     Id(oneshot::Sender<String>),
+    RackId(oneshot::Sender<Result<String>>),
+    DataCenterId(oneshot::Sender<Result<String>>),
 }
 
 pub async fn data_node_loop(
@@ -163,6 +185,9 @@ pub async fn data_node_loop(
             DataNodeEvent::Url(tx) => {
                 let _ = tx.send(data_node.url());
             }
+            DataNodeEvent::PublicUrl(tx) => {
+                let _ = tx.send(data_node.public_url.clone());
+            }
             DataNodeEvent::AddOrUpdateVolume(v) => {
                 data_node.add_or_update_volume(v).await;
             }
@@ -177,6 +202,12 @@ pub async fn data_node_loop(
             }
             DataNodeEvent::Id(tx) => {
                 let _ = tx.send(data_node.id.clone());
+            }
+            DataNodeEvent::RackId(tx) => {
+                let _ = tx.send(data_node.rack_id2().await);
+            }
+            DataNodeEvent::DataCenterId(tx) => {
+                let _ = tx.send(data_node.data_center_id2().await);
             }
         }
     }
@@ -214,6 +245,12 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
+    pub async fn public_url(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::PublicUrl(tx))?;
+        Ok(rx.await?)
+    }
+
     pub async fn add_or_update_volume(&self, v: VolumeInfo) -> Result<()> {
         self.0.unbounded_send(DataNodeEvent::AddOrUpdateVolume(v))?;
         Ok(())
@@ -241,5 +278,17 @@ impl DataNodeEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Id(tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn rack_id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::RackId(tx))?;
+        Ok(rx.await??)
+    }
+
+    pub async fn data_center_id(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(DataNodeEvent::DataCenterId(tx))?;
+        Ok(rx.await??)
     }
 }

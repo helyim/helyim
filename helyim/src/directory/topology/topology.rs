@@ -62,6 +62,7 @@ impl Topology {
             .clone()
     }
 
+    #[deprecated]
     pub fn lookup(
         &mut self,
         collection: String,
@@ -76,6 +77,24 @@ impl Topology {
             }
         } else if let Some(c) = self.collections.get(&collection) {
             let data_node = c.lookup(vid);
+            if data_node.is_some() {
+                return data_node;
+            }
+        }
+
+        None
+    }
+
+    pub fn lookup2(&mut self, collection: String, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
+        if collection.is_empty() {
+            for c in self.collections.values() {
+                let data_node = c.lookup2(vid);
+                if data_node.is_some() {
+                    return data_node;
+                }
+            }
+        } else if let Some(c) = self.collections.get(&collection) {
+            let data_node = c.lookup2(vid);
             if data_node.is_some() {
                 return data_node;
             }
@@ -132,6 +151,27 @@ impl Topology {
         Ok((file_id, count, nodes[0].clone()))
     }
 
+    pub async fn pick_for_write2(
+        &mut self,
+        count: u64,
+        option: &VolumeGrowOption,
+    ) -> Result<(FileId, u64, DataNodeEventTx)> {
+        let (volume_id, nodes) = {
+            let layout =
+                self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
+            layout.pick_for_write2(option).await?
+        };
+
+        let (file_id, count) = self.sequence.next_file_id(count);
+
+        let file_id = FileId {
+            volume_id,
+            key: file_id,
+            hash_code: rand::random::<u32>(),
+        };
+        Ok((file_id, count, nodes[0].clone()))
+    }
+
     #[deprecated]
     pub async fn register_volume_layout(&mut self, vi: VolumeInfo, dn: Arc<Mutex<DataNode>>) {
         self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
@@ -149,9 +189,9 @@ impl Topology {
             .await
     }
 
-    pub async fn unregister_volume_layout(&mut self, vi: VolumeInfo, dn: Arc<Mutex<DataNode>>) {
+    pub async fn unregister_volume_layout(&mut self, vi: VolumeInfo) {
         self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
-            .unregister_volume(&vi, dn);
+            .unregister_volume(&vi);
     }
 
     pub async fn get_max_volume_id(&self) -> Result<VolumeId> {

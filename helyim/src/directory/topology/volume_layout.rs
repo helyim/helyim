@@ -43,6 +43,7 @@ impl VolumeLayout {
     }
 
     // get match data_center, rack, node volume count
+    #[deprecated]
     pub async fn active_volume_count(&self, option: &VolumeGrowOption) -> i64 {
         if option.data_center.is_empty() {
             return self.writable_volumes.len() as i64;
@@ -66,6 +67,28 @@ impl VolumeLayout {
         count
     }
 
+    pub async fn active_volume_count2(&self, option: &VolumeGrowOption) -> Result<i64> {
+        if option.data_center.is_empty() {
+            return Ok(self.writable_volumes.len() as i64);
+        }
+        let mut count = 0;
+
+        for vid in &self.writable_volumes {
+            if let Some(nodes) = self.locations_tx.get(vid) {
+                for node in nodes {
+                    if node.id().await? == option.data_node
+                        && node.rack_id().await? == option.rack
+                        && node.data_center_id().await? == option.data_center
+                    {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
     #[deprecated]
     pub async fn pick_for_write(
         &self,
@@ -86,6 +109,43 @@ impl VolumeLayout {
                         && option.data_center != dn.data_center_id().await
                         || !option.rack.is_empty() && option.rack != dn.rack_id().await
                         || !option.data_node.is_empty() && option.data_node != dn.id
+                    {
+                        continue;
+                    }
+
+                    counter += 1;
+                    if rand::random::<i64>() % counter < 1 {
+                        ret = (*vid, locations.clone());
+                    }
+                }
+            }
+        }
+
+        if counter > 0 {
+            return Ok(ret);
+        }
+
+        Err(Error::NoWritableVolumes)
+    }
+
+    pub async fn pick_for_write2(
+        &self,
+        option: &VolumeGrowOption,
+    ) -> Result<(VolumeId, Vec<DataNodeEventTx>)> {
+        if self.writable_volumes.is_empty() {
+            return Err(Error::NoWritableVolumes);
+        }
+
+        let mut counter = 0;
+        let mut ret = (0, vec![]);
+
+        for vid in &self.writable_volumes {
+            if let Some(locations) = self.locations_tx.get(vid) {
+                for node in locations {
+                    if !option.data_center.is_empty()
+                        && option.data_center != node.data_center_id().await?
+                        || !option.rack.is_empty() && option.rack != node.rack_id().await?
+                        || !option.data_node.is_empty() && option.data_node != node.id().await?
                     {
                         continue;
                     }
@@ -261,11 +321,16 @@ impl VolumeLayout {
         }
     }
 
-    pub fn unregister_volume(&mut self, v: &VolumeInfo, _dn: Arc<Mutex<DataNode>>) {
+    pub fn unregister_volume(&mut self, v: &VolumeInfo) {
         self.remove_from_writable(v.id);
     }
 
+    #[deprecated]
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<Mutex<DataNode>>>> {
         self.locations.get(&vid).cloned()
+    }
+
+    pub fn lookup2(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
+        self.locations_tx.get(&vid).cloned()
     }
 }
