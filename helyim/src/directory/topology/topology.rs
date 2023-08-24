@@ -1,11 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    lock::Mutex,
     StreamExt,
 };
 use rand;
@@ -14,8 +13,7 @@ use serde::Serialize;
 use crate::{
     directory::topology::{
         collection::Collection, data_center::DataCenterEventTx, data_center_loop,
-        volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataCenter, DataNode,
-        DataNodeEventTx,
+        volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataCenter, DataNodeEventTx,
     },
     errors::Result,
     rt_spawn,
@@ -31,9 +29,7 @@ pub struct Topology {
     pub pulse: u64,
     pub volume_size_limit: u64,
     #[serde(skip)]
-    pub data_centers: HashMap<String, Arc<Mutex<DataCenter>>>,
-    #[serde(skip)]
-    pub data_centers_tx: HashMap<String, DataCenterEventTx>,
+    pub data_centers: HashMap<String, DataCenterEventTx>,
 }
 
 unsafe impl Send for Topology {}
@@ -46,20 +42,11 @@ impl Topology {
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
-            data_centers_tx: HashMap::new(),
         }
     }
 
-    #[deprecated]
-    pub fn get_or_create_data_center(&mut self, name: &str) -> Arc<Mutex<DataCenter>> {
+    pub fn get_or_create_data_center(&mut self, name: &str) -> DataCenterEventTx {
         self.data_centers
-            .entry(name.to_string())
-            .or_insert(Arc::new(Mutex::new(DataCenter::new(name))))
-            .clone()
-    }
-
-    pub fn get_or_create_data_center_tx(&mut self, name: &str) -> DataCenterEventTx {
-        self.data_centers_tx
             .entry(name.to_string())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
@@ -69,12 +56,7 @@ impl Topology {
             .clone()
     }
 
-    #[deprecated]
-    pub fn lookup(
-        &mut self,
-        collection: String,
-        vid: VolumeId,
-    ) -> Option<Vec<Arc<Mutex<DataNode>>>> {
+    pub fn lookup(&mut self, collection: String, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
         if collection.is_empty() {
             for c in self.collections.values() {
                 let data_node = c.lookup(vid);
@@ -84,24 +66,6 @@ impl Topology {
             }
         } else if let Some(c) = self.collections.get(&collection) {
             let data_node = c.lookup(vid);
-            if data_node.is_some() {
-                return data_node;
-            }
-        }
-
-        None
-    }
-
-    pub fn lookup2(&mut self, collection: String, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
-        if collection.is_empty() {
-            for c in self.collections.values() {
-                let data_node = c.lookup2(vid);
-                if data_node.is_some() {
-                    return data_node;
-                }
-            }
-        } else if let Some(c) = self.collections.get(&collection) {
-            let data_node = c.lookup2(vid);
             if data_node.is_some() {
                 return data_node;
             }
@@ -122,33 +86,25 @@ impl Topology {
             .get_or_create_volume_layout(rp, Some(ttl))
     }
 
-    #[deprecated]
-    pub async fn has_writable_volume(&mut self, option: &VolumeGrowOption) -> bool {
+    pub async fn has_writable_volume(&mut self, option: &VolumeGrowOption) -> Result<bool> {
         let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
 
-        vl.active_volume_count(option).await > 0
-    }
-
-    pub async fn has_writable_volume2(&mut self, option: &VolumeGrowOption) -> Result<bool> {
-        let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
-
-        Ok(vl.active_volume_count2(option).await? > 0)
+        Ok(vl.active_volume_count(option).await? > 0)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for dc_tx in self.data_centers_tx.values() {
+        for dc_tx in self.data_centers.values() {
             free += dc_tx.max_volumes().await? - dc_tx.has_volumes().await?;
         }
         Ok(free)
     }
 
-    #[deprecated]
     pub async fn pick_for_write(
         &mut self,
         count: u64,
         option: &VolumeGrowOption,
-    ) -> Result<(FileId, u64, Arc<Mutex<DataNode>>)> {
+    ) -> Result<(FileId, u64, DataNodeEventTx)> {
         let (volume_id, nodes) = {
             let layout =
                 self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
@@ -165,41 +121,13 @@ impl Topology {
         Ok((file_id, count, nodes[0].clone()))
     }
 
-    pub async fn pick_for_write2(
-        &mut self,
-        count: u64,
-        option: &VolumeGrowOption,
-    ) -> Result<(FileId, u64, DataNodeEventTx)> {
-        let (volume_id, nodes) = {
-            let layout =
-                self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
-            layout.pick_for_write2(option).await?
-        };
-
-        let (file_id, count) = self.sequence.next_file_id(count);
-
-        let file_id = FileId {
-            volume_id,
-            key: file_id,
-            hash_code: rand::random::<u32>(),
-        };
-        Ok((file_id, count, nodes[0].clone()))
-    }
-
-    #[deprecated]
-    pub async fn register_volume_layout(&mut self, vi: VolumeInfo, dn: Arc<Mutex<DataNode>>) {
-        self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
-            .register_volume(&vi, dn)
-            .await;
-    }
-
-    pub async fn register_volume_layout2(
+    pub async fn register_volume_layout(
         &mut self,
         vi: VolumeInfo,
         dn: DataNodeEventTx,
     ) -> Result<()> {
         self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
-            .register_volume2(&vi, dn)
+            .register_volume(&vi, dn)
             .await
     }
 
@@ -210,7 +138,7 @@ impl Topology {
 
     async fn get_max_volume_id(&self) -> Result<VolumeId> {
         let mut vid = 0;
-        for (_, dc_tx) in self.data_centers_tx.iter() {
+        for (_, dc_tx) in self.data_centers.iter() {
             let other = dc_tx.max_volume_id().await?;
             if other > vid {
                 vid = other;
@@ -260,23 +188,23 @@ pub async fn topology_loop(
     while let Some(event) = topology_rx.next().await {
         match event {
             TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
-                let _ = tx.send(topology.get_or_create_data_center_tx(&data_center));
+                let _ = tx.send(topology.get_or_create_data_center(&data_center));
             }
             TopologyEvent::Lookup {
                 collection,
                 volume_id,
                 tx,
             } => {
-                let _ = tx.send(topology.lookup2(collection, volume_id));
+                let _ = tx.send(topology.lookup(collection, volume_id));
             }
             TopologyEvent::HasWritableVolume(option, tx) => {
-                let _ = tx.send(topology.has_writable_volume2(&option).await);
+                let _ = tx.send(topology.has_writable_volume(&option).await);
             }
             TopologyEvent::FreeVolumes(tx) => {
                 let _ = tx.send(topology.free_volumes().await);
             }
             TopologyEvent::PickForWrite { count, option, tx } => {
-                let _ = tx.send(topology.pick_for_write2(count, &option).await);
+                let _ = tx.send(topology.pick_for_write(count, &option).await);
             }
             TopologyEvent::RegisterVolumeLayout {
                 volume_info,
@@ -285,7 +213,7 @@ pub async fn topology_loop(
             } => {
                 let _ = tx.send(
                     topology
-                        .register_volume_layout2(volume_info, data_node)
+                        .register_volume_layout(volume_info, data_node)
                         .await,
                 );
             }
@@ -296,7 +224,7 @@ pub async fn topology_loop(
                 let _ = tx.send(topology.next_volume_id().await);
             }
             TopologyEvent::DataCenters(tx) => {
-                let _ = tx.send(topology.data_centers_tx.clone());
+                let _ = tx.send(topology.data_centers.clone());
             }
             TopologyEvent::SetMaxSequence(seq) => {
                 topology.sequence.set_max(seq);
@@ -344,13 +272,13 @@ impl TopologyEventTx {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(TopologyEvent::HasWritableVolume(option, tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::FreeVolumes(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn pick_for_write(
@@ -361,7 +289,7 @@ impl TopologyEventTx {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(TopologyEvent::PickForWrite { count, option, tx })?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn register_volume_layout(
@@ -375,7 +303,7 @@ impl TopologyEventTx {
             data_node,
             tx,
         })?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub fn unregister_volume_layout(&self, volume_info: VolumeInfo) -> Result<()> {
@@ -387,7 +315,7 @@ impl TopologyEventTx {
     pub async fn next_volume_id(&self) -> Result<VolumeId> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::NextVolumeId(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn data_centers(&self) -> Result<HashMap<String, DataCenterEventTx>> {

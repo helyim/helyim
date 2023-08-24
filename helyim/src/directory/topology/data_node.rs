@@ -1,20 +1,16 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Weak,
-};
+use std::collections::{HashMap, HashSet};
 
 use futures::{
     channel::{
         mpsc::{UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    lock::Mutex,
     StreamExt,
 };
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{rack::Rack, RackEventTx},
+    directory::topology::RackEventTx,
     errors::Result,
     storage::{VolumeId, VolumeInfo},
 };
@@ -27,9 +23,7 @@ pub struct DataNode {
     pub public_url: String,
     pub last_seen: i64,
     #[serde(skip)]
-    pub rack: Weak<Mutex<Rack>>,
-    #[serde(skip)]
-    pub rack_tx: Option<RackEventTx>,
+    pub rack: Option<RackEventTx>,
     pub volumes: HashMap<VolumeId, VolumeInfo>,
     pub max_volumes: i64,
     pub max_volume_id: VolumeId,
@@ -51,8 +45,7 @@ impl DataNode {
             port,
             public_url: String::from(public_url),
             last_seen: 0,
-            rack: Weak::default(),
-            rack_tx: None,
+            rack: None,
             volumes: HashMap::new(),
             max_volumes,
             max_volume_id: 0,
@@ -63,22 +56,22 @@ impl DataNode {
         format!("{}:{}", self.ip, self.port)
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.lock()
-                .await
-                .adjust_max_volume_id(self.max_volume_id)
-                .await;
+        if let Some(rack) = self.rack.as_ref() {
+            rack.adjust_max_volume_id(self.max_volume_id).await?;
         }
+
+        Ok(())
     }
 
-    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) {
-        self.adjust_max_volume_id(v.id).await;
+    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
+        self.adjust_max_volume_id(v.id).await?;
         self.volumes.insert(v.id, v);
+        Ok(())
     }
 
     pub fn has_volumes(&self) -> i64 {
@@ -93,37 +86,21 @@ impl DataNode {
         self.max_volumes() - self.has_volumes()
     }
 
-    #[deprecated]
-    pub async fn rack_id(&self) -> String {
-        match self.rack.upgrade() {
-            Some(rack) => rack.lock().await.id.clone(),
-            None => String::from(""),
-        }
-    }
-
-    pub async fn rack_id2(&self) -> Result<String> {
-        match self.rack_tx.as_ref() {
+    pub async fn rack_id(&self) -> Result<String> {
+        match self.rack.as_ref() {
             Some(rack) => rack.id().await,
             None => Ok(String::from("")),
         }
     }
 
-    #[deprecated]
-    pub async fn data_center_id(&self) -> String {
-        match self.rack.upgrade() {
-            Some(rack) => rack.lock().await.data_center_id().await,
-            None => String::from(""),
-        }
-    }
-
-    pub async fn data_center_id2(&self) -> Result<String> {
-        match self.rack_tx.as_ref() {
+    pub async fn data_center_id(&self) -> Result<String> {
+        match self.rack.as_ref() {
             Some(rack) => rack.data_center_id().await,
             None => Ok(String::from("")),
         }
     }
 
-    pub async fn update_volumes(&mut self, infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
+    pub async fn update_volumes(&mut self, infos: Vec<VolumeInfo>) -> Result<Vec<VolumeInfo>> {
         let mut volumes = HashSet::new();
         for info in infos.iter() {
             volumes.insert(info.id);
@@ -139,7 +116,7 @@ impl DataNode {
         }
 
         for vi in infos {
-            self.add_or_update_volume(vi).await;
+            self.add_or_update_volume(vi).await?;
         }
 
         for id in deleted_id.iter() {
@@ -148,7 +125,7 @@ impl DataNode {
             }
         }
 
-        deleted
+        Ok(deleted)
     }
 }
 
@@ -158,7 +135,7 @@ pub enum DataNodeEvent {
     FreeVolumes(oneshot::Sender<i64>),
     Url(oneshot::Sender<String>),
     PublicUrl(oneshot::Sender<String>),
-    AddOrUpdateVolume(VolumeInfo),
+    AddOrUpdateVolume(VolumeInfo, oneshot::Sender<Result<()>>),
     Ip(oneshot::Sender<String>),
     Port(oneshot::Sender<i64>),
     GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
@@ -166,7 +143,7 @@ pub enum DataNodeEvent {
     RackId(oneshot::Sender<Result<String>>),
     DataCenterId(oneshot::Sender<Result<String>>),
     SetRack(RackEventTx),
-    UpdateVolumes(Vec<VolumeInfo>, oneshot::Sender<Vec<VolumeInfo>>),
+    UpdateVolumes(Vec<VolumeInfo>, oneshot::Sender<Result<Vec<VolumeInfo>>>),
 }
 
 pub async fn data_node_loop(
@@ -190,8 +167,8 @@ pub async fn data_node_loop(
             DataNodeEvent::PublicUrl(tx) => {
                 let _ = tx.send(data_node.public_url.clone());
             }
-            DataNodeEvent::AddOrUpdateVolume(v) => {
-                data_node.add_or_update_volume(v).await;
+            DataNodeEvent::AddOrUpdateVolume(v, tx) => {
+                let _ = tx.send(data_node.add_or_update_volume(v).await);
             }
             DataNodeEvent::Ip(tx) => {
                 let _ = tx.send(data_node.ip.clone());
@@ -206,13 +183,13 @@ pub async fn data_node_loop(
                 let _ = tx.send(data_node.id.clone());
             }
             DataNodeEvent::RackId(tx) => {
-                let _ = tx.send(data_node.rack_id2().await);
+                let _ = tx.send(data_node.rack_id().await);
             }
             DataNodeEvent::DataCenterId(tx) => {
-                let _ = tx.send(data_node.data_center_id2().await);
+                let _ = tx.send(data_node.data_center_id().await);
             }
             DataNodeEvent::SetRack(tx) => {
-                data_node.rack_tx = Some(tx);
+                data_node.rack = Some(tx);
             }
             DataNodeEvent::UpdateVolumes(volumes, tx) => {
                 let _ = tx.send(data_node.update_volumes(volumes).await);
@@ -260,8 +237,10 @@ impl DataNodeEventTx {
     }
 
     pub async fn add_or_update_volume(&self, v: VolumeInfo) -> Result<()> {
-        self.0.unbounded_send(DataNodeEvent::AddOrUpdateVolume(v))?;
-        Ok(())
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::AddOrUpdateVolume(v, tx))?;
+        rx.await?
     }
 
     pub async fn ip(&self) -> Result<String> {
@@ -291,13 +270,13 @@ impl DataNodeEventTx {
     pub async fn rack_id(&self) -> Result<String> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::RackId(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn data_center_id(&self) -> Result<String> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::DataCenterId(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn set_rack(&self, rack: RackEventTx) -> Result<()> {
@@ -309,6 +288,6 @@ impl DataNodeEventTx {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(DataNodeEvent::UpdateVolumes(volumes, tx))?;
-        Ok(rx.await?)
+        rx.await?
     }
 }

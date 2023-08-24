@@ -1,10 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use futures::lock::Mutex;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_layout::VolumeLayout, DataNode, DataNodeEventTx},
+    directory::topology::{volume_layout::VolumeLayout, DataNodeEventTx},
     storage::{ReplicaPlacement, Ttl, VolumeId},
 };
 
@@ -41,21 +40,9 @@ impl Collection {
             .or_insert_with(|| VolumeLayout::new(rp, ttl, volume_size))
     }
 
-    #[deprecated]
-    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<Mutex<DataNode>>>> {
+    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
         for layout in self.volume_layouts.values() {
             let ret = layout.lookup(vid);
-            if ret.is_some() {
-                return ret;
-            }
-        }
-
-        None
-    }
-
-    pub fn lookup2(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
-        for layout in self.volume_layouts.values() {
-            let ret = layout.lookup2(vid);
             if ret.is_some() {
                 return ret;
             }

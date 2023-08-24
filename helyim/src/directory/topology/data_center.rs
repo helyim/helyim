@@ -1,18 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    lock::Mutex,
     StreamExt,
 };
 use rand::random;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{rack_loop, DataNode, DataNodeEventTx, Rack, RackEventTx},
+    directory::topology::{rack_loop, DataNodeEventTx, Rack, RackEventTx},
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
@@ -23,9 +22,7 @@ pub struct DataCenter {
     pub id: String,
     pub max_volume_id: VolumeId,
     #[serde(skip)]
-    pub racks: HashMap<String, Arc<Mutex<Rack>>>,
-    #[serde(skip)]
-    pub racks_tx: HashMap<String, RackEventTx>,
+    pub racks: HashMap<String, RackEventTx>,
 }
 
 impl DataCenter {
@@ -33,7 +30,6 @@ impl DataCenter {
         DataCenter {
             id: String::from(id),
             racks: HashMap::new(),
-            racks_tx: HashMap::new(),
             max_volume_id: 0,
         }
     }
@@ -44,16 +40,8 @@ impl DataCenter {
         }
     }
 
-    #[deprecated]
-    pub fn get_or_create_rack(&mut self, id: &str) -> Arc<Mutex<Rack>> {
+    pub fn get_or_create_rack(&mut self, id: &str) -> RackEventTx {
         self.racks
-            .entry(String::from(id))
-            .or_insert(Arc::new(Mutex::new(Rack::new(id))))
-            .clone()
-    }
-
-    pub fn get_or_create_rack_tx(&mut self, id: &str) -> RackEventTx {
-        self.racks_tx
             .entry(String::from(id))
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
@@ -63,90 +51,40 @@ impl DataCenter {
             .clone()
     }
 
-    #[deprecated]
-    pub async fn has_volumes(&self) -> i64 {
+    pub async fn has_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack in self.racks.values() {
-            ret += rack.lock().await.has_volumes().await;
-        }
-        ret
-    }
-
-    pub async fn has_volumes_tx(&self) -> Result<i64> {
-        let mut ret = 0;
-        for rack_tx in self.racks_tx.values() {
+        for rack_tx in self.racks.values() {
             ret += rack_tx.has_volumes().await?;
         }
         Ok(ret)
     }
 
-    #[deprecated]
-    pub async fn max_volumes(&self) -> i64 {
+    pub async fn max_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack in self.racks.values() {
-            ret += rack.lock().await.max_volumes().await;
-        }
-        ret
-    }
-
-    pub async fn max_volumes_tx(&self) -> Result<i64> {
-        let mut ret = 0;
-        for rack_tx in self.racks_tx.values() {
+        for rack_tx in self.racks.values() {
             ret += rack_tx.max_volumes().await?;
         }
         Ok(ret)
     }
 
-    #[deprecated]
-    pub async fn free_volumes(&self) -> i64 {
-        let mut ret = 0;
-        for rack in self.racks.values() {
-            ret += rack.lock().await.free_volumes().await;
-        }
-        ret
-    }
-
-    pub async fn free_volumes_tx(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for rack_tx in self.racks_tx.values() {
+        for rack_tx in self.racks.values() {
             free_volumes += rack_tx.free_volumes().await?;
         }
         Ok(free_volumes)
     }
 
-    #[deprecated]
-    pub async fn reserve_one_volume(&self) -> Result<Arc<Mutex<DataNode>>> {
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
-            free_volumes += rack.lock().await.free_volumes().await;
-        }
-
-        let idx = random::<u32>() as i64 % free_volumes;
-
-        for (_, rack) in self.racks.iter() {
-            free_volumes -= rack.lock().await.free_volumes().await;
-            if free_volumes == idx {
-                return rack.lock().await.reserve_one_volume().await;
-            }
-        }
-
-        Err(Error::NoFreeSpace(format!(
-            "reserve_one_volume on dc {} fail",
-            self.id
-        )))
-    }
-
-    pub async fn reserve_one_volume2(&self) -> Result<DataNodeEventTx> {
-        // randomly select one
-        let mut free_volumes = 0;
-        for (_, rack) in self.racks_tx.iter() {
             free_volumes += rack.free_volumes().await?;
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
-        for (_, rack) in self.racks_tx.iter() {
+        for (_, rack) in self.racks.iter() {
             free_volumes -= rack.free_volumes().await?;
             if free_volumes == idx {
                 return rack.reserve_one_volume().await;
@@ -169,6 +107,7 @@ pub enum DataCenterEvent {
     Racks(oneshot::Sender<HashMap<String, RackEventTx>>),
     ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
     GetOrCreateRack(String, oneshot::Sender<RackEventTx>),
+    AdjustMaxVolumeId(VolumeId),
 }
 
 pub async fn data_center_loop(
@@ -178,13 +117,13 @@ pub async fn data_center_loop(
     while let Some(event) = data_center_rx.next().await {
         match event {
             DataCenterEvent::HasVolumes(tx) => {
-                let _ = tx.send(data_center.has_volumes_tx().await);
+                let _ = tx.send(data_center.has_volumes().await);
             }
             DataCenterEvent::MaxVolumes(tx) => {
-                let _ = tx.send(data_center.max_volumes_tx().await);
+                let _ = tx.send(data_center.max_volumes().await);
             }
             DataCenterEvent::FreeVolumes(tx) => {
-                let _ = tx.send(data_center.free_volumes_tx().await);
+                let _ = tx.send(data_center.free_volumes().await);
             }
             DataCenterEvent::MaxVolumeId(tx) => {
                 let _ = tx.send(data_center.max_volume_id);
@@ -193,13 +132,16 @@ pub async fn data_center_loop(
                 let _ = tx.send(data_center.id.clone());
             }
             DataCenterEvent::Racks(tx) => {
-                let _ = tx.send(data_center.racks_tx.clone());
+                let _ = tx.send(data_center.racks.clone());
             }
             DataCenterEvent::ReserveOneVolume(tx) => {
-                let _ = tx.send(data_center.reserve_one_volume2().await);
+                let _ = tx.send(data_center.reserve_one_volume().await);
             }
             DataCenterEvent::GetOrCreateRack(id, tx) => {
-                let _ = tx.send(data_center.get_or_create_rack_tx(&id));
+                let _ = tx.send(data_center.get_or_create_rack(&id));
+            }
+            DataCenterEvent::AdjustMaxVolumeId(vid) => {
+                data_center.adjust_max_volume_id(vid);
             }
         }
     }
@@ -216,19 +158,19 @@ impl DataCenterEventTx {
     pub async fn has_volumes(&self) -> Result<i64> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::HasVolumes(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn max_volumes(&self) -> Result<i64> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::MaxVolumes(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::FreeVolumes(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn max_volume_id(&self) -> Result<VolumeId> {
@@ -253,7 +195,7 @@ impl DataCenterEventTx {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(DataCenterEvent::ReserveOneVolume(tx))?;
-        Ok(rx.await??)
+        rx.await?
     }
 
     pub async fn get_or_create_rack(&self, id: String) -> Result<RackEventTx> {
@@ -261,5 +203,11 @@ impl DataCenterEventTx {
         self.0
             .unbounded_send(DataCenterEvent::GetOrCreateRack(id, tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+        self.0
+            .unbounded_send(DataCenterEvent::AdjustMaxVolumeId(vid))?;
+        Ok(())
     }
 }

@@ -1,20 +1,14 @@
-use std::sync::Arc;
-
 use axum::{
     extract::{Query, State},
     Json,
 };
-use futures::lock::Mutex;
 use serde::Deserialize;
 use validator::Validate;
 
 use crate::{
     directory::{
-        topology::{
-            topology::TopologyEventTx,
-            volume_grow::{VolumeGrowthEvent, VolumeGrowthEventTx},
-        },
-        Topology, VolumeGrowOption, VolumeGrowth,
+        topology::{topology::TopologyEventTx, volume_grow::VolumeGrowthEventTx},
+        Topology, VolumeGrowOption,
     },
     errors::{Error, Result},
     operation::{Assignment, ClusterStatus, Location, Lookup},

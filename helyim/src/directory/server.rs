@@ -1,7 +1,7 @@
-use std::{pin::Pin, result::Result as StdResult, sync::Arc};
+use std::{pin::Pin, result::Result as StdResult};
 
 use axum::{routing::get, Router};
-use futures::{channel::mpsc::unbounded, lock::Mutex, Stream, StreamExt};
+use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     Heartbeat, HeartbeatResponse,
@@ -20,7 +20,7 @@ use crate::{
         },
         topology::{
             topology::{topology_loop, TopologyEventTx},
-            volume_grow::{volume_growth_loop, VolumeGrowthEvent, VolumeGrowthEventTx},
+            volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
         },
         Topology, VolumeGrowth,
     },
