@@ -1,11 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_stream::stream;
-use futures::{
-    channel::mpsc::unbounded,
-    lock::{Mutex as AsyncMutex, Mutex},
-    StreamExt,
-};
+use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
 use tokio::{sync::broadcast, task::JoinHandle};
 use tonic::Streaming;
@@ -106,7 +102,7 @@ impl StorageServer {
 
     pub async fn start(&mut self) -> Result<()> {
         let (sender, receiver) = unbounded();
-        let looker = Arc::new(AsyncMutex::new(Looker::new(&self.master_node)));
+        let looker = Arc::new(Mutex::new(Looker::new(&self.master_node)));
 
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;

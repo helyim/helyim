@@ -9,6 +9,8 @@ use futures::{
 };
 use rand::random;
 use serde::Serialize;
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::{
     directory::topology::{rack_loop, DataNodeEventTx, Rack, RackEventTx},
@@ -17,12 +19,14 @@ use crate::{
     storage::VolumeId,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DataCenter {
     pub id: String,
     pub max_volume_id: VolumeId,
     #[serde(skip)]
     pub racks: HashMap<String, RackEventTx>,
+    #[serde(skip)]
+    handles: Vec<JoinHandle<()>>,
 }
 
 impl DataCenter {
@@ -31,6 +35,7 @@ impl DataCenter {
             id: String::from(id),
             racks: HashMap::new(),
             max_volume_id: 0,
+            handles: Vec::new(),
         }
     }
 
@@ -45,7 +50,8 @@ impl DataCenter {
             .entry(String::from(id))
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
-                rt_spawn(rack_loop(Rack::new(id), rx));
+                self.handles.push(rt_spawn(rack_loop(Rack::new(id), rx)));
+
                 RackEventTx::new(tx)
             })
             .clone()
@@ -114,6 +120,7 @@ pub async fn data_center_loop(
     mut data_center: DataCenter,
     mut data_center_rx: UnboundedReceiver<DataCenterEvent>,
 ) {
+    info!("data center [{}] event loop starting.", data_center.id);
     while let Some(event) = data_center_rx.next().await {
         match event {
             DataCenterEvent::HasVolumes(tx) => {
@@ -145,6 +152,10 @@ pub async fn data_center_loop(
             }
         }
     }
+    for (_, rack) in data_center.racks.iter() {
+        rack.close();
+    }
+    info!("data center [{}] event loop stopping.", data_center.id);
 }
 
 #[derive(Debug, Clone)]
@@ -209,5 +220,9 @@ impl DataCenterEventTx {
         self.0
             .unbounded_send(DataCenterEvent::AdjustMaxVolumeId(vid))?;
         Ok(())
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
     }
 }

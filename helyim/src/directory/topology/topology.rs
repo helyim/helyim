@@ -9,6 +9,8 @@ use futures::{
 };
 use rand;
 use serde::Serialize;
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::{
     directory::topology::{
@@ -21,7 +23,7 @@ use crate::{
     storage::{FileId, ReplicaPlacement, Ttl, VolumeId, VolumeInfo},
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Topology {
     #[serde(skip)]
     pub sequence: MemorySequencer,
@@ -30,9 +32,24 @@ pub struct Topology {
     pub volume_size_limit: u64,
     #[serde(skip)]
     pub data_centers: HashMap<String, DataCenterEventTx>,
+    #[serde(skip)]
+    pub handles: Vec<JoinHandle<()>>,
 }
 
 unsafe impl Send for Topology {}
+
+impl Clone for Topology {
+    fn clone(&self) -> Self {
+        Self {
+            sequence: self.sequence.clone(),
+            collections: self.collections.clone(),
+            pulse: self.pulse,
+            volume_size_limit: self.volume_size_limit,
+            data_centers: HashMap::new(),
+            handles: Vec::new(),
+        }
+    }
+}
 
 impl Topology {
     pub fn new(sequence: MemorySequencer, volume_size_limit: u64, pulse: u64) -> Topology {
@@ -42,6 +59,7 @@ impl Topology {
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
+            handles: Vec::new(),
         }
     }
 
@@ -50,7 +68,9 @@ impl Topology {
             .entry(name.to_string())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
-                rt_spawn(data_center_loop(DataCenter::new(name), rx));
+                self.handles
+                    .push(rt_spawn(data_center_loop(DataCenter::new(name), rx)));
+
                 DataCenterEventTx::new(tx)
             })
             .clone()
@@ -185,6 +205,7 @@ pub async fn topology_loop(
     mut topology: Topology,
     mut topology_rx: UnboundedReceiver<TopologyEvent>,
 ) {
+    info!("topology event loop starting.");
     while let Some(event) = topology_rx.next().await {
         match event {
             TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
@@ -234,6 +255,10 @@ pub async fn topology_loop(
             }
         }
     }
+    for (_, data_center) in topology.data_centers.iter() {
+        data_center.close();
+    }
+    info!("topology event loop stopping.");
 }
 
 #[derive(Debug, Clone)]
@@ -333,5 +358,9 @@ impl TopologyEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::Topology(tx))?;
         Ok(rx.await?)
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
     }
 }

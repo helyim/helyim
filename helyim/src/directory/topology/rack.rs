@@ -9,6 +9,8 @@ use futures::{
 };
 use rand::random;
 use serde::Serialize;
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::{
     directory::topology::{
@@ -19,7 +21,7 @@ use crate::{
     storage::VolumeId,
 };
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Rack {
     pub id: String,
     #[serde(skip)]
@@ -27,6 +29,8 @@ pub struct Rack {
     pub max_volume_id: VolumeId,
     #[serde(skip)]
     pub data_center: Option<DataCenterEventTx>,
+    #[serde(skip)]
+    pub handles: Vec<JoinHandle<()>>,
 }
 
 impl Rack {
@@ -36,6 +40,7 @@ impl Rack {
             nodes: HashMap::new(),
             max_volume_id: 0,
             data_center: None,
+            handles: Vec::new(),
         }
     }
 
@@ -64,7 +69,8 @@ impl Rack {
             .or_insert_with(|| {
                 let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
                 let (tx, rx) = unbounded();
-                rt_spawn(data_node_loop(data_node, rx));
+                self.handles.push(rt_spawn(data_node_loop(data_node, rx)));
+
                 DataNodeEventTx::new(tx)
             })
             .clone()
@@ -145,6 +151,7 @@ pub enum RackEvent {
 }
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
+    info!("rack [{}] event loop starting.", rack.id);
     while let Some(event) = rack_rx.next().await {
         match event {
             RackEvent::HasVolumes(tx) => {
@@ -187,6 +194,16 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
             }
         }
     }
+
+    if let Some(data_center) = rack.data_center.as_ref() {
+        data_center.close();
+    }
+
+    for (_, node) in rack.nodes.iter() {
+        node.close();
+    }
+
+    info!("rack [{}] event loop stopping.", rack.id);
 }
 
 #[derive(Debug, Clone)]
@@ -270,5 +287,9 @@ impl RackEventTx {
         self.0
             .unbounded_send(RackEvent::AdjustMaxVolumeId(vid, tx))?;
         rx.await?
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
     }
 }

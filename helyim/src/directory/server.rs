@@ -9,7 +9,7 @@ use helyim_proto::{
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     default_handler,
@@ -65,12 +65,12 @@ impl DirectoryServer {
     ) -> Result<DirectoryServer> {
         let topology = Topology::new(seq, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
         let (tx, rx) = unbounded();
-        rt_spawn(topology_loop(topology, rx));
+        let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
 
         let volume_grow = VolumeGrowth::new();
         let (tx, rx) = unbounded();
-        rt_spawn(volume_growth_loop(volume_grow, rx));
+        let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
         let (shutdown, mut shutdown_rx) = broadcast::channel(1);
@@ -86,7 +86,7 @@ impl DirectoryServer {
             volume_grow,
             topology: topology.clone(),
             shutdown,
-            handles: vec![],
+            handles: vec![topology_handle, volume_grow_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1);
@@ -113,6 +113,8 @@ impl DirectoryServer {
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.send(())?;
 
+        self.topology.close();
+        self.volume_grow.close();
         let mut interval = tokio::time::interval(STOP_INTERVAL);
 
         loop {
@@ -196,7 +198,7 @@ impl Helyim for GrpcServer {
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(heartbeat) => {
-                        info!("received {:?}", heartbeat);
+                        debug!("received {:?}", heartbeat);
 
                         topology.set_max_sequence(heartbeat.max_file_key).unwrap();
                         let mut ip = heartbeat.ip.clone();

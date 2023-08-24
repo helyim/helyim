@@ -394,13 +394,12 @@ pub async fn post_handler(ctx: &StorageContext, req: Request) -> Result<Response
     debug!("post vid: {}", vid);
 
     let path = req.uri().path().to_string();
-    let mut n: Needle;
-    if !is_replicate {
-        n = new_needle_from_request(req).await?;
+    let mut n = if !is_replicate {
+        new_needle_from_request(req).await?
     } else {
         let body = to_bytes(req.into_body()).await?.to_vec();
-        n = Needle::replicate_deserialize(&body)?;
-    }
+        Needle::replicate_deserialize(&body)?
+    };
 
     debug!("post needle: {}", n);
 

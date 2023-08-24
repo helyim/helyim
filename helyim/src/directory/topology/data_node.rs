@@ -8,6 +8,7 @@ use futures::{
     StreamExt,
 };
 use serde::Serialize;
+use tracing::info;
 
 use crate::{
     directory::topology::RackEventTx,
@@ -150,6 +151,7 @@ pub async fn data_node_loop(
     mut data_node: DataNode,
     mut data_node_rx: UnboundedReceiver<DataNodeEvent>,
 ) {
+    info!("data node [{}] event loop starting.", data_node.id);
     while let Some(event) = data_node_rx.next().await {
         match event {
             DataNodeEvent::HasVolumes(tx) => {
@@ -196,6 +198,10 @@ pub async fn data_node_loop(
             }
         }
     }
+    if let Some(rack) = data_node.rack.as_ref() {
+        rack.close();
+    }
+    info!("data node [{}] event loop stopping.", data_node.id);
 }
 
 #[derive(Debug, Clone)]
@@ -289,5 +295,9 @@ impl DataNodeEventTx {
         self.0
             .unbounded_send(DataNodeEvent::UpdateVolumes(volumes, tx))?;
         rx.await?
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
     }
 }

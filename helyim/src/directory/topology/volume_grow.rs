@@ -7,6 +7,7 @@ use futures::{
 };
 use rand::{prelude::SliceRandom, random};
 use serde_json::Value;
+use tracing::info;
 
 use crate::{
     directory::topology::{
@@ -312,6 +313,7 @@ pub async fn volume_growth_loop(
     volume_grow: VolumeGrowth,
     mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
 ) {
+    info!("volume growth event loop starting.");
     while let Some(event) = volume_grow_rx.next().await {
         match event {
             VolumeGrowthEvent::GrowByType {
@@ -323,6 +325,7 @@ pub async fn volume_growth_loop(
             }
         }
     }
+    info!("volume growth event loop stopping.");
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +348,10 @@ impl VolumeGrowthEventTx {
             tx,
         })?;
         rx.await?
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
     }
 }
 
