@@ -20,7 +20,7 @@ use crate::{
 pub struct DataNode {
     pub id: String,
     pub ip: String,
-    pub port: i64,
+    pub port: u32,
     pub public_url: String,
     pub last_seen: i64,
     #[serde(skip)]
@@ -39,7 +39,7 @@ impl std::fmt::Display for DataNode {
 }
 
 impl DataNode {
-    pub fn new(id: &str, ip: &str, port: i64, public_url: &str, max_volumes: i64) -> DataNode {
+    pub fn new(id: &str, ip: &str, port: u32, public_url: &str, max_volumes: i64) -> DataNode {
         DataNode {
             id: String::from(id),
             ip: String::from(ip),
@@ -138,7 +138,7 @@ pub enum DataNodeEvent {
     PublicUrl(oneshot::Sender<String>),
     AddOrUpdateVolume(VolumeInfo, oneshot::Sender<Result<()>>),
     Ip(oneshot::Sender<String>),
-    Port(oneshot::Sender<i64>),
+    Port(oneshot::Sender<u32>),
     GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
     Id(oneshot::Sender<String>),
     RackId(oneshot::Sender<Result<String>>),
@@ -255,7 +255,7 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn port(&self) -> Result<i64> {
+    pub async fn port(&self) -> Result<u32> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Port(tx))?;
         Ok(rx.await?)

@@ -60,7 +60,7 @@ impl Rack {
         &mut self,
         id: &str,
         ip: &str,
-        port: i64,
+        port: u32,
         public_url: &str,
         max_volumes: i64,
     ) -> DataNodeEventTx {
@@ -142,7 +142,7 @@ pub enum RackEvent {
     GetOrCreateDataNode {
         id: String,
         ip: String,
-        port: i64,
+        port: u32,
         public_url: String,
         max_volumes: i64,
         tx: oneshot::Sender<DataNodeEventTx>,
@@ -266,7 +266,7 @@ impl RackEventTx {
         &self,
         id: String,
         ip: String,
-        port: i64,
+        port: u32,
         public_url: String,
         max_volumes: i64,
     ) -> Result<DataNodeEventTx> {

@@ -1,4 +1,4 @@
-use std::{pin::Pin, result::Result as StdResult};
+use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
 
 use axum::{routing::get, Router};
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
@@ -199,63 +199,15 @@ impl Helyim for GrpcServer {
                 match result {
                     Ok(heartbeat) => {
                         debug!("received {:?}", heartbeat);
-
-                        topology.set_max_sequence(heartbeat.max_file_key).unwrap();
-                        let mut ip = heartbeat.ip.clone();
-                        if heartbeat.ip.is_empty() {
-                            ip = addr.ip().to_string();
+                        match handle_heartbeat(heartbeat, &topology, volume_size_limit, addr).await
+                        {
+                            Ok(resp) => {
+                                let _ = tx.send(Ok(resp));
+                            }
+                            Err(err) => {
+                                error!("handle heartbeat error: {}", err);
+                            }
                         }
-
-                        let data_center = get_or_default(heartbeat.data_center);
-                        let rack = get_or_default(heartbeat.rack);
-
-                        let data_center = topology
-                            .get_or_create_data_center(data_center)
-                            .await
-                            .unwrap();
-                        let rack = data_center.get_or_create_rack(rack).await.unwrap();
-                        rack.set_data_center(data_center).unwrap();
-
-                        let node_addr = format!("{}:{}", ip, heartbeat.port);
-                        let node = rack
-                            .get_or_create_data_node(
-                                node_addr,
-                                ip,
-                                heartbeat.port as i64,
-                                heartbeat.public_url,
-                                heartbeat.max_volume_count as i64,
-                            )
-                            .await
-                            .unwrap();
-                        node.set_rack(rack).await.unwrap();
-
-                        let mut infos = vec![];
-                        for info_msg in heartbeat.volumes.iter() {
-                            match VolumeInfo::new(info_msg) {
-                                Ok(info) => infos.push(info),
-                                Err(err) => info!("fail to convert joined volume: {}", err),
-                            };
-                        }
-
-                        let deleted_volumes = node.update_volumes(infos.clone()).await.unwrap();
-
-                        for v in infos {
-                            topology
-                                .register_volume_layout(v, node.clone())
-                                .await
-                                .unwrap();
-                        }
-
-                        for v in deleted_volumes.iter() {
-                            topology.unregister_volume_layout(v.clone()).unwrap();
-                        }
-
-                        let resp = HeartbeatResponse {
-                            volume_size_limit,
-                            ..Default::default()
-                        };
-
-                        let _ = tx.send(Ok(resp));
                     }
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
@@ -271,4 +223,59 @@ impl Helyim for GrpcServer {
             Box::pin(out_stream) as Self::SendHeartbeatStream
         ))
     }
+}
+
+async fn handle_heartbeat(
+    heartbeat: Heartbeat,
+    topology: &TopologyEventTx,
+    volume_size_limit: u64,
+    addr: SocketAddr,
+) -> Result<HeartbeatResponse> {
+    topology.set_max_sequence(heartbeat.max_file_key)?;
+    let mut ip = heartbeat.ip.clone();
+    if heartbeat.ip.is_empty() {
+        ip = addr.ip().to_string();
+    }
+
+    let data_center = get_or_default(heartbeat.data_center);
+    let rack = get_or_default(heartbeat.rack);
+
+    let data_center = topology.get_or_create_data_center(data_center).await?;
+    let rack = data_center.get_or_create_rack(rack).await?;
+    rack.set_data_center(data_center)?;
+
+    let node_addr = format!("{}:{}", ip, heartbeat.port);
+    let node = rack
+        .get_or_create_data_node(
+            node_addr,
+            ip,
+            heartbeat.port,
+            heartbeat.public_url,
+            heartbeat.max_volume_count as i64,
+        )
+        .await?;
+    node.set_rack(rack).await?;
+
+    let mut infos = vec![];
+    for info_msg in heartbeat.volumes.iter() {
+        match VolumeInfo::new(info_msg) {
+            Ok(info) => infos.push(info),
+            Err(err) => info!("fail to convert joined volume: {}", err),
+        };
+    }
+
+    let deleted_volumes = node.update_volumes(infos.clone()).await?;
+
+    for v in infos {
+        topology.register_volume_layout(v, node.clone()).await?;
+    }
+
+    for v in deleted_volumes.iter() {
+        topology.unregister_volume_layout(v.clone())?;
+    }
+
+    Ok(HeartbeatResponse {
+        volume_size_limit,
+        ..Default::default()
+    })
 }
