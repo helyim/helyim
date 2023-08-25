@@ -4,6 +4,7 @@ use std::{
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::Path,
+    time::Duration,
 };
 
 use bytes::{Buf, BufMut};
@@ -11,6 +12,7 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
+use memmap2::MmapMut;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
@@ -116,6 +118,15 @@ impl Display for Volume {
     }
 }
 
+fn write_index_mmap(buf: &mut Vec<u8>, mmap: &mut MmapMut) -> Result<()> {
+    if !buf.is_empty() {
+        (&mut mmap[..]).write_all(buf)?;
+        mmap.flush()?;
+        buf.clear();
+    }
+    Ok(())
+}
+
 impl Volume {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -163,38 +174,40 @@ impl Volume {
         &self,
         mut index_rx: UnboundedReceiver<(u64, u32, u32)>,
     ) -> Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
+        let file = fs::OpenOptions::new()
+            // most hardware designs cannot support write permission without read permission
+            .read(true)
             .append(true)
             .open(self.index_file_name())?;
         let vid = self.id;
 
+        let mut mmap = unsafe { MmapMut::map_mut(&file)? };
+
         let mut shutdown_rx = self.shutdown.subscribe();
         rt_spawn(async move {
             let mut buf = vec![];
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
 
             loop {
                 tokio::select! {
-                    index = index_rx.next() => {
-                        if let Some(v) = index {
-                            buf.put_u64(v.0);
-                            buf.put_u32(v.1);
-                            buf.put_u32(v.2);
-
-                            match file.write_all(&buf) {
-                                Ok(()) => buf.clear(),
-                                Err(err) => {
-                                    error!("failed to write index file, volume {}, error: {}", vid, err);
-                                    break;
-                                }
-                            }
-                        }
+                    Some(v) = index_rx.next() => {
+                        buf.put_u64(v.0);
+                        buf.put_u32(v.1);
+                        buf.put_u32(v.2);
                     },
+                    _ = interval.tick() => {
+                        if let Err(err) = write_index_mmap(&mut buf, &mut mmap) {
+                            error!("failed to write index file via mmap, volume {vid}, error: {err}");
+                            break;
+                        }
+                    }
                     _ = shutdown_rx.recv() => {
                         break;
                     }
                 }
+            }
+            if let Err(err) = write_index_mmap(&mut buf, &mut mmap) {
+                error!("failed to write index file via mmap, volume {vid}, error: {err}");
             }
             info!("index file writer stopped, volume: {}", vid);
         });
