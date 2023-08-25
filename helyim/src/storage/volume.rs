@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     fs::{self, metadata, File},
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::Path,
     time::Duration,
@@ -12,7 +12,6 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
-use memmap2::MmapMut;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
@@ -90,7 +89,7 @@ pub struct Volume {
     pub id: VolumeId,
     pub dir: String,
     pub collection: String,
-    pub data_file: Option<File>,
+    data_file: Option<File>,
     pub needle_mapper: NeedleMapper,
     pub needle_map_type: NeedleMapType,
     pub read_only: bool,
@@ -98,7 +97,7 @@ pub struct Volume {
     pub last_modified: u64,
     pub last_compact_index_offset: u64,
     pub last_compact_revision: u16,
-    index_tx: UnboundedSender<(u64, u32, u32)>,
+    index_tx: UnboundedSender<(u64, NeedleValue)>,
 
     shutdown: broadcast::Sender<()>,
 }
@@ -118,10 +117,10 @@ impl Display for Volume {
     }
 }
 
-fn write_index_mmap(buf: &mut Vec<u8>, mmap: &mut MmapMut) -> Result<()> {
+fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
     if !buf.is_empty() {
-        (&mut mmap[..]).write_all(buf)?;
-        mmap.flush()?;
+        writer.write_all(buf)?;
+        writer.flush()?;
         buf.clear();
     }
     Ok(())
@@ -172,16 +171,18 @@ impl Volume {
 
     fn spawn_index_file_writer(
         &self,
-        mut index_rx: UnboundedReceiver<(u64, u32, u32)>,
+        mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
     ) -> Result<()> {
         let file = fs::OpenOptions::new()
             // most hardware designs cannot support write permission without read permission
             .read(true)
+            .write(true)
             .append(true)
+            .create(true)
             .open(self.index_file_name())?;
-        let vid = self.id;
 
-        let mut mmap = unsafe { MmapMut::map_mut(&file)? };
+        let vid = self.id;
+        let mut writer = BufWriter::new(file);
 
         let mut shutdown_rx = self.shutdown.subscribe();
         rt_spawn(async move {
@@ -190,13 +191,13 @@ impl Volume {
 
             loop {
                 tokio::select! {
-                    Some(v) = index_rx.next() => {
-                        buf.put_u64(v.0);
-                        buf.put_u32(v.1);
-                        buf.put_u32(v.2);
+                    Some((key, value)) = index_rx.next() => {
+                        buf.put_u64(key);
+                        buf.put_u32(value.offset);
+                        buf.put_u32(value.size);
                     },
                     _ = interval.tick() => {
-                        if let Err(err) = write_index_mmap(&mut buf, &mut mmap) {
+                        if let Err(err) = write_index_file(&mut buf, &mut writer) {
                             error!("failed to write index file via mmap, volume {vid}, error: {err}");
                             break;
                         }
@@ -206,7 +207,7 @@ impl Volume {
                     }
                 }
             }
-            if let Err(err) = write_index_mmap(&mut buf, &mut mmap) {
+            if let Err(err) = write_index_file(&mut buf, &mut writer) {
                 error!("failed to write index file via mmap, volume {vid}, error: {err}");
             }
             info!("index file writer stopped, volume: {}", vid);
@@ -243,7 +244,11 @@ impl Volume {
             }
         };
 
-        if !meta.permissions().readonly() {
+        if meta.permissions().readonly() {
+            let file = fs::OpenOptions::new().read(true).open(&name)?;
+            self.data_file = Some(file);
+            self.read_only = true;
+        } else {
             let file = fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -252,11 +257,6 @@ impl Volume {
 
             self.last_modified = get_time(meta.modified()?)?.as_secs();
             self.data_file = Some(file);
-        } else {
-            let file = fs::OpenOptions::new().read(true).open(&name)?;
-            self.data_file = Some(file);
-
-            self.read_only = true;
         }
 
         self.write_super_block()?;
@@ -302,8 +302,8 @@ impl Volume {
         Ok(())
     }
 
-    async fn write_index_file(&mut self, key: u64, offset: u32, size: u32) -> Result<()> {
-        Ok(self.index_tx.send((key, offset, size)).await?)
+    async fn write_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
+        Ok(self.index_tx.send((key, value)).await?)
     }
 
     pub async fn write_needle(&mut self, n: &mut Needle) -> Result<u32> {
@@ -336,15 +336,7 @@ impl Volume {
         }
 
         offset /= NEEDLE_PADDING_SIZE as u64;
-        if !n.is_delete() {
-            self.needle_mapper.set(
-                n.id,
-                NeedleValue {
-                    offset: offset as u32,
-                    size: n.size,
-                },
-            );
-        } else {
+        if n.is_delete() {
             self.needle_mapper.set(
                 n.id,
                 NeedleValue {
@@ -352,9 +344,24 @@ impl Volume {
                     size: n.size,
                 },
             );
+        } else {
+            self.needle_mapper.set(
+                n.id,
+                NeedleValue {
+                    offset: offset as u32,
+                    size: n.size,
+                },
+            );
         }
 
-        self.write_index_file(n.id, offset as u32, n.size).await?;
+        self.write_index_file(
+            n.id,
+            NeedleValue {
+                offset: offset as u32,
+                size: n.size,
+            },
+        )
+        .await?;
 
         if self.last_modified < n.last_modified {
             self.last_modified = n.last_modified;

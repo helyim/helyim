@@ -166,28 +166,41 @@ async fn start_heartbeat(
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
-        match heartbeat_stream(
-            store.clone(),
-            master_node,
-            pulse_seconds,
-            shutdown_rx.resubscribe(),
-        )
-        .await
-        {
-            Ok(mut stream) => {
-                loop {
-                    tokio::select! {
-                        _ = shutdown_rx.recv() => {
-                            break;
-                        }
-                        Some(Ok(response)) = stream.next() => {
-                            store.lock().await.volume_size_limit = response.volume_size_limit;
+        'next_heartbeat: loop {
+            match heartbeat_stream(
+                store.clone(),
+                master_node.clone(),
+                pulse_seconds,
+                shutdown_rx.resubscribe(),
+            )
+            .await
+            {
+                Ok(mut stream) => {
+                    info!("start heartbeat success, master: {master_node}");
+                    loop {
+                        tokio::select! {
+                            _ = shutdown_rx.recv() => {
+                                info!("stopping heartbeat.");
+                                return;
+                            }
+                            Some(response) = stream.next() => {
+                                match response {
+                                    Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
+                                    Err(err) => {
+                                        error!("send heartbeat error: {}", err.message());
+                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
+                                        continue 'next_heartbeat;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                info!("stopping heartbeat.")
+                Err(err) => {
+                    error!("start heartbeat failed: {err}");
+                    tokio::time::sleep(STOP_INTERVAL * 2).await;
+                }
             }
-            Err(e) => error!("start heartbeat failed, {}", e),
         }
     })
 }
