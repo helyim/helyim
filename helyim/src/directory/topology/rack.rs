@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -23,9 +24,9 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct Rack {
-    pub id: String,
+    pub id: FastStr,
     #[serde(skip)]
-    pub nodes: HashMap<String, DataNodeEventTx>,
+    pub nodes: HashMap<FastStr, DataNodeEventTx>,
     pub max_volume_id: VolumeId,
     #[serde(skip)]
     pub data_center: Option<DataCenterEventTx>,
@@ -34,9 +35,9 @@ pub struct Rack {
 }
 
 impl Rack {
-    pub fn new(id: &str) -> Rack {
+    pub fn new(id: FastStr) -> Rack {
         Rack {
-            id: String::from(id),
+            id,
             nodes: HashMap::new(),
             max_volume_id: 0,
             data_center: None,
@@ -58,14 +59,14 @@ impl Rack {
 
     pub fn get_or_create_data_node(
         &mut self,
-        id: &str,
-        ip: &str,
+        id: FastStr,
+        ip: FastStr,
         port: u32,
-        public_url: &str,
+        public_url: FastStr,
         max_volumes: i64,
     ) -> DataNodeEventTx {
         self.nodes
-            .entry(String::from(id))
+            .entry(id.clone())
             .or_insert_with(|| {
                 let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
                 let (tx, rx) = unbounded();
@@ -76,10 +77,10 @@ impl Rack {
             .clone()
     }
 
-    pub async fn data_center_id(&self) -> Result<String> {
+    pub async fn data_center_id(&self) -> Result<FastStr> {
         match self.data_center.as_ref() {
             Some(data_center) => data_center.id().await,
-            None => Ok(String::from("")),
+            None => Ok(FastStr::empty()),
         }
     }
 
@@ -136,14 +137,14 @@ pub enum RackEvent {
     FreeVolumes(oneshot::Sender<Result<i64>>),
     SetDataCenter(DataCenterEventTx),
     ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
-    DataNodes(oneshot::Sender<HashMap<String, DataNodeEventTx>>),
-    Id(oneshot::Sender<String>),
-    DataCenterId(oneshot::Sender<Result<String>>),
+    DataNodes(oneshot::Sender<HashMap<FastStr, DataNodeEventTx>>),
+    Id(oneshot::Sender<FastStr>),
+    DataCenterId(oneshot::Sender<Result<FastStr>>),
     GetOrCreateDataNode {
-        id: String,
-        ip: String,
+        id: FastStr,
+        ip: FastStr,
         port: u32,
-        public_url: String,
+        public_url: FastStr,
         max_volumes: i64,
         tx: oneshot::Sender<DataNodeEventTx>,
     },
@@ -187,7 +188,7 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
                 tx,
             } => {
                 let _ =
-                    tx.send(rack.get_or_create_data_node(&id, &ip, port, &public_url, max_volumes));
+                    tx.send(rack.get_or_create_data_node(id, ip, port, public_url, max_volumes));
             }
             RackEvent::AdjustMaxVolumeId(vid, tx) => {
                 let _ = tx.send(rack.adjust_max_volume_id(vid).await);
@@ -244,19 +245,19 @@ impl RackEventTx {
         rx.await?
     }
 
-    pub async fn data_nodes(&self) -> Result<HashMap<String, DataNodeEventTx>> {
+    pub async fn data_nodes(&self) -> Result<HashMap<FastStr, DataNodeEventTx>> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(RackEvent::DataNodes(tx))?;
         Ok(rx.await?)
     }
 
-    pub async fn id(&self) -> Result<String> {
+    pub async fn id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(RackEvent::Id(tx))?;
         Ok(rx.await?)
     }
 
-    pub async fn data_center_id(&self) -> Result<String> {
+    pub async fn data_center_id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(RackEvent::DataCenterId(tx))?;
         rx.await?
@@ -264,10 +265,10 @@ impl RackEventTx {
 
     pub async fn get_or_create_data_node(
         &self,
-        id: String,
-        ip: String,
+        id: FastStr,
+        ip: FastStr,
         port: u32,
-        public_url: String,
+        public_url: FastStr,
         max_volumes: i64,
     ) -> Result<DataNodeEventTx> {
         let (tx, rx) = oneshot::channel();

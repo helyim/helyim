@@ -8,6 +8,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
+use faststr::FastStr;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
@@ -87,8 +88,8 @@ impl SuperBlock {
 
 pub struct Volume {
     pub id: VolumeId,
-    pub dir: String,
-    pub collection: String,
+    pub dir: FastStr,
+    pub collection: FastStr,
     data_file: Option<File>,
     pub needle_mapper: NeedleMapper,
     pub needle_map_type: NeedleMapType,
@@ -129,8 +130,8 @@ fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
 impl Volume {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        dir: &str,
-        collection: &str,
+        dir: FastStr,
+        collection: FastStr,
         id: VolumeId,
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
@@ -149,8 +150,8 @@ impl Volume {
 
         let mut v = Volume {
             id,
-            dir: dir.to_string(),
-            collection: collection.to_string(),
+            dir: dir.clone(),
+            collection,
             super_block: sb,
             data_file: None,
             needle_map_type,
@@ -437,7 +438,7 @@ impl Volume {
     }
 
     pub fn file_name(&self) -> String {
-        let mut rt = self.dir.clone();
+        let mut rt = self.dir.to_string();
         if !rt.ends_with('/') {
             rt.push('/');
         }

@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_stream::stream;
+use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
 use tokio::{sync::broadcast, task::JoinHandle};
@@ -20,12 +21,12 @@ use crate::{
 };
 
 pub struct StorageServer {
-    host: String,
+    host: FastStr,
     port: u16,
-    pub master_node: String,
+    pub master_node: FastStr,
     pub pulse_seconds: i64,
-    pub data_center: String,
-    pub rack: String,
+    pub data_center: FastStr,
+    pub rack: FastStr,
     pub store: Arc<Mutex<Store>>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -63,12 +64,12 @@ impl StorageServer {
             shutdown.clone(),
         )?;
         Ok(StorageServer {
-            host: ip_bind.to_string(),
+            host: FastStr::new(ip_bind),
             port,
-            master_node: master_node.to_string(),
+            master_node: FastStr::new(master_node),
             pulse_seconds,
-            data_center: data_center.to_string(),
-            rack: rack.to_string(),
+            data_center: FastStr::new(data_center),
+            rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
             store: Arc::new(Mutex::new(store)),
@@ -164,23 +165,17 @@ async fn start_heartbeat(
 ) -> JoinHandle<()> {
     rt_spawn(async move {
         'next_heartbeat: loop {
-            match heartbeat_stream(
-                store.clone(),
-                master_node.clone(),
-                pulse_seconds,
-                shutdown_rx.resubscribe(),
-            )
-            .await
-            {
-                Ok(mut stream) => {
-                    info!("heartbeat starting up success, master: {master_node}");
-                    loop {
-                        tokio::select! {
-                            _ = shutdown_rx.recv() => {
-                                info!("stopping heartbeat.");
-                                return;
-                            }
-                            Some(response) = stream.next() => {
+            tokio::select! {
+                stream = heartbeat_stream(
+                    store.clone(),
+                    master_node.clone(),
+                    pulse_seconds,
+                    shutdown_rx.resubscribe(),
+                ) => {
+                    match stream {
+                        Ok(mut stream) => {
+                            info!("heartbeat starting up success, master: {master_node}");
+                            while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
                                     Err(err) => {
@@ -191,11 +186,15 @@ async fn start_heartbeat(
                                 }
                             }
                         }
+                        Err(err) => {
+                            error!("heartbeat starting up failed: {err}");
+                            tokio::time::sleep(STOP_INTERVAL * 2).await;
+                        }
                     }
                 }
-                Err(err) => {
-                    error!("heartbeat starting up failed: {err}");
-                    tokio::time::sleep(STOP_INTERVAL * 2).await;
+                _ = shutdown_rx.recv() => {
+                    info!("stopping heartbeat.");
+                    return;
                 }
             }
         }

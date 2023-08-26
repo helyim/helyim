@@ -11,5 +11,8 @@ pub use rack::{rack_loop, Rack, RackEvent, RackEventTx};
 
 #[allow(clippy::module_inception)]
 pub mod topology;
+
+// TODO: remove this lint, maybe it's clippy's bug
+#[allow(clippy::mutable_key_type)]
 pub mod volume_grow;
 pub mod volume_layout;

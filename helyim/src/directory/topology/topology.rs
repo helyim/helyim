@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -27,11 +28,11 @@ use crate::{
 pub struct Topology {
     #[serde(skip)]
     pub sequence: MemorySequencer,
-    pub collections: HashMap<String, Collection>,
+    pub collections: HashMap<FastStr, Collection>,
     pub pulse: u64,
     pub volume_size_limit: u64,
     #[serde(skip)]
-    pub data_centers: HashMap<String, DataCenterEventTx>,
+    pub data_centers: HashMap<FastStr, DataCenterEventTx>,
     #[serde(skip)]
     pub handles: Vec<JoinHandle<()>>,
 }
@@ -63,9 +64,9 @@ impl Topology {
         }
     }
 
-    pub fn get_or_create_data_center(&mut self, name: &str) -> DataCenterEventTx {
+    pub fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterEventTx {
         self.data_centers
-            .entry(name.to_string())
+            .entry(name.clone())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
                 self.handles
@@ -76,7 +77,7 @@ impl Topology {
             .clone()
     }
 
-    pub fn lookup(&mut self, collection: String, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
+    pub fn lookup(&mut self, collection: FastStr, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
         if collection.is_empty() {
             for c in self.collections.values() {
                 let data_node = c.lookup(vid);
@@ -96,18 +97,22 @@ impl Topology {
 
     fn get_volume_layout(
         &mut self,
-        collection: &str,
+        collection: FastStr,
         rp: ReplicaPlacement,
         ttl: Ttl,
     ) -> &mut VolumeLayout {
         self.collections
-            .entry(collection.to_string())
+            .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))
             .get_or_create_volume_layout(rp, Some(ttl))
     }
 
     pub async fn has_writable_volume(&mut self, option: &VolumeGrowOption) -> Result<bool> {
-        let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
+        let vl = self.get_volume_layout(
+            option.collection.clone(),
+            option.replica_placement,
+            option.ttl,
+        );
 
         Ok(vl.active_volume_count(option).await? > 0)
     }
@@ -126,8 +131,11 @@ impl Topology {
         option: &VolumeGrowOption,
     ) -> Result<(FileId, u64, DataNodeEventTx)> {
         let (volume_id, nodes) = {
-            let layout =
-                self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
+            let layout = self.get_volume_layout(
+                option.collection.clone(),
+                option.replica_placement,
+                option.ttl,
+            );
             layout.pick_for_write(option).await?
         };
 
@@ -146,13 +154,13 @@ impl Topology {
         vi: VolumeInfo,
         dn: DataNodeEventTx,
     ) -> Result<()> {
-        self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
+        self.get_volume_layout(vi.collection.clone(), vi.replica_placement, vi.ttl)
             .register_volume(&vi, dn)
             .await
     }
 
     pub async fn unregister_volume_layout(&mut self, vi: VolumeInfo) {
-        self.get_volume_layout(&vi.collection, vi.replica_placement, vi.ttl)
+        self.get_volume_layout(vi.collection.clone(), vi.replica_placement, vi.ttl)
             .unregister_volume(&vi);
     }
 
@@ -176,9 +184,9 @@ impl Topology {
 }
 
 pub enum TopologyEvent {
-    GetOrCreateDataCenter(String, oneshot::Sender<DataCenterEventTx>),
+    GetOrCreateDataCenter(FastStr, oneshot::Sender<DataCenterEventTx>),
     Lookup {
-        collection: String,
+        collection: FastStr,
         volume_id: VolumeId,
         tx: oneshot::Sender<Option<Vec<DataNodeEventTx>>>,
     },
@@ -196,7 +204,7 @@ pub enum TopologyEvent {
     },
     UnregisterVolumeLayout(VolumeInfo),
     NextVolumeId(oneshot::Sender<Result<VolumeId>>),
-    DataCenters(oneshot::Sender<HashMap<String, DataCenterEventTx>>),
+    DataCenters(oneshot::Sender<HashMap<FastStr, DataCenterEventTx>>),
     SetMaxSequence(u64),
     Topology(oneshot::Sender<Topology>),
 }
@@ -209,7 +217,7 @@ pub async fn topology_loop(
     while let Some(event) = topology_rx.next().await {
         match event {
             TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
-                let _ = tx.send(topology.get_or_create_data_center(&data_center));
+                let _ = tx.send(topology.get_or_create_data_center(data_center));
             }
             TopologyEvent::Lookup {
                 collection,
@@ -271,7 +279,7 @@ impl TopologyEventTx {
 
     pub async fn get_or_create_data_center(
         &self,
-        data_center: String,
+        data_center: FastStr,
     ) -> Result<DataCenterEventTx> {
         let (tx, rx) = oneshot::channel();
         self.0
@@ -281,7 +289,7 @@ impl TopologyEventTx {
 
     pub async fn lookup(
         &self,
-        collection: String,
+        collection: FastStr,
         volume_id: VolumeId,
     ) -> Result<Option<Vec<DataNodeEventTx>>> {
         let (tx, rx) = oneshot::channel();
@@ -343,7 +351,7 @@ impl TopologyEventTx {
         rx.await?
     }
 
-    pub async fn data_centers(&self) -> Result<HashMap<String, DataCenterEventTx>> {
+    pub async fn data_centers(&self) -> Result<HashMap<FastStr, DataCenterEventTx>> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::DataCenters(tx))?;
         Ok(rx.await?)

@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
 
 use axum::{routing::get, Router};
+use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
@@ -33,10 +34,10 @@ use crate::{
 };
 
 pub struct DirectoryServer {
-    pub host: String,
-    pub ip: String,
+    pub host: FastStr,
+    pub ip: FastStr,
     pub port: u16,
-    pub meta_folder: String,
+    pub meta_folder: FastStr,
     pub default_replica_placement: ReplicaPlacement,
     pub volume_size_limit_mb: u64,
     // pub preallocate: i64,
@@ -76,13 +77,13 @@ impl DirectoryServer {
         let (shutdown, mut shutdown_rx) = broadcast::channel(1);
 
         let dir = DirectoryServer {
-            host: host.to_string(),
-            ip: ip.to_string(),
+            host: FastStr::new(host),
+            ip: FastStr::new(ip),
             volume_size_limit_mb,
             port,
             garbage_threshold,
             default_replica_placement,
-            meta_folder: meta_folder.to_string(),
+            meta_folder: FastStr::new(meta_folder),
             volume_grow,
             topology: topology.clone(),
             shutdown,
@@ -244,17 +245,17 @@ async fn handle_heartbeat(
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
         .get_or_create_data_node(
-            node_addr,
-            ip,
+            FastStr::new(node_addr),
+            FastStr::new(ip),
             heartbeat.port,
-            heartbeat.public_url,
+            FastStr::new(heartbeat.public_url),
             heartbeat.max_volume_count as i64,
         )
         .await?;
     node.set_rack(rack).await?;
 
     let mut infos = vec![];
-    for info_msg in heartbeat.volumes.iter() {
+    for info_msg in heartbeat.volumes {
         match VolumeInfo::new(info_msg) {
             Ok(info) => infos.push(info),
             Err(err) => info!("fail to convert joined volume: {}", err),

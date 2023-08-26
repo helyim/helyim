@@ -3,6 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -18,20 +19,20 @@ use crate::{errors::Result, storage::VolumeId, util};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Location {
-    pub url: String,
-    pub public_url: String,
+    pub url: FastStr,
+    pub public_url: FastStr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lookup {
-    pub volume_id: String,
+    pub volume_id: FastStr,
     pub locations: Vec<Location>,
-    pub error: String,
+    pub error: FastStr,
 }
 
 pub struct Looker {
-    server: String,
+    server: FastStr,
     cache: HashMap<VolumeId, (Lookup, SystemTime)>,
     timeout: Duration,
 }
@@ -39,7 +40,7 @@ pub struct Looker {
 impl Looker {
     pub fn new(server: &str) -> Looker {
         Looker {
-            server: String::from(server),
+            server: FastStr::new(server),
             // should bigger than volume number
             cache: HashMap::new(),
             timeout: Duration::from_secs(600),

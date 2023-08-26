@@ -1,3 +1,4 @@
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -357,13 +358,13 @@ impl VolumeGrowthEventTx {
 
 #[derive(Debug, Default, Clone)]
 pub struct VolumeGrowOption {
-    pub collection: String,
+    pub collection: FastStr,
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
     pub preallocate: i64,
-    pub data_center: String,
-    pub rack: String,
-    pub data_node: String,
+    pub data_center: FastStr,
+    pub rack: FastStr,
+    pub data_node: FastStr,
 }
 
 async fn allocate_volume(

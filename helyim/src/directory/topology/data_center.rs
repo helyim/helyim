@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -21,18 +22,18 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct DataCenter {
-    pub id: String,
+    pub id: FastStr,
     pub max_volume_id: VolumeId,
     #[serde(skip)]
-    pub racks: HashMap<String, RackEventTx>,
+    pub racks: HashMap<FastStr, RackEventTx>,
     #[serde(skip)]
     handles: Vec<JoinHandle<()>>,
 }
 
 impl DataCenter {
-    pub fn new(id: &str) -> DataCenter {
+    pub fn new(id: FastStr) -> DataCenter {
         DataCenter {
-            id: String::from(id),
+            id,
             racks: HashMap::new(),
             max_volume_id: 0,
             handles: Vec::new(),
@@ -45,9 +46,9 @@ impl DataCenter {
         }
     }
 
-    pub fn get_or_create_rack(&mut self, id: &str) -> RackEventTx {
+    pub fn get_or_create_rack(&mut self, id: FastStr) -> RackEventTx {
         self.racks
-            .entry(String::from(id))
+            .entry(id.clone())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
                 self.handles.push(rt_spawn(rack_loop(Rack::new(id), rx)));
@@ -109,10 +110,10 @@ pub enum DataCenterEvent {
     MaxVolumes(oneshot::Sender<Result<i64>>),
     FreeVolumes(oneshot::Sender<Result<i64>>),
     MaxVolumeId(oneshot::Sender<VolumeId>),
-    Id(oneshot::Sender<String>),
-    Racks(oneshot::Sender<HashMap<String, RackEventTx>>),
+    Id(oneshot::Sender<FastStr>),
+    Racks(oneshot::Sender<HashMap<FastStr, RackEventTx>>),
     ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
-    GetOrCreateRack(String, oneshot::Sender<RackEventTx>),
+    GetOrCreateRack(FastStr, oneshot::Sender<RackEventTx>),
     AdjustMaxVolumeId(VolumeId),
 }
 
@@ -145,7 +146,7 @@ pub async fn data_center_loop(
                 let _ = tx.send(data_center.reserve_one_volume().await);
             }
             DataCenterEvent::GetOrCreateRack(id, tx) => {
-                let _ = tx.send(data_center.get_or_create_rack(&id));
+                let _ = tx.send(data_center.get_or_create_rack(id));
             }
             DataCenterEvent::AdjustMaxVolumeId(vid) => {
                 data_center.adjust_max_volume_id(vid);
@@ -190,13 +191,13 @@ impl DataCenterEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn id(&self) -> Result<String> {
+    pub async fn id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::Id(tx))?;
         Ok(rx.await?)
     }
 
-    pub async fn racks(&self) -> Result<HashMap<String, RackEventTx>> {
+    pub async fn racks(&self) -> Result<HashMap<FastStr, RackEventTx>> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataCenterEvent::Racks(tx))?;
         Ok(rx.await?)
@@ -209,7 +210,7 @@ impl DataCenterEventTx {
         rx.await?
     }
 
-    pub async fn get_or_create_rack(&self, id: String) -> Result<RackEventTx> {
+    pub async fn get_or_create_rack(&self, id: FastStr) -> Result<RackEventTx> {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(DataCenterEvent::GetOrCreateRack(id, tx))?;

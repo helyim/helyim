@@ -5,6 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use faststr::FastStr;
 use futures::{
     channel::mpsc::{UnboundedReceiver, UnboundedSender},
     lock::Mutex,
@@ -52,7 +53,7 @@ pub struct StorageContext {
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
-    pub master_node: String,
+    pub master_node: FastStr,
     pub looker: LookerEventTx,
 }
 

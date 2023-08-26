@@ -1,3 +1,4 @@
+use faststr::FastStr;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -14,13 +15,13 @@ use crate::{
 const MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES: u64 = 10;
 
 pub struct Store {
-    pub ip: String,
+    pub ip: FastStr,
     pub port: u16,
-    pub public_url: String,
+    pub public_url: FastStr,
     pub locations: Vec<DiskLocation>,
 
-    pub data_center: String,
-    pub rack: String,
+    pub data_center: FastStr,
+    pub rack: FastStr,
     pub connected: bool,
     // read from master
     pub volume_size_limit: u64,
@@ -46,13 +47,13 @@ impl Store {
         }
 
         Ok(Store {
-            ip: String::from(ip),
+            ip: FastStr::new(ip),
             port,
-            public_url: String::from(public_url),
+            public_url: FastStr::new(public_url),
             locations,
             needle_map_type,
-            data_center: String::from(""),
-            rack: String::from(""),
+            data_center: FastStr::empty(),
+            rack: FastStr::empty(),
             connected: false,
             volume_size_limit: 0,
         })
@@ -145,7 +146,7 @@ impl Store {
     fn do_add_volume(
         &mut self,
         vid: VolumeId,
-        collection: &str,
+        collection: FastStr,
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
@@ -162,7 +163,7 @@ impl Store {
 
         let shutdown = location.shutdown.clone();
         let volume = Volume::new(
-            &location.directory,
+            location.directory.clone(),
             collection,
             vid,
             needle_map_type,
@@ -189,18 +190,33 @@ impl Store {
         let rp = ReplicaPlacement::new(replica_placement)?;
         let ttl = Ttl::new(ttl)?;
 
+        let collection = FastStr::new(collection);
         for volume in volumes.split(',') {
             let parts: Vec<&str> = volume.split('-').collect();
             if parts.len() == 1 {
                 let id_str = parts[0];
                 let vid = id_str.parse::<u32>()?;
-                self.do_add_volume(vid, collection, needle_map_type, rp, ttl, preallocate)?;
+                self.do_add_volume(
+                    vid,
+                    collection.clone(),
+                    needle_map_type,
+                    rp,
+                    ttl,
+                    preallocate,
+                )?;
             } else {
                 let start = parts[0].parse::<u32>()?;
                 let end = parts[1].parse::<u32>()?;
 
                 for id in start..(end + 1) {
-                    self.do_add_volume(id, collection, needle_map_type, rp, ttl, preallocate)?;
+                    self.do_add_volume(
+                        id,
+                        collection.clone(),
+                        needle_map_type,
+                        rp,
+                        ttl,
+                        preallocate,
+                    )?;
                 }
             }
         }
@@ -224,7 +240,7 @@ impl Store {
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: v.size().unwrap_or(0),
-                        collection: v.collection.clone(),
+                        collection: v.collection.to_string(),
                         file_count: v.needle_mapper.file_count(),
                         delete_count: v.needle_mapper.delete_count(),
                         deleted_byte_count: v.needle_mapper.deleted_byte_count(),
@@ -248,13 +264,13 @@ impl Store {
             }
         }
 
-        heartbeat.ip = self.ip.clone();
+        heartbeat.ip = self.ip.to_string();
         heartbeat.port = self.port as u32;
-        heartbeat.public_url = self.public_url.clone();
+        heartbeat.public_url = self.public_url.to_string();
         heartbeat.max_volume_count = max_volume_count as u32;
         heartbeat.max_file_key = max_file_key;
-        heartbeat.data_center = self.data_center.clone();
-        heartbeat.rack = self.rack.clone();
+        heartbeat.data_center = self.data_center.to_string();
+        heartbeat.rack = self.rack.to_string();
 
         heartbeat
     }

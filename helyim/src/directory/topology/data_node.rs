@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use faststr::FastStr;
 use futures::{
     channel::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -16,12 +17,12 @@ use crate::{
     storage::{VolumeId, VolumeInfo},
 };
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct DataNode {
-    pub id: String,
-    pub ip: String,
+    pub id: FastStr,
+    pub ip: FastStr,
     pub port: u32,
-    pub public_url: String,
+    pub public_url: FastStr,
     pub last_seen: i64,
     #[serde(skip)]
     pub rack: Option<RackEventTx>,
@@ -39,12 +40,18 @@ impl std::fmt::Display for DataNode {
 }
 
 impl DataNode {
-    pub fn new(id: &str, ip: &str, port: u32, public_url: &str, max_volumes: i64) -> DataNode {
+    pub fn new(
+        id: FastStr,
+        ip: FastStr,
+        port: u32,
+        public_url: FastStr,
+        max_volumes: i64,
+    ) -> DataNode {
         DataNode {
-            id: String::from(id),
-            ip: String::from(ip),
+            id,
+            ip,
             port,
-            public_url: String::from(public_url),
+            public_url,
             last_seen: 0,
             rack: None,
             volumes: HashMap::new(),
@@ -87,17 +94,17 @@ impl DataNode {
         self.max_volumes() - self.has_volumes()
     }
 
-    pub async fn rack_id(&self) -> Result<String> {
+    pub async fn rack_id(&self) -> Result<FastStr> {
         match self.rack.as_ref() {
             Some(rack) => rack.id().await,
-            None => Ok(String::from("")),
+            None => Ok(FastStr::empty()),
         }
     }
 
-    pub async fn data_center_id(&self) -> Result<String> {
+    pub async fn data_center_id(&self) -> Result<FastStr> {
         match self.rack.as_ref() {
             Some(rack) => rack.data_center_id().await,
-            None => Ok(String::from("")),
+            None => Ok(FastStr::empty()),
         }
     }
 
@@ -134,15 +141,15 @@ pub enum DataNodeEvent {
     HasVolumes(oneshot::Sender<i64>),
     MaxVolumes(oneshot::Sender<i64>),
     FreeVolumes(oneshot::Sender<i64>),
-    Url(oneshot::Sender<String>),
-    PublicUrl(oneshot::Sender<String>),
+    Url(oneshot::Sender<FastStr>),
+    PublicUrl(oneshot::Sender<FastStr>),
     AddOrUpdateVolume(VolumeInfo, oneshot::Sender<Result<()>>),
-    Ip(oneshot::Sender<String>),
+    Ip(oneshot::Sender<FastStr>),
     Port(oneshot::Sender<u32>),
     GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
-    Id(oneshot::Sender<String>),
-    RackId(oneshot::Sender<Result<String>>),
-    DataCenterId(oneshot::Sender<Result<String>>),
+    Id(oneshot::Sender<FastStr>),
+    RackId(oneshot::Sender<Result<FastStr>>),
+    DataCenterId(oneshot::Sender<Result<FastStr>>),
     SetRack(RackEventTx),
     UpdateVolumes(Vec<VolumeInfo>, oneshot::Sender<Result<Vec<VolumeInfo>>>),
 }
@@ -164,7 +171,7 @@ pub async fn data_node_loop(
                 let _ = tx.send(data_node.free_volumes());
             }
             DataNodeEvent::Url(tx) => {
-                let _ = tx.send(data_node.url());
+                let _ = tx.send(FastStr::from_string(data_node.url()));
             }
             DataNodeEvent::PublicUrl(tx) => {
                 let _ = tx.send(data_node.public_url.clone());
@@ -230,13 +237,13 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn url(&self) -> Result<String> {
+    pub async fn url(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Url(tx))?;
         Ok(rx.await?)
     }
 
-    pub async fn public_url(&self) -> Result<String> {
+    pub async fn public_url(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::PublicUrl(tx))?;
         Ok(rx.await?)
@@ -249,7 +256,7 @@ impl DataNodeEventTx {
         rx.await?
     }
 
-    pub async fn ip(&self) -> Result<String> {
+    pub async fn ip(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Ip(tx))?;
         Ok(rx.await?)
@@ -267,19 +274,19 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn id(&self) -> Result<String> {
+    pub async fn id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Id(tx))?;
         Ok(rx.await?)
     }
 
-    pub async fn rack_id(&self) -> Result<String> {
+    pub async fn rack_id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::RackId(tx))?;
         rx.await?
     }
 
-    pub async fn data_center_id(&self) -> Result<String> {
+    pub async fn data_center_id(&self) -> Result<FastStr> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::DataCenterId(tx))?;
         rx.await?

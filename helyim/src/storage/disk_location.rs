@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs, path::Path};
 
+use faststr::FastStr;
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -16,7 +17,7 @@ use crate::{
 };
 
 pub struct DiskLocation {
-    pub directory: String,
+    pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, Volume>,
 
@@ -26,14 +27,14 @@ pub struct DiskLocation {
 impl DiskLocation {
     pub fn new(dir: &str, max_volume_count: i64, shutdown: broadcast::Sender<()>) -> DiskLocation {
         DiskLocation {
-            directory: String::from(dir),
+            directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
             shutdown,
         }
     }
 
-    pub fn parse_volume_id(&self, p: &Path) -> Result<(VolumeId, String)> {
+    pub fn parse_volume_id(&self, p: &Path) -> Result<(VolumeId, FastStr)> {
         if p.is_dir() || p.extension().unwrap_or_default() != DATA_FILE_SUFFIX {
             return Err(anyhow!("not valid file: {}", p.to_str().unwrap()));
         }
@@ -47,12 +48,13 @@ impl DiskLocation {
 
         let vid = id.parse()?;
 
-        Ok((vid, collection.to_string()))
+        Ok((vid, FastStr::new(collection)))
     }
 
     pub fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
         // TODO concurrent load volumes
-        let dir = Path::new(&self.directory);
+        let dir = self.directory.to_string();
+        let dir = Path::new(&dir);
         info!("load existing volumes dir: {}", self.directory);
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
@@ -65,8 +67,8 @@ impl DiskLocation {
                     continue;
                 }
                 let volume = Volume::new(
-                    &self.directory,
-                    &collection,
+                    self.directory.clone(),
+                    collection,
                     vid,
                     needle_map_type,
                     ReplicaPlacement::default(),

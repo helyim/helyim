@@ -23,6 +23,7 @@ bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 crc.workspace = true
+faststr = { workspace = true, features = ["serde"]}
 futures.workspace = true
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }

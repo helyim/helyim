@@ -1,3 +1,4 @@
+use faststr::FastStr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,7 +12,7 @@ pub struct VolumeInfo {
     pub size: u64,
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
-    pub collection: String,
+    pub collection: FastStr,
     pub version: Version,
     pub file_count: i64,
     pub delete_count: i64,
@@ -20,12 +21,12 @@ pub struct VolumeInfo {
 }
 
 impl VolumeInfo {
-    pub fn new(m: &helyim_proto::VolumeInformationMessage) -> Result<VolumeInfo> {
+    pub fn new(m: helyim_proto::VolumeInformationMessage) -> Result<VolumeInfo> {
         let rp = ReplicaPlacement::from_u8(m.replica_placement as u8)?;
         Ok(VolumeInfo {
             id: m.id as VolumeId,
             size: m.size,
-            collection: m.collection.clone(),
+            collection: FastStr::new(m.collection),
             file_count: m.file_count as i64,
             delete_count: m.delete_count as i64,
             delete_byte_count: m.deleted_byte_count,

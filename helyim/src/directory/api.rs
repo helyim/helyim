@@ -2,8 +2,8 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use faststr::FastStr;
 use serde::Deserialize;
-use validator::Validate;
 
 use crate::{
     directory::{
@@ -20,21 +20,20 @@ pub struct DirectoryContext {
     pub topology: TopologyEventTx,
     pub volume_grow: VolumeGrowthEventTx,
     pub default_replica_placement: ReplicaPlacement,
-    pub ip: String,
+    pub ip: FastStr,
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize)]
 pub struct AssignRequest {
     count: Option<u64>,
-    #[validate(length(min = 3, max = 3))]
-    replication: Option<String>,
-    ttl: Option<String>,
+    replication: Option<FastStr>,
+    ttl: Option<FastStr>,
     preallocate: Option<i64>,
-    collection: Option<String>,
-    data_center: Option<String>,
-    rack: Option<String>,
-    data_node: Option<String>,
+    collection: Option<FastStr>,
+    data_center: Option<FastStr>,
+    rack: Option<FastStr>,
+    data_node: Option<FastStr>,
 }
 
 impl AssignRequest {
@@ -91,15 +90,15 @@ pub async fn assign_handler(
         url: node.url().await?,
         public_url: node.public_url().await?,
         count,
-        error: String::from(""),
+        error: FastStr::empty(),
     };
     Ok(Json(assignment))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LookupRequest {
-    volume_id: String,
-    collection: Option<String>,
+    volume_id: FastStr,
+    collection: Option<FastStr>,
 }
 
 pub async fn lookup_handler(
@@ -111,7 +110,7 @@ pub async fn lookup_handler(
     }
     let mut volume_id = request.volume_id;
     if let Some(idx) = volume_id.rfind(',') {
-        volume_id = volume_id[..idx].to_string();
+        volume_id = volume_id.slice_ref(&volume_id[..idx]);
     }
     let mut locations = vec![];
     let collection = request.collection.unwrap_or_default();
@@ -131,7 +130,7 @@ pub async fn lookup_handler(
             let lookup = Lookup {
                 volume_id,
                 locations,
-                error: String::new(),
+                error: FastStr::empty(),
             };
             Ok(Json(lookup))
         }
