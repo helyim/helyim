@@ -173,7 +173,7 @@ async fn start_heartbeat(
             .await
             {
                 Ok(mut stream) => {
-                    info!("start heartbeat success, master: {master_node}");
+                    info!("heartbeat starting up success, master: {master_node}");
                     loop {
                         tokio::select! {
                             _ = shutdown_rx.recv() => {
@@ -194,7 +194,7 @@ async fn start_heartbeat(
                     }
                 }
                 Err(err) => {
-                    error!("start heartbeat failed: {err}");
+                    error!("heartbeat starting up failed: {err}");
                     tokio::time::sleep(STOP_INTERVAL * 2).await;
                 }
             }
@@ -225,6 +225,6 @@ async fn heartbeat_stream(
             }
         }
     };
-    let response = client.send_heartbeat(request_stream).await?;
+    let response = client.heartbeat(request_stream).await?;
     Ok(response.into_inner())
 }

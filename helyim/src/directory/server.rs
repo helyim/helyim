@@ -4,7 +4,7 @@ use axum::{routing::get, Router};
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
-    Heartbeat, HeartbeatResponse,
+    HeartbeatRequest, HeartbeatResponse,
 };
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -180,13 +180,12 @@ struct GrpcServer {
 
 #[tonic::async_trait]
 impl Helyim for GrpcServer {
-    type SendHeartbeatStream =
-        Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
+    type HeartbeatStream = Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
 
-    async fn send_heartbeat(
+    async fn heartbeat(
         &self,
-        request: Request<Streaming<Heartbeat>>,
-    ) -> StdResult<Response<Self::SendHeartbeatStream>, Status> {
+        request: Request<Streaming<HeartbeatRequest>>,
+    ) -> StdResult<Response<Self::HeartbeatStream>, Status> {
         let volume_size_limit = self.volume_size_limit_mb;
         let topology = self.topology.clone();
         let addr = request.remote_addr().unwrap();
@@ -219,14 +218,12 @@ impl Helyim for GrpcServer {
         });
 
         let out_stream = UnboundedReceiverStream::new(rx);
-        Ok(Response::new(
-            Box::pin(out_stream) as Self::SendHeartbeatStream
-        ))
+        Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
     }
 }
 
 async fn handle_heartbeat(
-    heartbeat: Heartbeat,
+    heartbeat: HeartbeatRequest,
     topology: &TopologyEventTx,
     volume_size_limit: u64,
     addr: SocketAddr,

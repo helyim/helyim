@@ -1,4 +1,4 @@
-use helyim_proto::{Heartbeat, VolumeInformationMessage};
+use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -207,8 +207,8 @@ impl Store {
         Ok(())
     }
 
-    pub fn collect_heartbeat(&mut self) -> Heartbeat {
-        let mut heartbeat = Heartbeat::default();
+    pub fn collect_heartbeat(&mut self) -> HeartbeatRequest {
+        let mut heartbeat = HeartbeatRequest::default();
 
         let mut max_file_key: u64 = 0;
         let mut max_volume_count = 0;
