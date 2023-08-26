@@ -1,7 +1,7 @@
 # Helyim
 
 -----
-Helyim is Rust port of [seaweedfs](https://github.com/seaweedfs/seaweedfs)
+[seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
 
 ### Usage
 
