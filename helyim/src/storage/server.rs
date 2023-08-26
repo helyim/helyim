@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::{
     errors::Result,
-    operation::Looker,
+    operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
         api::{handle_http_request, MakeHttpContext, StorageContext},
@@ -101,14 +101,17 @@ impl StorageServer {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let (sender, receiver) = unbounded();
-        let looker = Arc::new(Mutex::new(Looker::new(&self.master_node)));
-
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.pulse_seconds as u64;
         let master_node = self.master_node.clone();
+
+        let (looker_tx, looker_rx) = unbounded();
+        self.handles.push(rt_spawn(looker_loop(
+            Looker::new(&self.master_node),
+            looker_rx,
+        )));
 
         let ctx = StorageContext {
             store,
@@ -116,32 +119,29 @@ impl StorageServer {
             read_redirect,
             pulse_seconds,
             master_node,
-            looker: looker.clone(),
+            looker: LookerEventTx::new(looker_tx),
         };
-        self.handles.push(handle_http_request(ctx, receiver));
 
-        let heartbeat_handle = start_heartbeat(
-            self.store.clone(),
-            self.grpc_addr(),
-            self.pulse_seconds,
-            self.shutdown.subscribe(),
-        )
-        .await;
+        self.handles.push(
+            start_heartbeat(
+                self.store.clone(),
+                self.grpc_addr(),
+                self.pulse_seconds,
+                self.shutdown.subscribe(),
+            )
+            .await,
+        );
 
         // http server
         let addr_str = format!("{}:{}", self.host, self.port);
         let addr = addr_str.parse()?;
         let mut shutdown_rx = self.shutdown.subscribe();
 
-        let http_handle = rt_spawn(async move {
-            // let app = Router::new()
-            //     .route("/status", get(status_handler).post(status_handler))
-            //     .route("/admin/assign_volume",
-            // get(assign_volume_handler).post(assign_volume_handler))
-            //     .fallback(default_handler)
-            //     .with_state(ctx);
+        let (http_tx, http_rx) = unbounded();
+        self.handles.push(handle_http_request(ctx, http_rx));
 
-            let server = hyper::Server::bind(&addr).serve(MakeHttpContext::new(sender));
+        self.handles.push(rt_spawn(async move {
+            let server = hyper::Server::bind(&addr).serve(MakeHttpContext::new(http_tx));
             let graceful = server.with_graceful_shutdown(async {
                 let _ = shutdown_rx.recv().await;
             });
@@ -150,10 +150,7 @@ impl StorageServer {
                 Ok(()) => info!("storage server shutting down gracefully."),
                 Err(e) => error!("storage server stop failed, {}", e),
             }
-        });
-
-        self.handles.push(http_handle);
-        self.handles.push(heartbeat_handle);
+        }));
 
         Ok(())
     }

@@ -32,7 +32,7 @@ use crate::{
     anyhow,
     errors::{Error, Result},
     make_callback, operation,
-    operation::Looker,
+    operation::LookerEventTx,
     rt_spawn,
     storage::{
         crc,
@@ -53,15 +53,15 @@ pub struct StorageContext {
     pub read_redirect: bool,
     pub pulse_seconds: u64,
     pub master_node: String,
-    pub looker: Arc<Mutex<Looker>>,
+    pub looker: LookerEventTx,
 }
 
 pub fn handle_http_request(
     ctx: StorageContext,
-    mut receiver: UnboundedReceiver<Message>,
+    mut http_rx: UnboundedReceiver<Message>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
-        while let Some(msg) = receiver.next().await {
+        while let Some(msg) = http_rx.next().await {
             match msg {
                 Message::Api { req, cb } => match (req.method(), req.uri().path()) {
                     (&Method::GET, "/favicon.ico") => {
@@ -341,31 +341,26 @@ async fn replicate_delete(
     n: &mut Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let size: u32;
-    let self_url: String;
+    let mut s = ctx.store.lock().await;
+    let local_url = format!("{}:{}", s.ip, s.port);
+    let size = s.delete_volume_needle(vid, n).await?;
+    if is_replicate {
+        return Ok(size);
+    }
 
-    {
-        let mut s = ctx.store.lock().await;
-        self_url = format!("{}:{}", s.ip, s.port);
-        size = s.delete_volume_needle(vid, n).await?;
-        if is_replicate {
-            return Ok(size);
-        }
-
-        let v = s.find_volume_mut(vid).unwrap();
-        debug!("write volume: {}", v);
-        if !v.need_to_replicate() {
+    if let Some(volume) = s.find_volume_mut(vid) {
+        if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
 
-    let params: Vec<(&str, &str)> = vec![("type", "replicate")];
-    let res = ctx.looker.lock().await.lookup(&vid.to_string()).await?;
+    let params = vec![("type", "replicate")];
+    let res = ctx.looker.lookup(vid).await?;
     debug!("get lookup res: {:?}", res);
 
     // TODO concurrent replicate
     for location in res.locations.iter() {
-        if location.url == self_url {
+        if location.url == local_url {
             continue;
         }
         let url = format!("http://{}{}", &location.url, path);
@@ -698,35 +693,31 @@ async fn replicate_write(
     n: &mut Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let size: u32;
-    let self_url: String;
-    {
-        let mut s = ctx.store.lock().await;
-        self_url = format!("{}:{}", s.ip, s.port);
-        size = s.write_volume_needle(vid, n).await?;
-        if is_replicate {
-            return Ok(size);
-        }
+    let mut s = ctx.store.lock().await;
+    let local_url = format!("{}:{}", s.ip, s.port);
+    let size = s.write_volume_needle(vid, n).await?;
+    if is_replicate {
+        return Ok(size);
+    }
 
-        let v = s.find_volume_mut(vid).unwrap();
-        debug!("write volume: {}", v);
-        if !v.need_to_replicate() {
+    if let Some(volume) = s.find_volume_mut(vid) {
+        if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
 
-    let params: Vec<(&str, &str)> = vec![("type", "replicate")];
+    let params = vec![("type", "replicate")];
     let data = n.replicate_serialize();
 
-    let res = ctx.looker.lock().await.lookup(&vid.to_string()).await?;
+    let res = ctx.looker.lookup(vid).await?;
     debug!("get lookup res: {:?}", res);
 
     // TODO concurrent replicate
     for location in res.locations.iter() {
-        if location.url == self_url {
+        if location.url == local_url {
             continue;
         }
-        let url = format!("http://{}{}", &location.url, path);
+        let url = format!("http://{}{}", location.url, path);
         util::post(&url, &params, &data).await.and_then(|body| {
             let value: serde_json::Value = serde_json::from_slice(&body)?;
             if let Some(err) = value["error"].as_str() {
@@ -736,7 +727,6 @@ async fn replicate_write(
                     Err(anyhow!("write {} err: {}", location.url, err))
                 };
             }
-
             Ok(())
         })?;
     }
