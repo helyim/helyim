@@ -198,7 +198,7 @@ impl Volume {
                     },
                     _ = interval.tick() => {
                         if let Err(err) = write_index_file(&mut buf, &mut writer) {
-                            error!("failed to write index file via mmap, volume {vid}, error: {err}");
+                            error!("failed to write index file, volume {vid}, error: {err}");
                             break;
                         }
                     }
@@ -208,7 +208,7 @@ impl Volume {
                 }
             }
             if let Err(err) = write_index_file(&mut buf, &mut writer) {
-                error!("failed to write index file via mmap, volume {vid}, error: {err}");
+                error!("failed to write index file, volume {vid}, error: {err}");
             }
             info!("index file writer stopped, volume: {}", vid);
         });
