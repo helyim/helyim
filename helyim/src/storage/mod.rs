@@ -8,7 +8,6 @@ mod replica_placement;
 pub use replica_placement::ReplicaPlacement;
 
 mod api;
-// mod api1;
 mod crc;
 mod disk_location;
 
