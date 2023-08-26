@@ -1,15 +1,16 @@
-use std::{pin::Pin, result::Result as StdResult, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
 
 use axum::{routing::get, Router};
-use futures::{lock::Mutex, Stream, StreamExt};
+use faststr::FastStr;
+use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
-    Heartbeat, HeartbeatResponse,
+    HeartbeatRequest, HeartbeatResponse,
 };
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     default_handler,
@@ -18,28 +19,32 @@ use crate::{
             assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
             DirectoryContext,
         },
+        topology::{
+            topology::{topology_loop, TopologyEventTx},
+            volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
+        },
         Topology, VolumeGrowth,
     },
     errors::Result,
     rt_spawn,
-    sequence::{MemorySequencer, Sequencer},
+    sequence::MemorySequencer,
     storage::{ReplicaPlacement, VolumeInfo},
     util::get_or_default,
     STOP_INTERVAL,
 };
 
 pub struct DirectoryServer {
-    pub host: String,
-    pub ip: String,
+    pub host: FastStr,
+    pub ip: FastStr,
     pub port: u16,
-    pub meta_folder: String,
+    pub meta_folder: FastStr,
     pub default_replica_placement: ReplicaPlacement,
     pub volume_size_limit_mb: u64,
     // pub preallocate: i64,
     // pub pulse_seconds: i64,
     pub garbage_threshold: f64,
-    pub topology: Arc<Mutex<Topology>>,
-    pub volume_grow: Arc<Mutex<VolumeGrowth>>,
+    pub topology: TopologyEventTx,
+    pub volume_grow: VolumeGrowthEventTx,
     handles: Vec<JoinHandle<()>>,
 
     shutdown: broadcast::Sender<()>,
@@ -59,26 +64,30 @@ impl DirectoryServer {
         garbage_threshold: f64,
         seq: MemorySequencer,
     ) -> Result<DirectoryServer> {
-        let topology = Arc::new(Mutex::new(Topology::new(
-            seq,
-            volume_size_limit_mb * 1024 * 1024,
-            pulse_seconds,
-        )));
+        let topology = Topology::new(seq, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        let (tx, rx) = unbounded();
+        let topology_handle = rt_spawn(topology_loop(topology, rx));
+        let topology = TopologyEventTx::new(tx);
+
+        let volume_grow = VolumeGrowth::new();
+        let (tx, rx) = unbounded();
+        let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
+        let volume_grow = VolumeGrowthEventTx::new(tx);
 
         let (shutdown, mut shutdown_rx) = broadcast::channel(1);
 
         let dir = DirectoryServer {
-            host: host.to_string(),
-            ip: ip.to_string(),
+            host: FastStr::new(host),
+            ip: FastStr::new(ip),
             volume_size_limit_mb,
             port,
             garbage_threshold,
             default_replica_placement,
-            meta_folder: meta_folder.to_string(),
-            volume_grow: Arc::new(Mutex::new(VolumeGrowth::new())),
+            meta_folder: FastStr::new(meta_folder),
+            volume_grow,
             topology: topology.clone(),
             shutdown,
-            handles: vec![],
+            handles: vec![topology_handle, volume_grow_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1);
@@ -88,7 +97,7 @@ impl DirectoryServer {
             if let Err(err) = TonicServer::builder()
                 .add_service(HelyimServer::new(GrpcServer {
                     volume_size_limit_mb,
-                    topology: topology.clone(),
+                    topology,
                 }))
                 .serve_with_shutdown(addr, async {
                     let _ = shutdown_rx.recv().await;
@@ -105,6 +114,8 @@ impl DirectoryServer {
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.send(())?;
 
+        self.topology.close();
+        self.volume_grow.close();
         let mut interval = tokio::time::interval(STOP_INTERVAL);
 
         loop {
@@ -165,18 +176,17 @@ impl DirectoryServer {
 #[derive(Clone)]
 struct GrpcServer {
     pub volume_size_limit_mb: u64,
-    pub topology: Arc<Mutex<Topology>>,
+    pub topology: TopologyEventTx,
 }
 
 #[tonic::async_trait]
 impl Helyim for GrpcServer {
-    type SendHeartbeatStream =
-        Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
+    type HeartbeatStream = Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
 
-    async fn send_heartbeat(
+    async fn heartbeat(
         &self,
-        request: Request<Streaming<Heartbeat>>,
-    ) -> StdResult<Response<Self::SendHeartbeatStream>, Status> {
+        request: Request<Streaming<HeartbeatRequest>>,
+    ) -> StdResult<Response<Self::HeartbeatStream>, Status> {
         let volume_size_limit = self.volume_size_limit_mb;
         let topology = self.topology.clone();
         let addr = request.remote_addr().unwrap();
@@ -188,58 +198,16 @@ impl Helyim for GrpcServer {
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(heartbeat) => {
-                        info!("received {:?}", heartbeat);
-
-                        let mut topology = topology.lock().await;
-                        topology.sequence.set_max(heartbeat.max_file_key);
-                        let mut ip = heartbeat.ip.clone();
-                        if heartbeat.ip.is_empty() {
-                            ip = addr.ip().to_string();
+                        debug!("received {:?}", heartbeat);
+                        match handle_heartbeat(heartbeat, &topology, volume_size_limit, addr).await
+                        {
+                            Ok(resp) => {
+                                let _ = tx.send(Ok(resp));
+                            }
+                            Err(err) => {
+                                error!("handle heartbeat error: {}", err);
+                            }
                         }
-
-                        let data_center = get_or_default(heartbeat.data_center);
-                        let rack = get_or_default(heartbeat.rack);
-
-                        let data_center = topology.get_or_create_data_center(&data_center);
-                        let rack = data_center.lock().await.get_or_create_rack(&rack);
-                        rack.lock().await.data_center = Arc::downgrade(&data_center);
-
-                        let node_addr = format!("{}:{}", ip, heartbeat.port);
-                        let node = rack.lock().await.get_or_create_data_node(
-                            &node_addr,
-                            &ip,
-                            heartbeat.port as i64,
-                            &heartbeat.public_url,
-                            heartbeat.max_volume_count as i64,
-                        );
-                        node.lock().await.rack = Arc::downgrade(&rack);
-
-                        let mut infos = vec![];
-                        for info_msg in heartbeat.volumes.iter() {
-                            match VolumeInfo::new(info_msg) {
-                                Ok(info) => infos.push(info),
-                                Err(err) => info!("fail to convert joined volume: {}", err),
-                            };
-                        }
-
-                        let deleted_volumes = node.lock().await.update_volumes(infos.clone()).await;
-
-                        for v in infos {
-                            topology.register_volume_layout(v, node.clone()).await;
-                        }
-
-                        for v in deleted_volumes.iter() {
-                            topology
-                                .unregister_volume_layout(v.clone(), node.clone())
-                                .await;
-                        }
-
-                        let resp = HeartbeatResponse {
-                            volume_size_limit,
-                            ..Default::default()
-                        };
-
-                        let _ = tx.send(Ok(resp));
                     }
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
@@ -251,8 +219,61 @@ impl Helyim for GrpcServer {
         });
 
         let out_stream = UnboundedReceiverStream::new(rx);
-        Ok(Response::new(
-            Box::pin(out_stream) as Self::SendHeartbeatStream
-        ))
+        Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
     }
+}
+
+async fn handle_heartbeat(
+    heartbeat: HeartbeatRequest,
+    topology: &TopologyEventTx,
+    volume_size_limit: u64,
+    addr: SocketAddr,
+) -> Result<HeartbeatResponse> {
+    topology.set_max_sequence(heartbeat.max_file_key)?;
+    let mut ip = heartbeat.ip.clone();
+    if heartbeat.ip.is_empty() {
+        ip = addr.ip().to_string();
+    }
+
+    let data_center = get_or_default(heartbeat.data_center);
+    let rack = get_or_default(heartbeat.rack);
+
+    let data_center = topology.get_or_create_data_center(data_center).await?;
+    let rack = data_center.get_or_create_rack(rack).await?;
+    rack.set_data_center(data_center)?;
+
+    let node_addr = format!("{}:{}", ip, heartbeat.port);
+    let node = rack
+        .get_or_create_data_node(
+            FastStr::new(node_addr),
+            FastStr::new(ip),
+            heartbeat.port,
+            FastStr::new(heartbeat.public_url),
+            heartbeat.max_volume_count as i64,
+        )
+        .await?;
+    node.set_rack(rack).await?;
+
+    let mut infos = vec![];
+    for info_msg in heartbeat.volumes {
+        match VolumeInfo::new(info_msg) {
+            Ok(info) => infos.push(info),
+            Err(err) => info!("fail to convert joined volume: {}", err),
+        };
+    }
+
+    let deleted_volumes = node.update_volumes(infos.clone()).await?;
+
+    for v in infos {
+        topology.register_volume_layout(v, node.clone()).await?;
+    }
+
+    for v in deleted_volumes.iter() {
+        topology.unregister_volume_layout(v.clone())?;
+    }
+
+    Ok(HeartbeatResponse {
+        volume_size_limit,
+        ..Default::default()
+    })
 }

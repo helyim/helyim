@@ -1,11 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use async_stream::stream;
-use futures::{
-    channel::mpsc::unbounded,
-    lock::{Mutex as AsyncMutex, Mutex},
-    StreamExt,
-};
+use faststr::FastStr;
+use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
 use tokio::{sync::broadcast, task::JoinHandle};
 use tonic::Streaming;
@@ -13,7 +10,7 @@ use tracing::{error, info};
 
 use crate::{
     errors::Result,
-    operation::Looker,
+    operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
         api::{handle_http_request, MakeHttpContext, StorageContext},
@@ -24,12 +21,12 @@ use crate::{
 };
 
 pub struct StorageServer {
-    host: String,
+    host: FastStr,
     port: u16,
-    pub master_node: String,
+    pub master_node: FastStr,
     pub pulse_seconds: i64,
-    pub data_center: String,
-    pub rack: String,
+    pub data_center: FastStr,
+    pub rack: FastStr,
     pub store: Arc<Mutex<Store>>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -67,12 +64,12 @@ impl StorageServer {
             shutdown.clone(),
         )?;
         Ok(StorageServer {
-            host: ip_bind.to_string(),
+            host: FastStr::new(ip_bind),
             port,
-            master_node: master_node.to_string(),
+            master_node: FastStr::new(master_node),
             pulse_seconds,
-            data_center: data_center.to_string(),
-            rack: rack.to_string(),
+            data_center: FastStr::new(data_center),
+            rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
             store: Arc::new(Mutex::new(store)),
@@ -105,14 +102,17 @@ impl StorageServer {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let (sender, receiver) = unbounded();
-        let looker = Arc::new(AsyncMutex::new(Looker::new(&self.master_node)));
-
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.pulse_seconds as u64;
         let master_node = self.master_node.clone();
+
+        let (looker_tx, looker_rx) = unbounded();
+        self.handles.push(rt_spawn(looker_loop(
+            Looker::new(&self.master_node),
+            looker_rx,
+        )));
 
         let ctx = StorageContext {
             store,
@@ -120,32 +120,29 @@ impl StorageServer {
             read_redirect,
             pulse_seconds,
             master_node,
-            looker: looker.clone(),
+            looker: LookerEventTx::new(looker_tx),
         };
-        self.handles.push(handle_http_request(ctx, receiver));
 
-        let heartbeat_handle = start_heartbeat(
-            self.store.clone(),
-            self.grpc_addr(),
-            self.pulse_seconds,
-            self.shutdown.subscribe(),
-        )
-        .await;
+        self.handles.push(
+            start_heartbeat(
+                self.store.clone(),
+                self.grpc_addr(),
+                self.pulse_seconds,
+                self.shutdown.subscribe(),
+            )
+            .await,
+        );
 
         // http server
         let addr_str = format!("{}:{}", self.host, self.port);
         let addr = addr_str.parse()?;
         let mut shutdown_rx = self.shutdown.subscribe();
 
-        let http_handle = rt_spawn(async move {
-            // let app = Router::new()
-            //     .route("/status", get(status_handler).post(status_handler))
-            //     .route("/admin/assign_volume",
-            // get(assign_volume_handler).post(assign_volume_handler))
-            //     .fallback(default_handler)
-            //     .with_state(ctx);
+        let (http_tx, http_rx) = unbounded();
+        self.handles.push(handle_http_request(ctx, http_rx));
 
-            let server = hyper::Server::bind(&addr).serve(MakeHttpContext::new(sender));
+        self.handles.push(rt_spawn(async move {
+            let server = hyper::Server::bind(&addr).serve(MakeHttpContext::new(http_tx));
             let graceful = server.with_graceful_shutdown(async {
                 let _ = shutdown_rx.recv().await;
             });
@@ -154,10 +151,7 @@ impl StorageServer {
                 Ok(()) => info!("storage server shutting down gracefully."),
                 Err(e) => error!("storage server stop failed, {}", e),
             }
-        });
-
-        self.handles.push(http_handle);
-        self.handles.push(heartbeat_handle);
+        }));
 
         Ok(())
     }
@@ -170,28 +164,39 @@ async fn start_heartbeat(
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
-        match heartbeat_stream(
-            store.clone(),
-            master_node,
-            pulse_seconds,
-            shutdown_rx.resubscribe(),
-        )
-        .await
-        {
-            Ok(mut stream) => {
-                loop {
-                    tokio::select! {
-                        _ = shutdown_rx.recv() => {
-                            break;
+        'next_heartbeat: loop {
+            tokio::select! {
+                stream = heartbeat_stream(
+                    store.clone(),
+                    master_node.clone(),
+                    pulse_seconds,
+                    shutdown_rx.resubscribe(),
+                ) => {
+                    match stream {
+                        Ok(mut stream) => {
+                            info!("heartbeat starting up success, master: {master_node}");
+                            while let Some(response) = stream.next().await {
+                                match response {
+                                    Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
+                                    Err(err) => {
+                                        error!("send heartbeat error: {}", err.message());
+                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
+                                        continue 'next_heartbeat;
+                                    }
+                                }
+                            }
                         }
-                        Some(Ok(response)) = stream.next() => {
-                            store.lock().await.volume_size_limit = response.volume_size_limit;
+                        Err(err) => {
+                            error!("heartbeat starting up failed: {err}");
+                            tokio::time::sleep(STOP_INTERVAL * 2).await;
                         }
                     }
                 }
-                info!("stopping heartbeat.")
+                _ = shutdown_rx.recv() => {
+                    info!("stopping heartbeat.");
+                    return;
+                }
             }
-            Err(e) => error!("start heartbeat failed, {}", e),
         }
     })
 }
@@ -219,6 +224,6 @@ async fn heartbeat_stream(
             }
         }
     };
-    let response = client.send_heartbeat(request_stream).await?;
+    let response = client.heartbeat(request_stream).await?;
     Ok(response.into_inner())
 }

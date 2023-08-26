@@ -1,11 +1,19 @@
-use std::{ops::Deref, sync::Arc};
-
-use futures::lock::Mutex;
+use faststr::FastStr;
+use futures::{
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    StreamExt,
+};
 use rand::{prelude::SliceRandom, random};
 use serde_json::Value;
+use tracing::info;
 
 use crate::{
-    directory::topology::{topology::Topology, DataCenter, DataNode, Rack},
+    directory::topology::{
+        data_center::DataCenterEventTx, topology::TopologyEventTx, DataNodeEventTx, RackEventTx,
+    },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
     util,
@@ -22,7 +30,7 @@ impl VolumeGrowth {
     pub async fn grow_by_type(
         &self,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
         let count = self.find_volume_count(option.replica_placement.get_copy_count());
         self.grow_by_count_and_type(count, option, topology).await
@@ -45,38 +53,41 @@ impl VolumeGrowth {
     async fn find_empty_slots(
         &self,
         option: &VolumeGrowOption,
-        topology: &Topology,
-    ) -> Result<Vec<Arc<Mutex<DataNode>>>> {
-        let mut main_dc: Option<Arc<Mutex<DataCenter>>> = None;
-        let mut main_rack: Option<Arc<Mutex<Rack>>> = None;
-        let mut main_nd: Option<Arc<Mutex<DataNode>>> = None;
-        let mut other_centers: Vec<Arc<Mutex<DataCenter>>> = vec![];
-        let mut other_racks: Vec<Arc<Mutex<Rack>>> = vec![];
-        let mut other_nodes: Vec<Arc<Mutex<DataNode>>> = vec![];
+        topology: TopologyEventTx,
+    ) -> Result<Vec<DataNodeEventTx>> {
+        let mut main_dc: Option<DataCenterEventTx> = None;
+        let mut main_rack: Option<RackEventTx> = None;
+        let mut main_dn: Option<DataNodeEventTx> = None;
+        let mut other_centers: Vec<DataCenterEventTx> = vec![];
+        let mut other_racks: Vec<RackEventTx> = vec![];
+        let mut other_nodes: Vec<DataNodeEventTx> = vec![];
 
         let rp = option.replica_placement;
         let mut valid_main_counts = 0;
+        let data_centers = topology.data_centers().await?;
         // find main data center
-        for (_dc_id, dc_arc) in topology.data_centers.iter() {
-            let dc = dc_arc.lock().await;
-            if !option.data_center.is_empty() && dc.id != option.data_center {
+        for (_, dc_tx) in data_centers.iter() {
+            if !option.data_center.is_empty() && dc_tx.id().await? != option.data_center {
                 continue;
             }
 
-            if dc.racks.len() < rp.diff_rack_count as usize + 1 {
+            let racks = dc_tx.racks().await?;
+
+            if racks.len() < rp.diff_rack_count as usize + 1 {
                 continue;
             }
 
-            if dc.free_volumes().await < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1 {
+            if dc_tx.free_volumes().await?
+                < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
+            {
                 continue;
             }
 
             let mut possible_racks_count = 0;
-            for (_rack_id, rack_arc) in dc.racks.iter() {
-                let rack = rack_arc.lock().await;
+            for (_, rack_tx) in racks.iter() {
                 let mut possible_nodes_count = 0;
-                for (_, nd) in rack.nodes.iter() {
-                    if nd.lock().await.free_volumes() >= 1 {
+                for (_, dn) in rack_tx.data_nodes().await?.iter() {
+                    if dn.free_volumes().await? >= 1 {
                         possible_nodes_count += 1;
                     }
                 }
@@ -92,22 +103,21 @@ impl VolumeGrowth {
 
             valid_main_counts += 1;
             if random::<u32>() % valid_main_counts == 0 {
-                main_dc = Some(dc_arc.clone());
+                main_dc = Some(dc_tx.clone());
             }
         }
 
         if main_dc.is_none() {
             return Err(Error::NoFreeSpace("find main dc fail".to_string()));
         }
-        let main_dc_arc = main_dc.unwrap();
+        let main_dc_tx = main_dc.unwrap();
 
         if rp.diff_data_center_count > 0 {
-            for (dc_id, dc_arc) in topology.data_centers.iter() {
-                let dc = dc_arc.lock().await;
-                if *dc_id == main_dc_arc.lock().await.id || dc.free_volumes().await < 1 {
+            for (dc_id, dc_tx) in data_centers.iter() {
+                if *dc_id == main_dc_tx.id().await? || dc_tx.free_volumes().await? < 1 {
                     continue;
                 }
-                other_centers.push(dc_arc.clone());
+                other_centers.push(dc_tx.clone());
             }
         }
         if other_centers.len() < rp.diff_data_center_count as usize {
@@ -124,23 +134,24 @@ impl VolumeGrowth {
 
         // find main rack
         let mut valid_rack_count = 0;
-        for (_rack_id, rack_arc) in main_dc_arc.lock().await.racks.iter() {
-            let rack = rack_arc.lock().await;
-            if !option.rack.is_empty() && option.rack != rack.id {
+        for (_, rack_tx) in main_dc_tx.racks().await?.iter() {
+            if !option.rack.is_empty() && option.rack != rack_tx.id().await? {
                 continue;
             }
 
-            if rack.free_volumes().await < rp.same_rack_count as i64 + 1 {
+            if rack_tx.free_volumes().await? < rp.same_rack_count as i64 + 1 {
                 continue;
             }
 
-            if rack.nodes.len() < rp.same_rack_count as usize + 1 {
+            let data_nodes = rack_tx.data_nodes().await?;
+
+            if data_nodes.len() < rp.same_rack_count as usize + 1 {
                 continue;
             }
 
             let mut possible_nodes = 0;
-            for (_node_id, node) in rack.nodes.iter() {
-                if node.lock().await.free_volumes() < 1 {
+            for (_, node) in data_nodes.iter() {
+                if node.free_volumes().await? < 1 {
                     continue;
                 }
 
@@ -153,7 +164,7 @@ impl VolumeGrowth {
             valid_rack_count += 1;
 
             if random::<u32>() % valid_rack_count == 0 {
-                main_rack = Some(rack_arc.clone());
+                main_rack = Some(rack_tx.clone());
             }
         }
 
@@ -161,15 +172,14 @@ impl VolumeGrowth {
             return Err(Error::NoFreeSpace("find main rack fail".to_string()));
         }
 
-        let main_rack_arc = main_rack.unwrap();
+        let main_rack_tx = main_rack.unwrap();
 
         if rp.diff_rack_count > 0 {
-            for (rack_id, rack_arc) in main_dc_arc.lock().await.racks.iter() {
-                let rack = rack_arc.lock().await;
-                if *rack_id == main_rack_arc.lock().await.id || rack.free_volumes().await < 1 {
+            for (rack_id, rack_tx) in main_dc_tx.racks().await?.iter() {
+                if *rack_id == main_rack_tx.id().await? || rack_tx.free_volumes().await? < 1 {
                     continue;
                 }
-                other_racks.push(rack_arc.clone());
+                other_racks.push(rack_tx.clone());
             }
         }
 
@@ -184,30 +194,28 @@ impl VolumeGrowth {
 
         // find main node
         let mut valid_node = 0;
-        for (node_id, node) in main_rack_arc.lock().await.nodes.iter() {
+        for (node_id, node) in main_rack_tx.data_nodes().await?.iter() {
             if !option.data_node.is_empty() && option.data_node != *node_id {
                 continue;
             }
-            if node.lock().await.free_volumes() < 1 {
+            if node.free_volumes().await? < 1 {
                 continue;
             }
 
             valid_node += 1;
             if random::<u32>() % valid_node == 0 {
-                main_nd = Some(node.clone());
+                main_dn = Some(node.clone());
             }
         }
 
-        if main_nd.is_none() {
+        if main_dn.is_none() {
             return Err(Error::NoFreeSpace("find main node fail".to_string()));
         }
-        let main_nd_arc = main_nd.unwrap().clone();
+        let main_dn_tx = main_dn.unwrap().clone();
 
         if rp.same_rack_count > 0 {
-            for (node_id, node) in main_rack_arc.lock().await.nodes.iter() {
-                let node_ref = node.lock().await;
-
-                if *node_id == main_nd_arc.lock().await.id || node_ref.free_volumes() < 1 {
+            for (node_id, node) in main_rack_tx.data_nodes().await?.iter() {
+                if *node_id == main_dn_tx.id().await? || node.free_volumes().await? < 1 {
                     continue;
                 }
                 other_nodes.push(node.clone());
@@ -222,19 +230,19 @@ impl VolumeGrowth {
         other_nodes = tmp_nodes;
 
         let mut ret = vec![];
-        ret.push(main_nd_arc.clone());
+        ret.push(main_dn_tx.clone());
 
         for nd in other_nodes {
             ret.push(nd.clone());
         }
 
         for rack in other_racks {
-            let node = rack.lock().await.reserve_one_volume().await?;
+            let node = rack.reserve_one_volume().await?;
             ret.push(node);
         }
 
         for dc in other_centers {
-            let node = dc.lock().await.reserve_one_volume().await?;
+            let node = dc.reserve_one_volume().await?;
             ret.push(node);
         }
 
@@ -244,11 +252,11 @@ impl VolumeGrowth {
     async fn find_and_grow(
         &self,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
-        let nodes = self.find_empty_slots(option, topology).await?;
+        let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
-        let vid = topology.next_volume_id().await;
+        let vid = topology.next_volume_id().await?;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
@@ -257,11 +265,11 @@ impl VolumeGrowth {
         &self,
         count: usize,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
+        topology: TopologyEventTx,
     ) -> Result<usize> {
         let mut grow_count = 0;
         for _ in 0..count {
-            grow_count += self.find_and_grow(option, topology).await?;
+            grow_count += self.find_and_grow(option, topology.clone()).await?;
         }
 
         Ok(grow_count)
@@ -271,11 +279,11 @@ impl VolumeGrowth {
         &self,
         vid: VolumeId,
         option: &VolumeGrowOption,
-        topology: &mut Topology,
-        nodes: Vec<Arc<Mutex<DataNode>>>,
+        topology: TopologyEventTx,
+        nodes: Vec<DataNodeEventTx>,
     ) -> Result<()> {
-        for nd in nodes {
-            allocate_volume(nd.lock().await.deref(), vid, option).await?;
+        for dn in nodes {
+            allocate_volume(&dn, vid, option).await?;
             let volume_info = VolumeInfo {
                 id: vid,
                 size: 0,
@@ -286,31 +294,84 @@ impl VolumeGrowth {
                 ..Default::default()
             };
 
-            {
-                let mut node = nd.lock().await;
-                node.add_or_update_volume(volume_info.clone()).await;
-            }
+            dn.add_or_update_volume(volume_info.clone()).await?;
 
-            topology
-                .register_volume_layout(volume_info, nd.clone())
-                .await;
+            topology.register_volume_layout(volume_info, dn).await?;
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Default)]
+pub enum VolumeGrowthEvent {
+    GrowByType {
+        option: VolumeGrowOption,
+        topology: TopologyEventTx,
+        tx: oneshot::Sender<Result<usize>>,
+    },
+}
+
+pub async fn volume_growth_loop(
+    volume_grow: VolumeGrowth,
+    mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
+) {
+    info!("volume growth event loop starting.");
+    while let Some(event) = volume_grow_rx.next().await {
+        match event {
+            VolumeGrowthEvent::GrowByType {
+                option,
+                topology,
+                tx,
+            } => {
+                let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
+            }
+        }
+    }
+    info!("volume growth event loop stopping.");
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeGrowthEventTx(UnboundedSender<VolumeGrowthEvent>);
+
+impl VolumeGrowthEventTx {
+    pub fn new(tx: UnboundedSender<VolumeGrowthEvent>) -> Self {
+        Self(tx)
+    }
+
+    pub async fn grow_by_type(
+        &self,
+        option: VolumeGrowOption,
+        topology: TopologyEventTx,
+    ) -> Result<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeGrowthEvent::GrowByType {
+            option,
+            topology,
+            tx,
+        })?;
+        rx.await?
+    }
+
+    pub fn close(&self) {
+        self.0.close_channel();
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct VolumeGrowOption {
-    pub collection: String,
+    pub collection: FastStr,
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
     pub preallocate: i64,
-    pub data_center: String,
-    pub rack: String,
-    pub data_node: String,
+    pub data_center: FastStr,
+    pub rack: FastStr,
+    pub data_node: FastStr,
 }
 
-async fn allocate_volume(dn: &DataNode, vid: VolumeId, option: &VolumeGrowOption) -> Result<()> {
+async fn allocate_volume(
+    dn: &DataNodeEventTx,
+    vid: VolumeId,
+    option: &VolumeGrowOption,
+) -> Result<()> {
     let vid = &vid.to_string();
     let collection = &option.collection;
     let rp = &option.replica_placement.to_string();
@@ -325,7 +386,11 @@ async fn allocate_volume(dn: &DataNode, vid: VolumeId, option: &VolumeGrowOption
         ("preallocate", preallocate),
     ];
 
-    let body = util::get(&format!("http://{}/admin/assign_volume", dn.url()), &params).await?;
+    let body = util::get(
+        &format!("http://{}/admin/assign_volume", dn.url().await?),
+        &params,
+    )
+    .await?;
 
     let v: Value = serde_json::from_slice(&body)?;
 

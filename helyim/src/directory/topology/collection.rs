@@ -1,24 +1,24 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use futures::lock::Mutex;
+use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_layout::VolumeLayout, DataNode},
+    directory::topology::{volume_layout::VolumeLayout, DataNodeEventTx},
     storage::{ReplicaPlacement, Ttl, VolumeId},
 };
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Collection {
-    pub name: String,
+    pub name: FastStr,
     pub volume_size_limit: u64,
-    pub volume_layouts: HashMap<String, VolumeLayout>,
+    pub volume_layouts: HashMap<FastStr, VolumeLayout>,
 }
 
 impl Collection {
-    pub fn new(name: &str, volume_size_limit: u64) -> Collection {
+    pub fn new(name: FastStr, volume_size_limit: u64) -> Collection {
         Collection {
-            name: name.to_string(),
+            name,
             volume_size_limit,
             volume_layouts: HashMap::new(),
         }
@@ -37,11 +37,11 @@ impl Collection {
         let volume_size = self.volume_size_limit;
 
         self.volume_layouts
-            .entry(key)
+            .entry(FastStr::from_string(key))
             .or_insert_with(|| VolumeLayout::new(rp, ttl, volume_size))
     }
 
-    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<Mutex<DataNode>>>> {
+    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
         for layout in self.volume_layouts.values() {
             let ret = layout.lookup(vid);
             if ret.is_some() {

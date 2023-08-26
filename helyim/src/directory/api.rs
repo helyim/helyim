@@ -1,15 +1,15 @@
-use std::sync::Arc;
-
 use axum::{
     extract::{Query, State},
     Json,
 };
-use futures::lock::Mutex;
+use faststr::FastStr;
 use serde::Deserialize;
-use validator::Validate;
 
 use crate::{
-    directory::{Topology, VolumeGrowOption, VolumeGrowth},
+    directory::{
+        topology::{topology::TopologyEventTx, volume_grow::VolumeGrowthEventTx},
+        Topology, VolumeGrowOption,
+    },
     errors::{Error, Result},
     operation::{Assignment, ClusterStatus, Location, Lookup},
     storage::{ReplicaPlacement, Ttl},
@@ -17,24 +17,23 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
-    pub topology: Arc<Mutex<Topology>>,
-    pub volume_grow: Arc<Mutex<VolumeGrowth>>,
+    pub topology: TopologyEventTx,
+    pub volume_grow: VolumeGrowthEventTx,
     pub default_replica_placement: ReplicaPlacement,
-    pub ip: String,
+    pub ip: FastStr,
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize)]
 pub struct AssignRequest {
     count: Option<u64>,
-    #[validate(length(min = 3, max = 3))]
-    replication: Option<String>,
-    ttl: Option<String>,
+    replication: Option<FastStr>,
+    ttl: Option<FastStr>,
     preallocate: Option<i64>,
-    collection: Option<String>,
-    data_center: Option<String>,
-    rack: Option<String>,
-    data_node: Option<String>,
+    collection: Option<FastStr>,
+    data_center: Option<FastStr>,
+    rack: Option<FastStr>,
+    data_node: Option<FastStr>,
 }
 
 impl AssignRequest {
@@ -77,59 +76,61 @@ pub async fn assign_handler(
     }
     let option = request.volume_grow_option()?;
 
-    let mut topology = ctx.topology.lock().await;
-    if !topology.has_writable_volume(&option).await {
-        if topology.free_volumes().await <= 0 {
+    if !ctx.topology.has_writable_volume(option.clone()).await? {
+        if ctx.topology.free_volumes().await? <= 0 {
             return Err(Error::NoFreeSpace("no free volumes".to_string()));
         }
-        let volume_grow = ctx.volume_grow.lock().await;
-        volume_grow.grow_by_type(&option, &mut topology).await?;
+        ctx.volume_grow
+            .grow_by_type(option.clone(), ctx.topology.clone())
+            .await?;
     }
-    let (fid, count, node) = topology.pick_for_write(count, &option).await?;
-    let dn = node.lock().await;
+    let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
-        url: dn.url(),
-        public_url: dn.public_url.clone(),
+        url: node.url().await?,
+        public_url: node.public_url().await?,
         count,
-        error: String::from(""),
+        error: FastStr::empty(),
     };
     Ok(Json(assignment))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LookupRequest {
-    volume_id: String,
-    collection: String,
+    volume_id: FastStr,
+    collection: Option<FastStr>,
 }
 
 pub async fn lookup_handler(
     State(ctx): State<DirectoryContext>,
-    Json(request): Json<LookupRequest>,
+    Query(request): Query<LookupRequest>,
 ) -> Result<Json<Lookup>> {
     if request.volume_id.is_empty() {
         return Err(Error::String("volume_id can't be empty".to_string()));
     }
     let mut volume_id = request.volume_id;
     if let Some(idx) = volume_id.rfind(',') {
-        volume_id = volume_id[..idx].to_string();
+        volume_id = volume_id.slice_ref(&volume_id[..idx]);
     }
-    let mut topology = ctx.topology.lock().await;
     let mut locations = vec![];
-    match topology.lookup(request.collection, volume_id.parse::<u32>()?) {
+    let collection = request.collection.unwrap_or_default();
+    match ctx
+        .topology
+        .lookup(collection, volume_id.parse::<u32>()?)
+        .await?
+    {
         Some(nodes) => {
             for dn in nodes.iter() {
-                let dn = dn.lock().await;
                 locations.push(Location {
-                    url: dn.url(),
-                    public_url: dn.public_url.clone(),
+                    url: dn.url().await?,
+                    public_url: dn.public_url().await?,
                 });
             }
 
             let lookup = Lookup {
                 volume_id,
                 locations,
-                error: String::new(),
+                error: FastStr::empty(),
             };
             Ok(Json(lookup))
         }
@@ -137,9 +138,9 @@ pub async fn lookup_handler(
     }
 }
 
-pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Json<Topology> {
-    let topology = ctx.topology.lock().await.clone();
-    Json(topology)
+pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
+    let topology = ctx.topology.topology().await?;
+    Ok(Json(topology))
 }
 
 pub async fn cluster_status_handler(State(ctx): State<DirectoryContext>) -> Json<ClusterStatus> {

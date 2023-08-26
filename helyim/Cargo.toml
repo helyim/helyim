@@ -23,12 +23,12 @@ bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 crc.workspace = true
+faststr = { workspace = true, features = ["serde"]}
 futures.workspace = true
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
 libflate.workspace = true
 lru.workspace = true
-memmap2.workspace = true
 mime_guess.workspace = true
 multer.workspace = true
 parking_lot.workspace = true

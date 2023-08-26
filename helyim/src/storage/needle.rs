@@ -148,8 +148,8 @@ impl Needle {
         self.id = ret.0;
         self.cookie = ret.1;
         if !delta.is_empty() {
-            let idelta: u64 = delta.parse()?;
-            self.id += idelta;
+            let id_delta: u64 = delta.parse()?;
+            self.id += id_delta;
         }
 
         Ok(())

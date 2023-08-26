@@ -4,6 +4,7 @@ pub mod macros;
 mod http;
 use std::{collections::HashMap, fmt::Display};
 
+use faststr::FastStr;
 pub use http::{delete, get, post};
 use hyper::{
     header::{HeaderValue, CONTENT_LENGTH, CONTENT_TYPE},
@@ -76,10 +77,10 @@ pub fn json_response<J: serde::ser::Serialize>(status: StatusCode, to_j: &J) -> 
     Ok(resp)
 }
 
-pub fn get_or_default(s: String) -> String {
+pub fn get_or_default(s: String) -> FastStr {
     if s.is_empty() {
-        String::from(DEFAULT)
+        FastStr::from_static_str(DEFAULT)
     } else {
-        s
+        FastStr::new(s)
     }
 }

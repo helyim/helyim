@@ -4,7 +4,6 @@ pub use topology::{
     topology::Topology,
     volume_grow::{VolumeGrowOption, VolumeGrowth},
     volume_layout::VolumeLayout,
-    DataCenter, DataNode, Rack,
 };
 
 mod api;

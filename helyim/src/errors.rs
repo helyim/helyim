@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use futures::channel::mpsc::TrySendError;
 use hyper::{
     header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
     StatusCode,
@@ -73,6 +74,8 @@ pub enum Error {
     SendError(#[from] futures::channel::mpsc::SendError),
     #[error("{0}")]
     BroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<()>),
+    #[error("{0}")]
+    OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -90,5 +93,11 @@ impl IntoResponse for Error {
         });
         let response = (StatusCode::BAD_REQUEST, Json(error));
         response.into_response()
+    }
+}
+
+impl<T> From<TrySendError<T>> for Error {
+    fn from(value: TrySendError<T>) -> Self {
+        Error::String(value.to_string())
     }
 }
