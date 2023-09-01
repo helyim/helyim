@@ -164,7 +164,7 @@ pub fn get_boundary(req: &Request) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
 
     if *req.method() != Method::POST {
-        return Err(anyhow!("parse multipart err: no post request"));
+        return Err(anyhow!("parse multipart err: not post request"));
     }
 
     return match req.headers().get(CONTENT_TYPE) {
@@ -209,7 +209,7 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
     let mut file_name = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
-    let mut pair_map: HashMap<String, String> = HashMap::new();
+    let mut pair_map = HashMap::new();
 
     for (header_name, header_value) in req.headers().iter() {
         if header_name.as_str().starts_with(PAIR_NAME_PREFIX) {
@@ -221,7 +221,7 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
     }
 
     let boundary = get_boundary(&req)?;
-    let body_data = to_bytes(req.into_body()).await.unwrap();
+    let body_data = to_bytes(req.into_body()).await?;
     debug!("body_data len: {}", body_data.len());
     let stream = once(async move { StdResult::<Bytes, Infallible>::Ok(body_data) });
     let mut mpart = Multipart::new(stream, boundary);
@@ -239,8 +239,6 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
                 data.clear();
                 data.extend(field.bytes().await?);
             }
-        } else if let Ok(_text) = field.text().await {
-            // todo
         }
 
         if !file_name.is_empty() {
@@ -248,8 +246,10 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
         }
     }
 
-    let is_chunked_file =
-        util::parse_bool(params.get("cm").unwrap_or(&"false".to_string())).unwrap_or(false);
+    let mut is_chunked_file = false;
+    if let Some(is_chunked) = params.get("cm") {
+        is_chunked_file = util::parse_bool(is_chunked)?;
+    }
 
     let mut guess_mtype = String::new();
     if !is_chunked_file {
@@ -394,7 +394,7 @@ pub async fn post_handler(ctx: &StorageContext, req: Request) -> Result<Response
         new_needle_from_request(req).await?
     } else {
         let body = to_bytes(req.into_body()).await?.to_vec();
-        Needle::replicate_deserialize(&body)?
+        bincode::deserialize(&body)?
     };
 
     debug!("post needle: {}", n);
@@ -708,7 +708,7 @@ async fn replicate_write(
     }
 
     let params = vec![("type", "replicate")];
-    let data = n.replicate_serialize();
+    let data = bincode::serialize(n)?;
 
     let res = ctx.looker.lookup(vid).await?;
     debug!("get lookup res: {:?}", res);

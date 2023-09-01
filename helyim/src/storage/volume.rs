@@ -13,6 +13,7 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
+use rustix::fs::ftruncate;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
@@ -309,60 +310,37 @@ impl Volume {
 
     pub async fn write_needle(&mut self, n: &mut Needle) -> Result<u32> {
         if self.read_only {
-            return Err(anyhow!("data file {} is read-only", self.data_file_name()));
+            return Err(anyhow!("data file {} is read only", self.data_file_name()));
         }
 
-        let mut offset: u64;
-        let size: u32;
         let version = self.version();
 
-        {
-            let file = self.file_mut()?;
-            offset = file.seek(SeekFrom::End(0))?;
+        let file = self.file_mut()?;
 
-            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-                offset =
-                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-                offset = file.seek(SeekFrom::Start(offset))?;
-            }
-
-            size = match n.append(file, version) {
-                Ok(s) => s.0,
-                Err(err) => {
-                    // TODO
-                    // truncate file
-                    return Err(err);
-                }
-            };
+        let mut offset = file.seek(SeekFrom::End(0))?;
+        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+            offset = file.seek(SeekFrom::Start(offset))?;
         }
-
         offset /= NEEDLE_PADDING_SIZE as u64;
-        if n.is_delete() {
-            self.needle_mapper.set(
-                n.id,
-                NeedleValue {
-                    offset: 0,
-                    size: n.size,
-                },
-            );
-        } else {
-            self.needle_mapper.set(
-                n.id,
-                NeedleValue {
-                    offset: offset as u32,
-                    size: n.size,
-                },
-            );
-        }
 
-        self.write_index_file(
-            n.id,
-            NeedleValue {
-                offset: offset as u32,
-                size: n.size,
-            },
-        )
-        .await?;
+        let size = match n.append(file, version) {
+            Ok((data_size, _actual_size)) => data_size,
+            Err(err) => {
+                if let Err(err) = ftruncate(file, offset) {
+                    error!("cannot truncate file: {}, {err}", self.data_file_name());
+                    return Err(Error::Errno(err));
+                }
+                return Err(err);
+            }
+        };
+
+        let nv = NeedleValue {
+            offset: offset as u32,
+            size: n.size,
+        };
+        self.needle_mapper.set(n.id, nv);
+        self.write_index_file(n.id, nv).await?;
 
         if self.last_modified < n.last_modified {
             self.last_modified = n.last_modified;
@@ -376,15 +354,21 @@ impl Volume {
             return Err(anyhow!("{} is read only", self.data_file_name()));
         }
 
-        let nv = match self.needle_mapper.get(n.id) {
+        let mut nv = match self.needle_mapper.get(n.id) {
             Some(nv) => nv,
             None => return Ok(0),
         };
+        nv.offset = 0;
+
+        self.needle_mapper.set(n.id, nv);
+        self.write_index_file(n.id, nv).await?;
 
         n.set_is_delete();
         n.data.clear();
-        self.write_needle(n).await?;
 
+        let version = self.version();
+        let file = self.file_mut()?;
+        n.append(file, version)?;
         Ok(nv.size)
     }
 
@@ -438,14 +422,14 @@ impl Volume {
     }
 
     pub fn file_name(&self) -> String {
-        let mut rt = self.dir.to_string();
-        if !rt.ends_with('/') {
-            rt.push('/');
+        let mut dirname = self.dir.to_string();
+        if !dirname.ends_with('/') {
+            dirname.push('/');
         }
         if self.collection.is_empty() {
-            format!("{}{}", rt, self.id)
+            format!("{}{}", dirname, self.id)
         } else {
-            format!("{}{}_{}", rt, self.collection, self.id)
+            format!("{}{}_{}", dirname, self.collection, self.id)
         }
     }
 

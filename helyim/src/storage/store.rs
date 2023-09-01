@@ -118,15 +118,11 @@ impl Store {
             }
         }
         if delete {
-            self.update_master();
+            // TODO: update master
             Ok(())
         } else {
             Err(anyhow!("volume {} not found on disk", vid))
         }
-    }
-
-    pub fn update_master(&self) {
-        panic!("TODO");
     }
 
     fn find_free_location(&mut self) -> Option<&mut DiskLocation> {

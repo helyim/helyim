@@ -24,6 +24,8 @@ pub enum Error {
     ParseReplicaPlacement(String),
     #[error("Invalid ttl: {0}")]
     ParseTtl(String),
+    #[error("Invalid file id: {0}")]
+    InvalidFid(String),
 
     /// other errors
     #[error("{0}")]
@@ -44,9 +46,14 @@ pub enum Error {
     AddrParse(#[from] AddrParseError),
     #[error("{0}")]
     SystemTimeError(#[from] SystemTimeError),
+    #[error("crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
+    Crc(u32, u32),
 
     #[error("{0}")]
     Multer(#[from] multer::Error),
+
+    #[error("{0}")]
+    Errno(#[from] rustix::io::Errno),
 
     // http
     #[error("{0}")]

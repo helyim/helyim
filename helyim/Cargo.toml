@@ -23,7 +23,7 @@ bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 crc.workspace = true
-faststr = { workspace = true, features = ["serde"]}
+faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
@@ -34,11 +34,12 @@ multer.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
 rand.workspace = true
+rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sonyflake.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["full"]}
+tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
 tokio-uring = { workspace = true, optional = true }
 tracing.workspace = true
@@ -52,4 +53,4 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []
-iouring = [ "tokio-uring" ]
+iouring = ["tokio-uring"]
