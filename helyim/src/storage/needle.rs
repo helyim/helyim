@@ -4,6 +4,7 @@ use std::{
     fmt::{Display, Formatter},
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::FileExt,
 };
 
 use bytes::{Buf, BufMut, Bytes};
@@ -15,6 +16,7 @@ use crate::{
     errors::{Error, Result},
     storage::{
         crc,
+        crc::checksum,
         ttl::Ttl,
         version::{Version, CURRENT_VERSION, VERSION2},
     },
@@ -147,7 +149,29 @@ impl Needle {
         Ok(())
     }
 
-    fn read_needle_data(&mut self, bytes: Bytes) {
+    pub fn read_needle_body(
+        &mut self,
+        data_file: &File,
+        offset: u32,
+        body_len: u32,
+        version: Version,
+    ) -> Result<()> {
+        if body_len == 0 {
+            return Ok(());
+        }
+        match version {
+            VERSION2 => {
+                let mut buf = vec![0u8; body_len as usize];
+                data_file.read_exact_at(&mut buf, offset as u64)?;
+                self.read_needle_data(Bytes::from(buf));
+                self.checksum = checksum(&self.data);
+            }
+            n => return Err(Error::UnsupportedVersion(n)),
+        }
+        Ok(())
+    }
+
+    pub fn read_needle_data(&mut self, bytes: Bytes) {
         let mut idx = 0;
         let len = bytes.len();
 
@@ -358,6 +382,10 @@ impl Needle {
         buf.put_u32(self.checksum);
         format!("{}{}{}{}", buf[0], buf[1], buf[2], buf[3])
     }
+
+    pub fn disk_size(&self) -> u32 {
+        actual_size(self.size)
+    }
 }
 
 fn parse_key_hash(hash: &str) -> Result<(u64, u32)> {
@@ -371,4 +399,20 @@ fn parse_key_hash(hash: &str) -> Result<(u64, u32)> {
     let cookie: u32 = u32::from_str_radix(&hash[key_end..], 16)?;
 
     Ok((key, cookie))
+}
+
+pub fn read_needle_header(file: &File, version: Version, offset: u32) -> Result<(Needle, u32)> {
+    let mut needle = Needle::default();
+    let mut body_len = 0;
+
+    if version == VERSION2 {
+        let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
+        file.read_exact_at(&mut buf, offset as u64)?;
+        needle.parse_needle_header(&buf);
+        let padding = NEEDLE_PADDING_SIZE
+            - ((needle.size + NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE);
+        body_len = needle.size + NEEDLE_CHECKSUM_SIZE + padding;
+    }
+
+    Ok((needle, body_len))
 }

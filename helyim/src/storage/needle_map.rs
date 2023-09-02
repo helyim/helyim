@@ -1,9 +1,9 @@
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
 };
 
-use bytes::Buf;
+use bytes::{Buf, BufMut};
 use tracing::debug;
 
 use crate::{
@@ -25,12 +25,13 @@ struct Metric {
     maximum_file_key: u64,
     file_count: u64,
     deleted_count: u64,
-    deleted_byte_count: u64,
+    deleted_bytes: u64,
     file_byte_count: u64,
 }
 
 pub struct NeedleMapper {
     needle_value_map: Box<dyn NeedleValueMap>,
+    index_file: Option<File>,
     metric: Metric,
 }
 
@@ -39,6 +40,7 @@ impl Default for NeedleMapper {
         NeedleMapper {
             needle_value_map: Box::new(MemoryNeedleValueMap::new()),
             metric: Metric::default(),
+            index_file: None,
         }
     }
 }
@@ -49,7 +51,7 @@ impl NeedleMapper {
         match kind {
             NeedleMapType::NeedleMapInMemory => NeedleMapper {
                 needle_value_map: Box::new(MemoryNeedleValueMap::new()),
-                metric: Metric::default(),
+                ..Default::default()
             },
             _ => panic!("not support map type: {:?}", kind),
         }
@@ -71,6 +73,7 @@ impl NeedleMapper {
             }
             Ok(())
         })?;
+        self.index_file = Some(index_file.try_clone()?);
         Ok(())
     }
 
@@ -85,7 +88,7 @@ impl NeedleMapper {
 
         if let Some(n) = old {
             self.metric.deleted_count += 1;
-            self.metric.deleted_byte_count += n.size as u64;
+            self.metric.deleted_bytes += n.size as u64;
         }
 
         old
@@ -96,7 +99,7 @@ impl NeedleMapper {
 
         if let Some(n) = deleted {
             self.metric.deleted_count += 1;
-            self.metric.deleted_byte_count += n.size as u64;
+            self.metric.deleted_bytes += n.size as u64;
         }
 
         debug!("needle map delete key: {} {:?}", key, deleted);
@@ -115,8 +118,8 @@ impl NeedleMapper {
         self.metric.deleted_count
     }
 
-    pub fn deleted_byte_count(&self) -> u64 {
-        self.metric.deleted_byte_count
+    pub fn deleted_bytes(&self) -> u64 {
+        self.metric.deleted_bytes
     }
 
     pub fn max_file_key(&self) -> u64 {
@@ -125,6 +128,19 @@ impl NeedleMapper {
 
     pub fn content_size(&self) -> u64 {
         self.metric.file_byte_count
+    }
+
+    pub fn append_to_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
+        if let Some(file) = self.index_file.as_mut() {
+            let mut buf = vec![];
+            buf.put_u64(key);
+            buf.put_u32(value.offset);
+            buf.put_u32(value.size);
+
+            file.write_all(&buf)?;
+        }
+
+        Ok(())
     }
 }
 

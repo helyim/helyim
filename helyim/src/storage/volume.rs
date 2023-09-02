@@ -11,7 +11,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    SinkExt, StreamExt,
+    StreamExt,
 };
 use rustix::fs::ftruncate;
 use tokio::sync::broadcast;
@@ -22,7 +22,10 @@ use crate::{
     errors::{Error, Result},
     rt_spawn,
     storage::{
-        needle::{Needle, NeedleValue, NEEDLE_PADDING_SIZE},
+        needle::{
+            read_needle_header, Needle, NeedleValue, NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE,
+            NEEDLE_PADDING_SIZE,
+        },
         needle_map::{NeedleMapType, NeedleMapper},
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
@@ -52,7 +55,6 @@ impl Default for SuperBlock {
             version: CURRENT_VERSION,
             replica_placement: ReplicaPlacement::default(),
             ttl: Ttl::default(),
-            // TODO
             compact_revision: 0,
         }
     }
@@ -87,6 +89,7 @@ impl SuperBlock {
     }
 }
 
+#[derive(Default)]
 pub struct Volume {
     pub id: VolumeId,
     pub dir: FastStr,
@@ -99,9 +102,7 @@ pub struct Volume {
     pub last_modified: u64,
     pub last_compact_index_offset: u64,
     pub last_compact_revision: u16,
-    index_tx: UnboundedSender<(u64, NeedleValue)>,
-
-    shutdown: broadcast::Sender<()>,
+    index_tx: Option<UnboundedSender<(u64, NeedleValue)>>,
 }
 
 impl Display for Volume {
@@ -156,17 +157,16 @@ impl Volume {
             super_block: sb,
             data_file: None,
             needle_map_type,
-            index_tx,
+            index_tx: Some(index_tx),
             needle_mapper: NeedleMapper::default(),
             read_only: false,
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             last_modified: 0,
-            shutdown,
         };
 
         v.load(true, true)?;
-        v.spawn_index_file_writer(index_rx)?;
+        v.spawn_index_file_writer(index_rx, shutdown)?;
         debug!("new volume dir: {}, id: {} load success", dir, id);
         Ok(v)
     }
@@ -174,6 +174,7 @@ impl Volume {
     fn spawn_index_file_writer(
         &self,
         mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
+        shutdown: broadcast::Sender<()>,
     ) -> Result<()> {
         let file = fs::OpenOptions::new()
             // most hardware designs cannot support write permission without read permission
@@ -186,7 +187,7 @@ impl Volume {
         let vid = self.id;
         let mut writer = BufWriter::new(file);
 
-        let mut shutdown_rx = self.shutdown.subscribe();
+        let mut shutdown_rx = shutdown.subscribe();
         rt_spawn(async move {
             let mut buf = vec![];
             let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -279,14 +280,14 @@ impl Volume {
     }
 
     fn write_super_block(&mut self) -> Result<()> {
-        let bytes = self.super_block.as_bytes();
-        let file = self.file_mut()?;
+        let mut file = self.file()?;
         let meta = file.metadata()?;
 
         if meta.len() != 0 {
             return Ok(());
         }
 
+        let bytes = self.super_block.as_bytes();
         file.write_all(&bytes)?;
         debug!("write super block success");
         Ok(())
@@ -305,7 +306,10 @@ impl Volume {
     }
 
     async fn write_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
-        Ok(self.index_tx.send((key, value)).await?)
+        if let Some(index_tx) = self.index_tx.as_ref() {
+            index_tx.unbounded_send((key, value))?;
+        }
+        Ok(())
     }
 
     pub async fn write_needle(&mut self, n: &mut Needle) -> Result<u32> {
@@ -395,21 +399,21 @@ impl Volume {
         }
     }
 
-    fn file(&self) -> Result<&File> {
+    pub fn file(&self) -> Result<&File> {
         match self.data_file.as_ref() {
             Some(data_file) => Ok(data_file),
             None => Err(anyhow!("volume {} not load", self.id)),
         }
     }
 
-    fn file_mut(&mut self) -> Result<&mut File> {
+    pub fn file_mut(&mut self) -> Result<&mut File> {
         match self.data_file.as_mut() {
             Some(data_file) => Ok(data_file),
             None => Err(anyhow!("volume {} not load", self.id)),
         }
     }
 
-    fn version(&self) -> Version {
+    pub fn version(&self) -> Version {
         self.super_block.version
     }
 
@@ -443,7 +447,7 @@ impl Volume {
             version: self.version(),
             file_count: self.needle_mapper.file_count() as i64,
             delete_count: self.needle_mapper.delete_count() as i64,
-            delete_byte_count: self.needle_mapper.deleted_byte_count(),
+            delete_bytes: self.needle_mapper.deleted_bytes(),
             read_only: self.read_only,
         }
     }
@@ -515,5 +519,88 @@ impl Volume {
         }
 
         false
+    }
+}
+
+fn load_volume_without_index(
+    dirname: FastStr,
+    collection: FastStr,
+    id: VolumeId,
+    needle_map_type: NeedleMapType,
+) -> Result<Volume> {
+    let mut volume = Volume {
+        dir: dirname,
+        collection,
+        id,
+        needle_map_type,
+        ..Default::default()
+    };
+    volume.load(false, false)?;
+
+    Ok(volume)
+}
+
+pub fn scan_volume_file<VSB, VN>(
+    dirname: FastStr,
+    collection: FastStr,
+    id: VolumeId,
+    needle_map_type: NeedleMapType,
+    read_needle_body: bool,
+    mut visit_super_block: VSB,
+    mut visit_needle: VN,
+) -> Result<()>
+where
+    VSB: FnMut(&mut SuperBlock) -> Result<()>,
+    VN: FnMut(&mut Needle, u32) -> Result<()>,
+{
+    let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
+    visit_super_block(&mut volume.super_block)?;
+
+    let version = volume.version();
+    let mut offset = SUPER_BLOCK_SIZE as u32;
+
+    let (mut needle, mut rest) = read_needle_header(volume.file()?, version, offset)?;
+
+    loop {
+        if read_needle_body {
+            needle.read_needle_body(
+                volume.file_mut()?,
+                offset + NEEDLE_HEADER_SIZE,
+                rest,
+                version,
+            )?;
+            if needle.data_size >= needle.size {
+                // this should come from a bug reported on #87 and #93
+                // fixed in v0.69
+                // remove this whole "if" clause later, long after 0.69
+                let padding = NEEDLE_PADDING_SIZE
+                    - ((needle.size + NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE)
+                        % NEEDLE_PADDING_SIZE);
+                needle.size = 0;
+                rest = needle.size + NEEDLE_CHECKSUM_SIZE + padding;
+                if rest % NEEDLE_PADDING_SIZE != 0 {
+                    rest += NEEDLE_PADDING_SIZE - rest % NEEDLE_PADDING_SIZE;
+                }
+            }
+        }
+
+        visit_needle(&mut needle, offset)?;
+        offset += NEEDLE_HEADER_SIZE + rest;
+
+        match read_needle_header(volume.file()?, version, offset) {
+            Ok((n, body_len)) => {
+                needle = n;
+                rest = body_len;
+            }
+            Err(Error::Io(err)) => {
+                if err.kind() == ErrorKind::UnexpectedEof {
+                    return Ok(());
+                }
+            }
+            Err(err) => {
+                error!("read needle header error, {err}");
+                return Err(anyhow!("read needle header error, {err}"));
+            }
+        }
     }
 }

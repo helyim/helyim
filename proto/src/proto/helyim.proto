@@ -33,7 +33,7 @@ message VolumeInformationMessage {
   string collection = 3;
   uint64 file_count = 4;
   uint64 delete_count = 5;
-  uint64 deleted_byte_count = 6;
+  uint64 deleted_bytes = 6;
   bool read_only = 7;
   uint32 replica_placement = 8;
   uint32 version = 9;

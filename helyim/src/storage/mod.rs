@@ -24,12 +24,15 @@ mod server;
 pub use server::StorageServer;
 
 mod store;
-mod volume;
 
 mod file_id;
 pub use file_id::FileId;
 
+mod volume;
+
 mod volume_info;
 pub use volume_info::VolumeInfo;
+
+mod volume_vacuum;
 
 pub type VolumeId = u32;

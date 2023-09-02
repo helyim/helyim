@@ -48,6 +48,8 @@ pub enum Error {
     SystemTimeError(#[from] SystemTimeError),
     #[error("crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
     Crc(u32, u32),
+    #[error("unsupported version: {0}")]
+    UnsupportedVersion(u8),
 
     #[error("{0}")]
     Multer(#[from] multer::Error),

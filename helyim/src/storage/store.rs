@@ -239,7 +239,7 @@ impl Store {
                         collection: v.collection.to_string(),
                         file_count: v.needle_mapper.file_count(),
                         delete_count: v.needle_mapper.delete_count(),
-                        deleted_byte_count: v.needle_mapper.deleted_byte_count(),
+                        deleted_bytes: v.needle_mapper.deleted_bytes(),
                         read_only: v.read_only,
                         replica_placement: Into::<u8>::into(v.super_block.replica_placement) as u32,
                         version: v.super_block.version as u32,
