@@ -4,6 +4,11 @@ use std::{
     time::Duration,
 };
 
+use axum::{
+    extract::{Query, State},
+    headers, Json, TypedHeader,
+};
+use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
 use futures::{
@@ -25,7 +30,8 @@ use hyper::{
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
@@ -136,6 +142,25 @@ async fn status_handler(ctx: &StorageContext, _req: &Request) -> Result<Response
     Ok(resp)
 }
 
+async fn status_handler2(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
+    let store = ctx.store.lock().await;
+
+    let mut infos: Vec<VolumeInfo> = vec![];
+    for location in store.locations.iter() {
+        for (_, v) in location.volumes.iter() {
+            let vinfo = v.get_volume_info();
+            infos.push(vinfo);
+        }
+    }
+
+    let stat = json!({
+        "version": "0.1",
+        "volumes": &infos,
+    });
+
+    Ok(Json(stat))
+}
+
 pub async fn assign_volume_handler(ctx: &StorageContext, req: &Request) -> Result<Response> {
     let params = util::get_request_params(req);
 
@@ -160,6 +185,32 @@ pub async fn assign_volume_handler(ctx: &StorageContext, req: &Request) -> Resul
     Ok(resp)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AssignVolumeRequest {
+    volume: Option<FastStr>,
+    replication: Option<FastStr>,
+    ttl: Option<FastStr>,
+    preallocate: Option<i64>,
+    collection: Option<FastStr>,
+}
+
+pub async fn assign_volume_handler2(
+    State(ctx): State<StorageContext>,
+    Query(request): Query<AssignVolumeRequest>,
+) -> Result<()> {
+    let mut store = ctx.store.lock().await;
+    store.add_volume(
+        &request.volume.unwrap_or_default(),
+        &request.collection.unwrap_or_default(),
+        ctx.needle_map_type,
+        &request.replication.unwrap_or_default(),
+        &request.ttl.unwrap_or_default(),
+        request.preallocate.unwrap_or_default(),
+    )?;
+
+    Ok(())
+}
+
 pub fn get_boundary(req: &Request) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
 
@@ -180,7 +231,7 @@ pub fn get_boundary(req: &Request) -> Result<String> {
 }
 
 pub struct ParseUploadResp {
-    pub file_name: String,
+    pub filename: String,
     pub data: Vec<u8>,
     pub mime_type: String,
     pub pair_map: HashMap<String, String>,
@@ -193,8 +244,8 @@ impl Display for ParseUploadResp {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "file_name: {}, data_len: {}, mime_type: {}, ttl minutes: {}, is_chunked_file: {}",
-            self.file_name,
+            "filename: {}, data_len: {}, mime_type: {}, ttl minutes: {}, is_chunked_file: {}",
+            self.filename,
             self.data.len(),
             self.mime_type,
             self.ttl.minutes(),
@@ -206,7 +257,7 @@ impl Display for ParseUploadResp {
 pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
     let params = util::get_request_params(&req);
 
-    let mut file_name = String::new();
+    let mut filename = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
     let mut pair_map = HashMap::new();
@@ -231,7 +282,7 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
     while let Ok(Some(field)) = mpart.next_field().await {
         debug!("field name: {:?}", field.name());
         if let Some(name) = field.file_name() {
-            file_name = name.to_string();
+            filename = name.to_string();
             if let Some(content_type) = field.content_type() {
                 post_mtype.push_str(content_type.type_().as_str());
                 post_mtype.push('/');
@@ -241,7 +292,7 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
             }
         }
 
-        if !file_name.is_empty() {
+        if !filename.is_empty() {
             break;
         }
     }
@@ -253,8 +304,8 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
 
     let mut guess_mtype = String::new();
     if !is_chunked_file {
-        if let Some(idx) = file_name.find('.') {
-            let ext = &file_name[idx..];
+        if let Some(idx) = filename.find('.') {
+            let ext = &filename[idx..];
             let m = mime_guess::from_ext(ext).first_or_octet_stream();
             if m.type_() != mime::APPLICATION || m.subtype() != mime::OCTET_STREAM {
                 guess_mtype.push_str(m.type_().as_str());
@@ -283,7 +334,7 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
     };
 
     let resp = ParseUploadResp {
-        file_name,
+        filename,
         data,
         mime_type,
         pair_map,
@@ -333,6 +384,51 @@ pub async fn delete_handler(ctx: &StorageContext, req: Request) -> Result<Respon
         .insert(CONTENT_LENGTH, HeaderValue::from(body_len));
 
     Ok(response)
+}
+
+#[derive(FromRequest)]
+pub struct DeleteExtractor {
+    uri: axum::http::Uri,
+    #[from_request(via(TypedHeader))]
+    host: headers::Host,
+    #[from_request(via(Query))]
+    query: DeleteQuery,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteQuery {
+    r#type: Option<FastStr>,
+}
+
+pub async fn delete_handler2(
+    State(ctx): State<StorageContext>,
+    extractor: DeleteExtractor,
+) -> Result<Value> {
+    let (svid, fid, _, _, _) = parse_url_path(extractor.uri.path());
+    let vid = svid.parse::<u32>()?;
+    let is_replicate = extractor.query.r#type == Some("replicate".into());
+
+    let mut needle = Needle::default();
+    needle.parse_path(&fid)?;
+
+    let cookie = needle.cookie;
+
+    {
+        let mut store = ctx.store.lock().await;
+        store.read_volume_needle(vid, &mut needle)?;
+        if cookie != needle.cookie {
+            info!(
+                "cookie not match from {:?} recv: {}, file is {}",
+                extractor.host, cookie, needle.cookie
+            );
+            return Err(Error::CookieNotMatch(cookie, needle.cookie));
+        }
+    }
+
+    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let size = json!({ "size": size });
+
+    Ok(size)
 }
 
 async fn replicate_delete(
@@ -429,7 +525,6 @@ async fn new_needle_from_request(req: Request) -> Result<Needle> {
     let path = req.uri().path().to_string();
 
     let mut resp = parse_upload(req).await?;
-    debug!("parse_upload: {}", resp);
 
     let mut needle = Needle {
         data: Bytes::from(resp.data),
@@ -441,8 +536,8 @@ async fn new_needle_from_request(req: Request) -> Result<Needle> {
         needle.pairs = Bytes::from(serde_json::to_vec(&resp.pair_map)?);
     }
 
-    if !resp.file_name.is_empty() {
-        needle.name = Bytes::from(resp.file_name);
+    if !resp.filename.is_empty() {
+        needle.name = Bytes::from(resp.filename);
         needle.set_name();
     }
 

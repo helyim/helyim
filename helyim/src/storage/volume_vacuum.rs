@@ -29,7 +29,7 @@ impl Volume {
     }
 
     pub fn compact(&mut self, preallocate: u64) -> Result<()> {
-        let file_path = self.file_name();
+        let file_path = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_and_generate_index_file(
@@ -40,7 +40,7 @@ impl Volume {
     }
 
     pub fn compact2(&mut self) -> Result<()> {
-        let file_path = self.file_name();
+        let file_path = self.filename();
         self.copy_data_based_on_index_file(
             format!("{}.cpd", file_path),
             format!("{}.cpx", file_path),
@@ -48,10 +48,10 @@ impl Volume {
     }
 
     pub fn commit_compact(&mut self) -> Result<()> {
-        let compact_data_filename = format!("{}.cpd", self.file_name());
-        let compact_index_filename = format!("{}.cpx", self.file_name());
-        let data_filename = format!("{}.dat", self.file_name());
-        let index_filename = format!("{}.idx", self.file_name());
+        let compact_data_filename = format!("{}.cpd", self.filename());
+        let compact_index_filename = format!("{}.cpx", self.filename());
+        let data_filename = format!("{}.dat", self.filename());
+        let index_filename = format!("{}.idx", self.filename());
         match self.makeup_diff(
             compact_data_filename.clone(),
             compact_index_filename.clone(),
@@ -73,8 +73,8 @@ impl Volume {
     }
 
     pub fn cleanup_compact(&mut self) -> Result<()> {
-        fs::remove_file(format!("{}.cpd", self.file_name()))?;
-        fs::remove_file(format!("{}.cpx", self.file_name()))?;
+        fs::remove_file(format!("{}.cpd", self.filename()))?;
+        fs::remove_file(format!("{}.cpx", self.filename()))?;
         Ok(())
     }
 
@@ -272,7 +272,7 @@ impl Volume {
         let old_idx_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
-            .open(format!("{}.idx", self.file_name()))?;
+            .open(format!("{}.idx", self.filename()))?;
 
         let mut nm = NeedleMapper::default();
         nm.load_idx_file(&idx_file)?;

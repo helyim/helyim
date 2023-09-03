@@ -182,7 +182,7 @@ impl Volume {
             .write(true)
             .append(true)
             .create(true)
-            .open(self.index_file_name())?;
+            .open(self.index_filename())?;
 
         let vid = self.id;
         let mut writer = BufWriter::new(file);
@@ -224,7 +224,7 @@ impl Volume {
             return Err(anyhow!("volume {} has loaded!", self.id));
         }
 
-        let name = self.data_file_name();
+        let name = self.data_filename();
         debug!("loading volume: {}", name);
 
         let meta = match metadata(&name) {
@@ -270,10 +270,10 @@ impl Volume {
                 .read(true)
                 .create(true)
                 .write(true)
-                .open(self.index_file_name())?;
+                .open(self.index_filename())?;
 
             self.needle_mapper.load_idx_file(&index_file)?;
-            info!("load index file `{}` success", self.index_file_name());
+            info!("load index file `{}` success", self.index_filename());
         }
 
         Ok(())
@@ -314,7 +314,7 @@ impl Volume {
 
     pub async fn write_needle(&mut self, n: &mut Needle) -> Result<u32> {
         if self.read_only {
-            return Err(anyhow!("data file {} is read only", self.data_file_name()));
+            return Err(anyhow!("data file {} is read only", self.data_filename()));
         }
 
         let version = self.version();
@@ -332,7 +332,7 @@ impl Volume {
             Ok((data_size, _actual_size)) => data_size,
             Err(err) => {
                 if let Err(err) = ftruncate(file, offset) {
-                    error!("cannot truncate file: {}, {err}", self.data_file_name());
+                    error!("cannot truncate file: {}, {err}", self.data_filename());
                     return Err(Error::Errno(err));
                 }
                 return Err(err);
@@ -355,7 +355,7 @@ impl Volume {
 
     pub async fn delete_needle(&mut self, n: &mut Needle) -> Result<u32> {
         if self.read_only {
-            return Err(anyhow!("{} is read only", self.data_file_name()));
+            return Err(anyhow!("{} is read only", self.data_filename()));
         }
 
         let mut nv = match self.needle_mapper.get(n.id) {
@@ -417,15 +417,15 @@ impl Volume {
         self.super_block.version
     }
 
-    pub fn data_file_name(&self) -> String {
-        format!("{}.{}", self.file_name(), DATA_FILE_SUFFIX)
+    pub fn data_filename(&self) -> String {
+        format!("{}.{}", self.filename(), DATA_FILE_SUFFIX)
     }
 
-    pub fn index_file_name(&self) -> String {
-        format!("{}.{}", self.file_name(), IDX_FILE_SUFFIX)
+    pub fn index_filename(&self) -> String {
+        format!("{}.{}", self.filename(), IDX_FILE_SUFFIX)
     }
 
-    pub fn file_name(&self) -> String {
+    pub fn filename(&self) -> String {
         let mut dirname = self.dir.to_string();
         if !dirname.ends_with('/') {
             dirname.push('/');
@@ -454,11 +454,11 @@ impl Volume {
 
     pub fn destroy(&mut self) -> Result<()> {
         if self.read_only {
-            return Err(anyhow!("{} is read only", self.data_file_name()));
+            return Err(anyhow!("{} is read only", self.data_filename()));
         }
 
-        fs::remove_file(Path::new(&self.data_file_name()))?;
-        fs::remove_file(Path::new(&self.index_file_name()))?;
+        fs::remove_file(Path::new(&self.data_filename()))?;
+        fs::remove_file(Path::new(&self.index_filename()))?;
 
         Ok(())
     }
