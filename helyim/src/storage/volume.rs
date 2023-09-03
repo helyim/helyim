@@ -2,7 +2,7 @@ use std::{
     fmt::Display,
     fs::{self, metadata, File},
     io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     time::Duration,
 };
@@ -24,9 +24,9 @@ use crate::{
     storage::{
         needle::{
             read_needle_header, Needle, NeedleValue, NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE,
-            NEEDLE_PADDING_SIZE,
+            NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE,
         },
-        needle_map::{NeedleMapType, NeedleMapper},
+        needle_map::{index_entry, NeedleMapType, NeedleMapper},
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
         version::{Version, CURRENT_VERSION},
@@ -219,7 +219,7 @@ impl Volume {
         Ok(())
     }
 
-    fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<()> {
+    pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<()> {
         if self.data_file.is_some() {
             return Err(anyhow!("volume {} has loaded!", self.id));
         }
@@ -604,3 +604,63 @@ where
         }
     }
 }
+
+// volume checking start
+
+pub fn verify_index_file_integrity(index_file: &File) -> Result<u64> {
+    let meta = index_file.metadata()?;
+    let size = meta.len();
+    if size % NEEDLE_PADDING_SIZE as u64 != 0 {
+        return Err(Error::DataIntegrity(format!(
+            "index file's size is {size} bytes, maybe corrupted"
+        )));
+    }
+    Ok(size)
+}
+
+pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Result<()> {
+    let index_size = verify_index_file_integrity(index_file)?;
+    if index_size == 0 {
+        return Ok(());
+    }
+    let last_index_entry =
+        read_index_entry_at_offset(index_file, index_size - NEEDLE_INDEX_SIZE as u64)?;
+    let (key, offset, size) = index_entry(&last_index_entry);
+    if offset == 0 {
+        return Ok(());
+    }
+    let version = volume.version();
+    verify_needle_integrity(
+        volume.file_mut()?,
+        version,
+        offset * NEEDLE_PADDING_SIZE,
+        key,
+        size,
+    )
+}
+
+pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>> {
+    let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
+    index_file.read_exact_at(&mut buf, offset)?;
+    Ok(buf)
+}
+
+pub fn verify_needle_integrity(
+    data_file: &mut File,
+    version: Version,
+    offset: u32,
+    key: u64,
+    size: u32,
+) -> Result<()> {
+    let mut needle = Needle::default();
+    needle.read_data(data_file, offset, size, version)?;
+    if needle.id != key {
+        return Err(Error::DataIntegrity(format!(
+            "index key {key} does not match needle's id {}",
+            needle.id
+        )));
+    }
+    Ok(())
+}
+
+// volume checking end

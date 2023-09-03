@@ -25,6 +25,7 @@ use crate::{
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
 pub const NEEDLE_PADDING_SIZE: u32 = 8;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
+pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
 pub const PAIR_NAME_PREFIX: &str = "Helyim-";
 pub const FLAG_GZIP: u8 = 0x01;
@@ -106,7 +107,7 @@ pub fn actual_offset(offset: u32) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-fn read_needle_blob(file: &mut File, offset: u32, size: u32) -> Result<Bytes> {
+pub fn read_needle_blob(file: &mut File, offset: u32, size: u32) -> Result<Bytes> {
     let size = actual_size(size);
     let mut buffer = vec![0; size as usize];
 

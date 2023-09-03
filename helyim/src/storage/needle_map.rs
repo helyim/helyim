@@ -130,6 +130,14 @@ impl NeedleMapper {
         self.metric.file_byte_count
     }
 
+    pub fn index_file_size(&self) -> Result<u64> {
+        let size = match self.index_file.as_ref() {
+            Some(file) => file.metadata()?.len(),
+            None => 0,
+        };
+        Ok(size)
+    }
+
     pub fn append_to_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
         if let Some(file) = self.index_file.as_mut() {
             let mut buf = vec![];
@@ -144,7 +152,7 @@ impl NeedleMapper {
     }
 }
 
-fn idx_entry(mut buf: &[u8]) -> (u64, u32, u32) {
+pub fn index_entry(mut buf: &[u8]) -> (u64, u32, u32) {
     let key = buf.get_u64();
     let offset = buf.get_u32();
     let size = buf.get_u32();
@@ -164,7 +172,7 @@ where
     for _ in 0..(f.metadata()?.len() + 15) / 16 {
         reader.read_exact(&mut buf)?;
 
-        let (key, offset, size) = idx_entry(&buf);
+        let (key, offset, size) = index_entry(&buf);
         walk(key, offset, size)?;
     }
 

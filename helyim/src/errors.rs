@@ -18,6 +18,8 @@ pub enum Error {
     NoFreeSpace(String),
     #[error("No writable volumes")]
     NoWritableVolumes,
+    #[error("{0}")]
+    DataIntegrity(String),
 
     /// storage errors
     #[error("Invalid replica placement: {0}")]
