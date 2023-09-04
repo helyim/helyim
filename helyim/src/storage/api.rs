@@ -8,6 +8,7 @@ use axum::{
     extract::{Query, State},
     headers, Json, TypedHeader,
 };
+use axum::http::HeaderMap;
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
@@ -230,6 +231,25 @@ pub fn get_boundary(req: &Request) -> Result<String> {
     };
 }
 
+pub fn get_boundary2(extractor: &PostExtractor) -> Result<String> {
+    const BOUNDARY: &str = "boundary=";
+
+    if extractor.method != Method::POST {
+        return Err(anyhow!("parse multipart err: not post request"));
+    }
+
+    return match extractor.headers.get(CONTENT_TYPE) {
+        Some(content_type) => {
+            let ct = content_type.to_str()?;
+            match ct.find(BOUNDARY) {
+                Some(idx) => Ok(ct[idx + BOUNDARY.len()..].to_string()),
+                None => Err(anyhow!("no boundary")),
+            }
+        }
+        None => Err(anyhow!("no content type")),
+    };
+}
+
 pub struct ParseUploadResp {
     pub filename: String,
     pub data: Vec<u8>,
@@ -329,6 +349,88 @@ pub async fn parse_upload(req: Request) -> Result<ParseUploadResp> {
         .unwrap_or(0);
 
     let ttl = match params.get("ttl") {
+        Some(s) => Ttl::new(s).unwrap_or_default(),
+        None => Ttl::default(),
+    };
+
+    let resp = ParseUploadResp {
+        filename,
+        data,
+        mime_type,
+        pair_map,
+        modified_time,
+        ttl,
+        is_chunked_file,
+    };
+
+    Ok(resp)
+}
+
+pub async fn parse_upload2(extractor: &PostExtractor) -> Result<ParseUploadResp> {
+    let mut filename = String::new();
+    let mut data = vec![];
+    let mut mime_type = String::new();
+    let mut pair_map = HashMap::new();
+
+    for (header_name, header_value) in extractor.headers.iter() {
+        if header_name.as_str().starts_with(PAIR_NAME_PREFIX) {
+            pair_map.insert(
+                header_name.to_string(),
+                String::from_utf8(header_value.as_bytes().to_vec())?,
+            );
+        }
+    }
+
+    let boundary = get_boundary2(extractor)?;
+
+    let stream = once(async move { StdResult::<Bytes, Infallible>::Ok(extractor.body.clone()) });
+    let mut mpart = Multipart::new(stream, boundary);
+
+    // get first file with file_name
+    let mut post_mtype = String::new();
+    while let Ok(Some(field)) = mpart.next_field().await {
+        debug!("field name: {:?}", field.name());
+        if let Some(name) = field.file_name() {
+            filename = name.to_string();
+            if let Some(content_type) = field.content_type() {
+                post_mtype.push_str(content_type.type_().as_str());
+                post_mtype.push('/');
+                post_mtype.push_str(content_type.subtype().as_str());
+                data.clear();
+                data.extend(field.bytes().await?);
+            }
+        }
+
+        if !filename.is_empty() {
+            break;
+        }
+    }
+
+    let is_chunked_file = extractor.query.cm.unwrap_or(false);
+
+    let mut guess_mtype = String::new();
+    if !is_chunked_file {
+        if let Some(idx) = filename.find('.') {
+            let ext = &filename[idx..];
+            let m = mime_guess::from_ext(ext).first_or_octet_stream();
+            if m.type_() != mime::APPLICATION || m.subtype() != mime::OCTET_STREAM {
+                guess_mtype.push_str(m.type_().as_str());
+                guess_mtype.push('/');
+                guess_mtype.push_str(m.subtype().as_str());
+            }
+        }
+
+        if !post_mtype.is_empty() && guess_mtype != post_mtype {
+            mime_type = post_mtype.clone(); // only return if not deductible, so my can save it only
+            // when can't deductible from file name
+            // guess_mtype = post_mtype.clone();
+        }
+        // don't auto gzip and change filename like seaweed
+    }
+
+    let modified_time = extractor.query.ts.unwrap_or(0);
+
+    let ttl = match &extractor.query.ttl {
         Some(s) => Ttl::new(s).unwrap_or_default(),
         None => Ttl::default(),
     };
@@ -521,6 +623,72 @@ pub async fn post_handler(ctx: &StorageContext, req: Request) -> Result<Response
     Ok(response)
 }
 
+#[derive(FromRequest)]
+pub struct PostExtractor {
+    // only the last field can implement `FromRequest`
+    // other fields must only implement `FromRequestParts`
+    uri: axum::http::Uri,
+    method: Method,
+    headers: HeaderMap,
+    #[from_request(via(TypedHeader))]
+    host: headers::Host,
+    #[from_request(via(Query))]
+    query: PostQuery,
+    body: Bytes,
+}
+
+#[derive(Deserialize)]
+pub struct PostQuery {
+    r#type: Option<FastStr>,
+    // is chunked file
+    cm: Option<bool>,
+    ttl: Option<FastStr>,
+    // last modified
+    ts: Option<u64>,
+}
+
+pub async fn post_handler2(State(ctx): State<StorageContext>,
+                           extractor: PostExtractor
+) -> Result<Response> {
+    let (svid, _, _, _, _) = parse_url_path(extractor.uri.path());
+    let vid = svid.parse::<u32>()?;
+    let is_replicate = extractor.query.r#type == Some("replicate".into());
+
+    let mut n = if !is_replicate {
+        new_needle_from_request2(&extractor).await?
+    } else {
+        bincode::deserialize(&extractor.body)?
+    };
+
+    debug!("post needle: {}", n);
+
+    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut n, is_replicate).await?;
+
+    let mut result = operation::Upload::default();
+
+    if n.has_name() {
+        result.name = String::from_utf8(n.name.to_vec())?;
+    }
+
+    result.size = size;
+
+    let s = serde_json::to_string(&result)?;
+
+    debug!("post resp: {}", s);
+
+    let body_len = s.len();
+    let mut response = Response::new(Body::from(s));
+    response
+        .headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from(body_len));
+    response
+        .headers_mut()
+        .insert(ETAG, HeaderValue::from_str(n.etag().as_str())?);
+
+    Ok(response)
+}
+
+
 async fn new_needle_from_request(req: Request) -> Result<Needle> {
     let path = req.uri().path().to_string();
 
@@ -567,6 +735,59 @@ async fn new_needle_from_request(req: Request) -> Result<Needle> {
 
     needle.checksum = crc::checksum(&needle.data);
 
+    let start = path.find(',').map(|idx| idx + 1).unwrap_or(0);
+    let end = path.rfind('.').unwrap_or(path.len());
+
+    needle.parse_path(&path[start..end])?;
+
+    Ok(needle)
+}
+
+async fn new_needle_from_request2(extractor: &PostExtractor) -> Result<Needle> {
+    let mut resp = parse_upload2(extractor).await?;
+
+    let mut needle = Needle {
+        data: Bytes::from(resp.data),
+        ..Default::default()
+    };
+
+    if !resp.pair_map.is_empty() {
+        needle.set_has_pairs();
+        needle.pairs = Bytes::from(serde_json::to_vec(&resp.pair_map)?);
+    }
+
+    if !resp.filename.is_empty() {
+        needle.name = Bytes::from(resp.filename);
+        needle.set_name();
+    }
+
+    if resp.mime_type.len() < 256 {
+        needle.mime = Bytes::from(resp.mime_type);
+        needle.set_has_mime();
+    }
+
+    // if resp.is_gzipped {
+    //     n.set_gzipped();
+    // }
+
+    if resp.modified_time == 0 {
+        resp.modified_time = now().as_secs();
+    }
+    needle.last_modified = resp.modified_time;
+    needle.set_has_last_modified_date();
+
+    if resp.ttl.minutes() != 0 {
+        needle.ttl = resp.ttl;
+        needle.set_has_ttl();
+    }
+
+    if resp.is_chunked_file {
+        needle.set_is_chunk_manifest();
+    }
+
+    needle.checksum = crc::checksum(&needle.data);
+
+    let path = extractor.uri.path();
     let start = path.find(',').map(|idx| idx + 1).unwrap_or(0);
     let end = path.rfind('.').unwrap_or(path.len());
 
