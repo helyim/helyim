@@ -10,12 +10,11 @@ use tonic::Streaming;
 use tracing::{error, info};
 
 use crate::{
-    default_handler,
     errors::Result,
     operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
-        api::{assign_volume_handler, status_handler, StorageContext},
+        api::{assign_volume_handler, fallback_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
         store::Store,
     },
@@ -144,7 +143,7 @@ impl StorageServer {
             let app = Router::new()
                 .route("/status", get(status_handler))
                 .route("/admin/assign_volume", get(assign_volume_handler))
-                .fallback(default_handler)
+                .fallback(fallback_handler)
                 .with_state(ctx);
 
             let server = hyper::Server::bind(&addr).serve(app.into_make_service());

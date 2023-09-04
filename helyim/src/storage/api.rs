@@ -6,7 +6,8 @@ use std::{
 use axum::{
     extract::{Query, State},
     headers,
-    http::HeaderMap,
+    http::{HeaderMap, Response},
+    response::{Html, IntoResponse},
     Json, TypedHeader,
 };
 use axum_macros::FromRequest;
@@ -41,7 +42,7 @@ use crate::{
     },
     util,
     util::time::now,
-    Response,
+    PHRASE,
 };
 
 #[derive(Clone)]
@@ -99,7 +100,269 @@ pub async fn assign_volume_handler(
     Ok(())
 }
 
-pub fn get_boundary(extractor: &PostExtractor) -> Result<String> {
+pub async fn fallback_handler(
+    State(ctx): State<StorageContext>,
+    extractor: StorageExtractor,
+) -> Result<FallbackResponse> {
+    info!("extractor: {:?}", extractor);
+    match extractor.method {
+        Method::GET | Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
+        Method::POST => post_handler(State(ctx), extractor).await,
+        Method::DELETE => delete_handler(State(ctx), extractor).await,
+        _ => default_handler().await,
+    }
+}
+
+pub async fn default_handler() -> Result<FallbackResponse> {
+    Ok(FallbackResponse::Default(Html(PHRASE)))
+}
+
+pub enum FallbackResponse {
+    Default(Html<&'static str>),
+    GetOrHead(Response<Body>),
+    Post(Json<Upload>),
+    Delete(Json<Value>),
+}
+
+impl IntoResponse for FallbackResponse {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            FallbackResponse::GetOrHead(res) => res.into_response(),
+            FallbackResponse::Post(json) => json.into_response(),
+            FallbackResponse::Delete(json) => json.into_response(),
+            FallbackResponse::Default(default) => default.into_response(),
+        }
+    }
+}
+
+#[derive(Debug, FromRequest)]
+pub struct StorageExtractor {
+    // only the last field can implement `FromRequest`
+    // other fields must only implement `FromRequestParts`
+    uri: axum::http::Uri,
+    method: Method,
+    headers: HeaderMap,
+    #[from_request(via(TypedHeader))]
+    host: headers::Host,
+    #[from_request(via(Query))]
+    query: StorageQuery,
+    body: Bytes,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StorageQuery {
+    r#type: Option<FastStr>,
+    // is chunked file
+    cm: Option<bool>,
+    ttl: Option<FastStr>,
+    // last modified
+    ts: Option<u64>,
+}
+
+pub async fn delete_handler(
+    State(ctx): State<StorageContext>,
+    extractor: StorageExtractor,
+) -> Result<FallbackResponse> {
+    let (svid, fid, _, _, _) = parse_url_path(extractor.uri.path());
+    let vid = svid.parse::<u32>()?;
+    let is_replicate = extractor.query.r#type == Some("replicate".into());
+
+    let mut needle = Needle::default();
+    needle.parse_path(&fid)?;
+
+    let cookie = needle.cookie;
+
+    {
+        let mut store = ctx.store.lock().await;
+        store.read_volume_needle(vid, &mut needle)?;
+        if cookie != needle.cookie {
+            info!(
+                "cookie not match from {:?} recv: {}, file is {}",
+                extractor.host, cookie, needle.cookie
+            );
+            return Err(Error::CookieNotMatch(needle.cookie, cookie));
+        }
+    }
+
+    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let size = json!({ "size": size });
+
+    Ok(FallbackResponse::Delete(Json(size)))
+}
+
+async fn replicate_delete(
+    ctx: &StorageContext,
+    path: &str,
+    vid: VolumeId,
+    n: &mut Needle,
+    is_replicate: bool,
+) -> Result<u32> {
+    let mut s = ctx.store.lock().await;
+    let local_url = format!("{}:{}", s.ip, s.port);
+    let size = s.delete_volume_needle(vid, n).await?;
+    if is_replicate {
+        return Ok(size);
+    }
+
+    if let Some(volume) = s.find_volume_mut(vid) {
+        if !volume.need_to_replicate() {
+            return Ok(size);
+        }
+    }
+
+    let params = vec![("type", "replicate")];
+    let res = ctx.looker.lookup(vid).await?;
+    debug!("get lookup res: {:?}", res);
+
+    // TODO concurrent replicate
+    for location in res.locations.iter() {
+        if location.url == local_url {
+            continue;
+        }
+        let url = format!("http://{}{}", &location.url, path);
+        util::delete(&url, &params).await.and_then(|body| {
+            let value: serde_json::Value = serde_json::from_slice(&body)?;
+            if let Some(err) = value["error"].as_str() {
+                return if err.is_empty() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("write {} err: {}", location.url, err))
+                };
+            }
+
+            Ok(())
+        })?;
+    }
+    Ok(size)
+}
+
+pub async fn post_handler(
+    State(ctx): State<StorageContext>,
+    extractor: StorageExtractor,
+) -> Result<FallbackResponse> {
+    let (svid, _, _, _, _) = parse_url_path(extractor.uri.path());
+    let vid = svid.parse::<u32>()?;
+    let is_replicate = extractor.query.r#type == Some("replicate".into());
+
+    let mut needle = if !is_replicate {
+        new_needle_from_request(&extractor).await?
+    } else {
+        bincode::deserialize(&extractor.body)?
+    };
+
+    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let mut upload = Upload::default();
+    if needle.has_name() {
+        upload.name = String::from_utf8(needle.name.to_vec())?;
+    }
+    upload.size = size;
+
+    // TODO: add etag support
+    Ok(FallbackResponse::Post(Json(upload)))
+}
+
+async fn replicate_write(
+    ctx: &StorageContext,
+    path: &str,
+    vid: VolumeId,
+    n: &mut Needle,
+    is_replicate: bool,
+) -> Result<u32> {
+    let mut s = ctx.store.lock().await;
+    let local_url = format!("{}:{}", s.ip, s.port);
+    let size = s.write_volume_needle(vid, n).await?;
+    if is_replicate {
+        return Ok(size);
+    }
+
+    if let Some(volume) = s.find_volume_mut(vid) {
+        if !volume.need_to_replicate() {
+            return Ok(size);
+        }
+    }
+
+    let params = vec![("type", "replicate")];
+    let data = bincode::serialize(n)?;
+
+    let res = ctx.looker.lookup(vid).await?;
+    debug!("get lookup res: {:?}", res);
+
+    // TODO concurrent replicate
+    for location in res.locations.iter() {
+        if location.url == local_url {
+            continue;
+        }
+        let url = format!("http://{}{}", location.url, path);
+        util::post(&url, &params, &data).await.and_then(|body| {
+            let value: serde_json::Value = serde_json::from_slice(&body)?;
+            if let Some(err) = value["error"].as_str() {
+                return if err.is_empty() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("write {} err: {}", location.url, err))
+                };
+            }
+            Ok(())
+        })?;
+    }
+
+    Ok(size)
+}
+
+async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle> {
+    let mut resp = parse_upload(extractor).await?;
+
+    let mut needle = Needle {
+        data: Bytes::from(resp.data),
+        ..Default::default()
+    };
+
+    if !resp.pair_map.is_empty() {
+        needle.set_has_pairs();
+        needle.pairs = Bytes::from(serde_json::to_vec(&resp.pair_map)?);
+    }
+
+    if !resp.filename.is_empty() {
+        needle.name = Bytes::from(resp.filename);
+        needle.set_name();
+    }
+
+    if resp.mime_type.len() < 256 {
+        needle.mime = Bytes::from(resp.mime_type);
+        needle.set_has_mime();
+    }
+
+    // if resp.is_gzipped {
+    //     n.set_gzipped();
+    // }
+
+    if resp.modified_time == 0 {
+        resp.modified_time = now().as_secs();
+    }
+    needle.last_modified = resp.modified_time;
+    needle.set_has_last_modified_date();
+
+    if resp.ttl.minutes() != 0 {
+        needle.ttl = resp.ttl;
+        needle.set_has_ttl();
+    }
+
+    if resp.is_chunked_file {
+        needle.set_is_chunk_manifest();
+    }
+
+    needle.checksum = crc::checksum(&needle.data);
+
+    let path = extractor.uri.path();
+    let start = path.find(',').map(|idx| idx + 1).unwrap_or(0);
+    let end = path.rfind('.').unwrap_or(path.len());
+
+    needle.parse_path(&path[start..end])?;
+
+    Ok(needle)
+}
+
+pub fn get_boundary(extractor: &StorageExtractor) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
 
     if extractor.method != Method::POST {
@@ -142,7 +405,7 @@ impl Display for ParseUpload {
     }
 }
 
-pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
+pub async fn parse_upload(extractor: &StorageExtractor) -> Result<ParseUpload> {
     let mut filename = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
@@ -220,210 +483,11 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     Ok(resp)
 }
 
-#[derive(FromRequest)]
-pub struct DeleteExtractor {
-    uri: axum::http::Uri,
-    #[from_request(via(TypedHeader))]
-    host: headers::Host,
-    #[from_request(via(Query))]
-    query: DeleteQuery,
-}
-
-#[derive(Deserialize)]
-pub struct DeleteQuery {
-    r#type: Option<FastStr>,
-}
-
-pub async fn delete_handler(
-    State(ctx): State<StorageContext>,
-    extractor: DeleteExtractor,
-) -> Result<Value> {
-    let (svid, fid, _, _, _) = parse_url_path(extractor.uri.path());
-    let vid = svid.parse::<u32>()?;
-    let is_replicate = extractor.query.r#type == Some("replicate".into());
-
-    let mut needle = Needle::default();
-    needle.parse_path(&fid)?;
-
-    let cookie = needle.cookie;
-
-    {
-        let mut store = ctx.store.lock().await;
-        store.read_volume_needle(vid, &mut needle)?;
-        if cookie != needle.cookie {
-            info!(
-                "cookie not match from {:?} recv: {}, file is {}",
-                extractor.host, cookie, needle.cookie
-            );
-            return Err(Error::CookieNotMatch(needle.cookie, cookie));
-        }
-    }
-
-    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
-    let size = json!({ "size": size });
-
-    Ok(size)
-}
-
-async fn replicate_delete(
-    ctx: &StorageContext,
-    path: &str,
-    vid: VolumeId,
-    n: &mut Needle,
-    is_replicate: bool,
-) -> Result<u32> {
-    let mut s = ctx.store.lock().await;
-    let local_url = format!("{}:{}", s.ip, s.port);
-    let size = s.delete_volume_needle(vid, n).await?;
-    if is_replicate {
-        return Ok(size);
-    }
-
-    if let Some(volume) = s.find_volume_mut(vid) {
-        if !volume.need_to_replicate() {
-            return Ok(size);
-        }
-    }
-
-    let params = vec![("type", "replicate")];
-    let res = ctx.looker.lookup(vid).await?;
-    debug!("get lookup res: {:?}", res);
-
-    // TODO concurrent replicate
-    for location in res.locations.iter() {
-        if location.url == local_url {
-            continue;
-        }
-        let url = format!("http://{}{}", &location.url, path);
-        util::delete(&url, &params).await.and_then(|body| {
-            let value: serde_json::Value = serde_json::from_slice(&body)?;
-            if let Some(err) = value["error"].as_str() {
-                return if err.is_empty() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("write {} err: {}", location.url, err))
-                };
-            }
-
-            Ok(())
-        })?;
-    }
-    Ok(size)
-}
-
-#[derive(FromRequest)]
-pub struct PostExtractor {
-    // only the last field can implement `FromRequest`
-    // other fields must only implement `FromRequestParts`
-    uri: axum::http::Uri,
-    method: Method,
-    headers: HeaderMap,
-    #[from_request(via(TypedHeader))]
-    host: headers::Host,
-    #[from_request(via(Query))]
-    query: PostQuery,
-    body: Bytes,
-}
-
-#[derive(Deserialize)]
-pub struct PostQuery {
-    r#type: Option<FastStr>,
-    // is chunked file
-    cm: Option<bool>,
-    ttl: Option<FastStr>,
-    // last modified
-    ts: Option<u64>,
-}
-
-pub async fn post_handler(
-    State(ctx): State<StorageContext>,
-    extractor: PostExtractor,
-) -> Result<Json<Upload>> {
-    let (svid, _, _, _, _) = parse_url_path(extractor.uri.path());
-    let vid = svid.parse::<u32>()?;
-    let is_replicate = extractor.query.r#type == Some("replicate".into());
-
-    let mut needle = if !is_replicate {
-        new_needle_from_request(&extractor).await?
-    } else {
-        bincode::deserialize(&extractor.body)?
-    };
-
-    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
-    let mut upload = Upload::default();
-    if needle.has_name() {
-        upload.name = String::from_utf8(needle.name.to_vec())?;
-    }
-    upload.size = size;
-
-    // TODO: add etag support
-    Ok(Json(upload))
-}
-
-async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
-    let mut resp = parse_upload(extractor).await?;
-
-    let mut needle = Needle {
-        data: Bytes::from(resp.data),
-        ..Default::default()
-    };
-
-    if !resp.pair_map.is_empty() {
-        needle.set_has_pairs();
-        needle.pairs = Bytes::from(serde_json::to_vec(&resp.pair_map)?);
-    }
-
-    if !resp.filename.is_empty() {
-        needle.name = Bytes::from(resp.filename);
-        needle.set_name();
-    }
-
-    if resp.mime_type.len() < 256 {
-        needle.mime = Bytes::from(resp.mime_type);
-        needle.set_has_mime();
-    }
-
-    // if resp.is_gzipped {
-    //     n.set_gzipped();
-    // }
-
-    if resp.modified_time == 0 {
-        resp.modified_time = now().as_secs();
-    }
-    needle.last_modified = resp.modified_time;
-    needle.set_has_last_modified_date();
-
-    if resp.ttl.minutes() != 0 {
-        needle.ttl = resp.ttl;
-        needle.set_has_ttl();
-    }
-
-    if resp.is_chunked_file {
-        needle.set_is_chunk_manifest();
-    }
-
-    needle.checksum = crc::checksum(&needle.data);
-
-    let path = extractor.uri.path();
-    let start = path.find(',').map(|idx| idx + 1).unwrap_or(0);
-    let end = path.rfind('.').unwrap_or(path.len());
-
-    needle.parse_path(&path[start..end])?;
-
-    Ok(needle)
-}
-
-#[derive(FromRequest)]
-pub struct GetOrHeadExtractor {
-    uri: axum::http::Uri,
-    headers: HeaderMap,
-}
-
 pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
-    extractor: GetOrHeadExtractor,
-) -> Result<Response> {
-    let (svid, fid, mut filename, _ext, _) = parse_url_path(extractor.uri.path());
+    extractor: StorageExtractor,
+) -> Result<FallbackResponse> {
+    let (svid, fid, mut _filename, _ext, _) = parse_url_path(extractor.uri.path());
 
     let vid = svid.parse::<u32>()?;
 
@@ -439,7 +503,7 @@ pub async fn get_or_head_handler(
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
             *resp.status_mut() = StatusCode::NOT_FOUND;
-            return Ok(resp);
+            return Ok(FallbackResponse::GetOrHead(resp));
         }
     }
 
@@ -461,7 +525,7 @@ pub async fn get_or_head_handler(
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if since <= modified {
                 *resp.status_mut() = StatusCode::NOT_MODIFIED;
-                return Ok(resp);
+                return Ok(FallbackResponse::GetOrHead(resp));
             }
         }
     }
@@ -470,7 +534,7 @@ pub async fn get_or_head_handler(
     if let Some(not_match) = extractor.headers.get(IF_NONE_MATCH) {
         if not_match == etag.as_str() {
             *resp.status_mut() = StatusCode::NOT_MODIFIED;
-            return Ok(resp);
+            return Ok(FallbackResponse::GetOrHead(resp));
         }
     }
 
@@ -486,13 +550,13 @@ pub async fn get_or_head_handler(
         }
     }
 
-    if !needle.name.is_empty() && filename.is_empty() {
-        filename = String::from_utf8(needle.name.to_vec())?;
+    if !needle.name.is_empty() && _filename.is_empty() {
+        _filename = String::from_utf8(needle.name.to_vec())?;
     }
 
-    let mut mtype = String::new();
+    let mut _mtype = String::new();
     if !needle.mime.is_empty() && !needle.mime.starts_with(b"application/octet-stream") {
-        mtype = String::from_utf8(needle.mime.to_vec())?;
+        _mtype = String::from_utf8(needle.mime.to_vec())?;
     }
 
     if needle.is_gzipped() {
@@ -517,23 +581,12 @@ pub async fn get_or_head_handler(
         }
     }
 
-    resp = write_response_content(&filename, &mtype, resp, needle.data);
+    resp.headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
+    *resp.body_mut() = Body::from(needle.data);
     *resp.status_mut() = StatusCode::ACCEPTED;
 
-    Ok(resp)
-}
-
-fn write_response_content(
-    _filename: &str,
-    _mtype: &str,
-    mut resp: Response,
-    data: Bytes,
-) -> Response {
-    // TODO handle range contenttype and...
-    resp.headers_mut()
-        .insert(CONTENT_LENGTH, HeaderValue::from(data.len()));
-    *resp.body_mut() = Body::from(data);
-    resp
+    Ok(FallbackResponse::GetOrHead(resp))
 }
 
 // support following format
@@ -604,52 +657,4 @@ fn parse_url_path(path: &str) -> (String, String, String, String, bool) {
     };
 
     (vid, fid, filename, ext, is_volume_id_only)
-}
-
-async fn replicate_write(
-    ctx: &StorageContext,
-    path: &str,
-    vid: VolumeId,
-    n: &mut Needle,
-    is_replicate: bool,
-) -> Result<u32> {
-    let mut s = ctx.store.lock().await;
-    let local_url = format!("{}:{}", s.ip, s.port);
-    let size = s.write_volume_needle(vid, n).await?;
-    if is_replicate {
-        return Ok(size);
-    }
-
-    if let Some(volume) = s.find_volume_mut(vid) {
-        if !volume.need_to_replicate() {
-            return Ok(size);
-        }
-    }
-
-    let params = vec![("type", "replicate")];
-    let data = bincode::serialize(n)?;
-
-    let res = ctx.looker.lookup(vid).await?;
-    debug!("get lookup res: {:?}", res);
-
-    // TODO concurrent replicate
-    for location in res.locations.iter() {
-        if location.url == local_url {
-            continue;
-        }
-        let url = format!("http://{}{}", location.url, path);
-        util::post(&url, &params, &data).await.and_then(|body| {
-            let value: serde_json::Value = serde_json::from_slice(&body)?;
-            if let Some(err) = value["error"].as_str() {
-                return if err.is_empty() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("write {} err: {}", location.url, err))
-                };
-            }
-            Ok(())
-        })?;
-    }
-
-    Ok(size)
 }
