@@ -20,7 +20,7 @@ pub enum Error {
     NoWritableVolumes,
     #[error("{0}")]
     DataIntegrity(String),
-    #[error("Cookie not match, needle cookie is {1} but got {0}")]
+    #[error("Cookie not match, needle cookie is {0} but got {1}")]
     CookieNotMatch(u32, u32),
 
     /// storage errors

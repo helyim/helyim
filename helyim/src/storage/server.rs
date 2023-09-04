@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_stream::stream;
+use axum::{routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
@@ -9,11 +10,12 @@ use tonic::Streaming;
 use tracing::{error, info};
 
 use crate::{
+    default_handler,
     errors::Result,
     operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
-        api::{handle_http_request, MakeHttpContext, StorageContext},
+        api::{assign_volume_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
         store::Store,
     },
@@ -138,11 +140,15 @@ impl StorageServer {
         let addr = addr_str.parse()?;
         let mut shutdown_rx = self.shutdown.subscribe();
 
-        let (http_tx, http_rx) = unbounded();
-        self.handles.push(handle_http_request(ctx, http_rx));
-
         self.handles.push(rt_spawn(async move {
-            let server = hyper::Server::bind(&addr).serve(MakeHttpContext::new(http_tx));
+            let app = Router::new()
+                .route("/status", get(status_handler))
+                .route("/admin/assign_volume", get(assign_volume_handler))
+                .nest()
+                .fallback(default_handler)
+                .with_state(ctx);
+
+            let server = hyper::Server::bind(&addr).serve(app.into_make_service());
             let graceful = server.with_graceful_shutdown(async {
                 let _ = shutdown_rx.recv().await;
             });
