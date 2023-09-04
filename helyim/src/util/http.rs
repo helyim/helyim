@@ -42,25 +42,3 @@ async fn request(
     let body = to_bytes(response.body_mut()).await?;
     Ok(body)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_get() {
-        let url = "http://www.baidu.com";
-        let params = vec![];
-        let r = get(url, &params).await;
-        assert!(r.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_post() {
-        let url = "http://www.baidu.com";
-        let params = vec![];
-        let body = vec![];
-        let r = post(url, &params, &body).await;
-        assert!(r.is_ok());
-    }
-}

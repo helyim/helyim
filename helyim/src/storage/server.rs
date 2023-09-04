@@ -144,7 +144,6 @@ impl StorageServer {
             let app = Router::new()
                 .route("/status", get(status_handler))
                 .route("/admin/assign_volume", get(assign_volume_handler))
-                .nest()
                 .fallback(default_handler)
                 .with_state(ctx);
 
