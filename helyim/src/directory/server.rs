@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
 
-use axum::{routing::get, Router};
+use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
@@ -13,7 +13,6 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status, Streami
 use tracing::{debug, error, info};
 
 use crate::{
-    default_handler,
     directory::{
         api::{
             assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
@@ -30,7 +29,7 @@ use crate::{
     sequence::MemorySequencer,
     storage::{ReplicaPlacement, VolumeInfo},
     util::get_or_default,
-    STOP_INTERVAL,
+    PHRASE, STOP_INTERVAL,
 };
 
 pub struct DirectoryServer {
@@ -143,6 +142,10 @@ impl DirectoryServer {
         let mut shutdown_rx = self.shutdown.subscribe();
 
         let handle = rt_spawn(async move {
+            async fn default_handler() -> Html<&'static str> {
+                Html(PHRASE)
+            }
+
             let app = Router::new()
                 .route("/dir/assign", get(assign_handler).post(assign_handler))
                 .route("/dir/lookup", get(lookup_handler).post(lookup_handler))

@@ -104,17 +104,12 @@ pub async fn fallback_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    info!("extractor: {:?}", extractor);
     match extractor.method {
         Method::GET | Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
         Method::POST => post_handler(State(ctx), extractor).await,
         Method::DELETE => delete_handler(State(ctx), extractor).await,
-        _ => default_handler().await,
+        _ => Ok(FallbackResponse::Default(Html(PHRASE))),
     }
-}
-
-pub async fn default_handler() -> Result<FallbackResponse> {
-    Ok(FallbackResponse::Default(Html(PHRASE)))
 }
 
 pub enum FallbackResponse {
@@ -163,8 +158,7 @@ pub async fn delete_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (svid, fid, _, _, _) = parse_url_path(extractor.uri.path());
-    let vid = svid.parse::<u32>()?;
+    let (vid, fid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = Needle::default();
@@ -212,7 +206,6 @@ async fn replicate_delete(
 
     let params = vec![("type", "replicate")];
     let res = ctx.looker.lookup(vid).await?;
-    debug!("get lookup res: {:?}", res);
 
     // TODO concurrent replicate
     for location in res.locations.iter() {
@@ -240,8 +233,7 @@ pub async fn post_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (svid, _, _, _, _) = parse_url_path(extractor.uri.path());
-    let vid = svid.parse::<u32>()?;
+    let (vid, _, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = if !is_replicate {
@@ -285,7 +277,6 @@ async fn replicate_write(
     let data = bincode::serialize(n)?;
 
     let res = ctx.looker.lookup(vid).await?;
-    debug!("get lookup res: {:?}", res);
 
     // TODO concurrent replicate
     for location in res.locations.iter() {
@@ -487,10 +478,7 @@ pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (svid, fid, mut _filename, _ext, _) = parse_url_path(extractor.uri.path());
-
-    let vid = svid.parse::<u32>()?;
-
+    let (vid, fid, mut _filename, _ext, _) = parse_url_path(extractor.uri.path())?;
     let mut needle = Needle::default();
     needle.parse_path(&fid)?;
     let cookie = needle.cookie;
@@ -597,7 +585,7 @@ pub async fn get_or_head_handler(
 // http://localhost:8080/3,01637037d6
 // @return vid, fid, filename, ext, is_volume_id_only
 // /3/01637037d6/my_preferred_name.jpg -> (3,01637037d6,my_preferred_name.jpg,jpg,false)
-fn parse_url_path(path: &str) -> (String, String, String, String, bool) {
+fn parse_url_path(path: &str) -> Result<(VolumeId, String, String, String, bool)> {
     let vid: String;
     let mut fid;
     let filename;
@@ -656,5 +644,5 @@ fn parse_url_path(path: &str) -> (String, String, String, String, bool) {
         }
     };
 
-    (vid, fid, filename, ext, is_volume_id_only)
+    Ok((vid.parse()?, fid, filename, ext, is_volume_id_only))
 }
