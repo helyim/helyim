@@ -118,7 +118,7 @@ pub fn get_boundary(extractor: &PostExtractor) -> Result<String> {
     };
 }
 
-pub struct ParseUploadResp {
+pub struct ParseUpload {
     pub filename: String,
     pub data: Vec<u8>,
     pub mime_type: String,
@@ -128,7 +128,7 @@ pub struct ParseUploadResp {
     pub is_chunked_file: bool,
 }
 
-impl Display for ParseUploadResp {
+impl Display for ParseUpload {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -142,7 +142,7 @@ impl Display for ParseUploadResp {
     }
 }
 
-pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUploadResp> {
+pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     let mut filename = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
@@ -165,7 +165,6 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUploadResp> 
     // get first file with file_name
     let mut post_mtype = String::new();
     while let Ok(Some(field)) = mpart.next_field().await {
-        debug!("field name: {:?}", field.name());
         if let Some(name) = field.file_name() {
             filename = name.to_string();
             if let Some(content_type) = field.content_type() {
@@ -197,11 +196,8 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUploadResp> 
         }
 
         if !post_mtype.is_empty() && guess_mtype != post_mtype {
-            mime_type = post_mtype.clone(); // only return if not deductible, so my can save it only
-                                            // when can't deductible from file name
-                                            // guess_mtype = post_mtype.clone();
+            mime_type = post_mtype.clone();
         }
-        // don't auto gzip and change filename like seaweed
     }
 
     let modified_time = extractor.query.ts.unwrap_or(0);
@@ -211,7 +207,7 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUploadResp> 
         None => Ttl::default(),
     };
 
-    let resp = ParseUploadResp {
+    let resp = ParseUpload {
         filename,
         data,
         mime_type,
