@@ -1,11 +1,12 @@
-use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
+use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
 
 use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
-    HeartbeatRequest, HeartbeatResponse,
+    lookup_volume_response::VolumeLocation,
+    HeartbeatRequest, HeartbeatResponse, Location, LookupVolumeRequest, LookupVolumeResponse,
 };
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -223,6 +224,47 @@ impl Helyim for GrpcServer {
 
         let out_stream = UnboundedReceiverStream::new(rx);
         Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
+    }
+
+    async fn lookup_volume(
+        &self,
+        request: Request<LookupVolumeRequest>,
+    ) -> StdResult<Response<LookupVolumeResponse>, Status> {
+        let request = request.into_inner();
+        if request.volumes.is_empty() {
+            return Err(Status::invalid_argument("volumes can't be empty"));
+        }
+        let collection = request.collection.unwrap_or_default();
+        let collection = FastStr::from(collection);
+
+        let mut volume_locations = vec![];
+        for mut volume_id in request.volumes {
+            if let Some(idx) = volume_id.rfind(',') {
+                let _fid = volume_id.split_off(idx);
+            }
+            let mut locations = vec![];
+            let volume_id = volume_id
+                .parse()
+                .map_err(|err: ParseIntError| Status::invalid_argument(err.to_string()))?;
+            if let Some(nodes) = self.topology.lookup(collection.clone(), volume_id).await? {
+                for dn in nodes.iter() {
+                    let url = dn.url().await?;
+                    let public_url = dn.public_url().await?;
+                    locations.push(Location {
+                        url: url.to_string(),
+                        public_url: public_url.to_string(),
+                    });
+                }
+            }
+
+            volume_locations.push(VolumeLocation {
+                volume_id,
+                locations,
+                error: String::default(),
+            });
+        }
+
+        Ok(Response::new(LookupVolumeResponse { volume_locations }))
     }
 }
 

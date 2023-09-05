@@ -10,6 +10,7 @@ use hyper::{
     StatusCode,
 };
 use serde_json::json;
+use tonic::Status;
 use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
@@ -116,5 +117,11 @@ impl IntoResponse for Error {
 impl<T> From<TrySendError<T>> for Error {
     fn from(value: TrySendError<T>) -> Self {
         Error::String(value.to_string())
+    }
+}
+
+impl From<Error> for Status {
+    fn from(value: Error) -> Self {
+        Status::internal(value.to_string())
     }
 }

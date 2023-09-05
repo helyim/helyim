@@ -42,12 +42,13 @@ message VolumeInformationMessage {
 }
 
 message LookupVolumeRequest {
-  repeated int64 volumes = 1;
+  repeated string volumes = 1;
+  optional string collection = 2;
 }
 
 message LookupVolumeResponse {
   message VolumeLocation {
-    int64 volumeId = 1;
+    uint32 volumeId = 1;
     repeated Location locations = 2;
     string error = 3;
   }
