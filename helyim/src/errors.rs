@@ -10,6 +10,7 @@ use hyper::{
     StatusCode,
 };
 use serde_json::json;
+use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -18,7 +19,7 @@ pub enum Error {
     NoFreeSpace(String),
     #[error("No writable volumes")]
     NoWritableVolumes,
-    #[error("{0}")]
+    #[error("data integrity error: {0}")]
     DataIntegrity(String),
     #[error("Cookie not match, needle cookie is {0} but got {1}")]
     CookieNotMatch(u32, u32),
@@ -32,62 +33,62 @@ pub enum Error {
     InvalidFid(String),
 
     /// other errors
-    #[error("{0}")]
+    #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("{0}")]
+    #[error("parse integer error: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
-    #[error("{0}")]
+    #[error("bincode error: {0}")]
     BincodeError(#[from] Box<bincode::ErrorKind>),
-    #[error("{0}")]
+    #[error("other error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("{0}")]
+    #[error("serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
-    #[error("{0}")]
+    #[error("raw error: {0}")]
     String(String),
-    #[error("{0}")]
+    #[error("utf8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
-    #[error("{0}")]
+    #[error("addr parse error: {0}")]
     AddrParse(#[from] AddrParseError),
-    #[error("{0}")]
+    #[error("system time error: {0}")]
     SystemTimeError(#[from] SystemTimeError),
     #[error("crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
     Crc(u32, u32),
     #[error("unsupported version: {0}")]
     UnsupportedVersion(u8),
 
-    #[error("{0}")]
+    #[error("multer error: {0}")]
     Multer(#[from] multer::Error),
 
-    #[error("{0}")]
+    #[error("errno: {0}")]
     Errno(#[from] rustix::io::Errno),
 
     // http
-    #[error("{0}")]
+    #[error("invalid header value: {0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
-    #[error("{0}")]
+    #[error("invalid header name: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
-    #[error("{0}")]
+    #[error("to str error: {0}")]
     ToStr(#[from] ToStrError),
-    #[error("{0}")]
+    #[error("url parse error: {0}")]
     UrlParseError(#[from] url::ParseError),
     #[error("timeout")]
     Timeout,
-    #[error("{0}")]
+    #[error("hyper error: {0}")]
     HyperError(#[from] hyper::Error),
-    #[error("{0}")]
+    #[error("axum http error: {0}")]
     AxumHttpError(#[from] axum::http::Error),
 
     // tonic
-    #[error("{0}")]
+    #[error("tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
-    #[error("{0}")]
+    #[error("tonic transport error: {0}")]
     TonicTransport(#[from] tonic::transport::Error),
 
-    #[error("{0}")]
+    #[error("futures channel send error: {0}")]
     SendError(#[from] futures::channel::mpsc::SendError),
-    #[error("{0}")]
+    #[error("broadcast channel closed")]
     BroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<()>),
-    #[error("{0}")]
+    #[error("oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
 }
 
@@ -101,8 +102,11 @@ impl From<String> for Error {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
+        let error = self.to_string();
+        error!("axum response: {error}");
+
         let error = json!({
-            "error": self.to_string()
+            "error": error
         });
         let response = (StatusCode::BAD_REQUEST, Json(error));
         response.into_response()

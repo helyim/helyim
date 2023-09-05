@@ -6,21 +6,21 @@ use url::Url;
 
 use crate::errors::Result;
 
-pub async fn delete(url: &str, params: &Vec<(&str, &str)>) -> Result<Bytes> {
+pub async fn delete(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
     request(url, params, Method::DELETE, None).await
 }
 
-pub async fn get(url: &str, params: &Vec<(&str, &str)>) -> Result<Bytes> {
+pub async fn get(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
     request(url, params, Method::GET, None).await
 }
 
-pub async fn post(url: &str, params: &Vec<(&str, &str)>, body: &[u8]) -> Result<Bytes> {
+pub async fn post(url: &str, params: &[(&str, &str)], body: &[u8]) -> Result<Bytes> {
     request(url, params, Method::POST, Some(body)).await
 }
 
 async fn request(
     url: &str,
-    params: &Vec<(&str, &str)>,
+    params: &[(&str, &str)],
     method: Method,
     body: Option<&[u8]>,
 ) -> Result<Bytes> {

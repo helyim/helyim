@@ -392,10 +392,11 @@ async fn allocate_volume(
     )
     .await?;
 
-    let v: Value = serde_json::from_slice(&body)?;
-
-    if let Value::String(ref s) = v["Error"] {
-        return Err(Error::String(s.clone()));
+    if !body.is_empty() {
+        let value: Value = serde_json::from_slice(&body)?;
+        if let Value::String(ref error) = value["error"] {
+            return Err(Error::String(error.clone()));
+        }
     }
 
     Ok(())

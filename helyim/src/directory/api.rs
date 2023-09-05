@@ -68,12 +68,10 @@ pub async fn assign_handler(
     State(ctx): State<DirectoryContext>,
     Query(request): Query<AssignRequest>,
 ) -> Result<Json<Assignment>> {
-    let mut count = 1;
-    if let Some(c) = request.count {
-        if c > 1 {
-            count = c;
-        }
-    }
+    let count = match request.count {
+        Some(n) if n > 1 => n,
+        _ => 1,
+    };
     let option = request.volume_grow_option()?;
 
     if !ctx.topology.has_writable_volume(option.clone()).await? {
