@@ -1,0 +1,16 @@
+syntax = "proto3";
+package volume;
+
+service VolumeServer {
+  rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {}
+}
+
+message AllocateVolumeRequest {
+  uint32 volume_id = 1;
+  string collection = 2;
+  string replica_replacement = 3;
+  int64 ttl = 4;
+  int64 preallocate = 5;
+}
+message AllocateVolumeResponse {
+}

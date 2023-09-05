@@ -104,7 +104,7 @@ pub async fn lookup_handler(
     Query(request): Query<LookupRequest>,
 ) -> Result<Json<Lookup>> {
     if request.volume_id.is_empty() {
-        return Err(Error::String("volume_id can't be empty".to_string()));
+        return Err(Error::String("volume id can't be empty".to_string()));
     }
     let mut volume_id = request.volume_id;
     if let Some(idx) = volume_id.rfind(',') {
