@@ -38,8 +38,10 @@ use crate::{
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
-pub(crate) const DATA_FILE_SUFFIX: &str = "dat";
-const IDX_FILE_SUFFIX: &str = "idx";
+pub const DATA_FILE_SUFFIX: &str = "dat";
+pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
+pub const IDX_FILE_SUFFIX: &str = "idx";
+pub const COMPACT_IDX_FILE_SUFFIX: &str = "cpx";
 
 #[derive(Debug)]
 pub struct SuperBlock {
@@ -418,11 +420,11 @@ impl Volume {
     }
 
     pub fn data_filename(&self) -> String {
-        format!("{}.{}", self.filename(), DATA_FILE_SUFFIX)
+        format!("{}.{DATA_FILE_SUFFIX}", self.filename())
     }
 
     pub fn index_filename(&self) -> String {
-        format!("{}.{}", self.filename(), IDX_FILE_SUFFIX)
+        format!("{}.{IDX_FILE_SUFFIX}", self.filename())
     }
 
     pub fn filename(&self) -> String {

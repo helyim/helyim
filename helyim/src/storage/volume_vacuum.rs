@@ -16,7 +16,8 @@ use crate::{
         needle_map::{index_entry, walk_index_file},
         volume::{
             read_index_entry_at_offset, scan_volume_file, verify_index_file_integrity, SuperBlock,
-            Volume, SUPER_BLOCK_SIZE,
+            Volume, COMPACT_DATA_FILE_SUFFIX, COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX,
+            IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
         Needle, NeedleMapper, NeedleValue,
     },
@@ -33,8 +34,8 @@ impl Volume {
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_and_generate_index_file(
-            format!("{}.cpd", file_path),
-            format!("{}.cpx", file_path),
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
             preallocate,
         )
     }
@@ -42,16 +43,16 @@ impl Volume {
     pub fn compact2(&mut self) -> Result<()> {
         let file_path = self.filename();
         self.copy_data_based_on_index_file(
-            format!("{}.cpd", file_path),
-            format!("{}.cpx", file_path),
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
         )
     }
 
     pub fn commit_compact(&mut self) -> Result<()> {
-        let compact_data_filename = format!("{}.cpd", self.filename());
-        let compact_index_filename = format!("{}.cpx", self.filename());
-        let data_filename = format!("{}.dat", self.filename());
-        let index_filename = format!("{}.idx", self.filename());
+        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", self.filename());
+        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", self.filename());
+        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", self.filename());
+        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", self.filename());
         match self.makeup_diff(
             compact_data_filename.clone(),
             compact_index_filename.clone(),
@@ -73,8 +74,8 @@ impl Volume {
     }
 
     pub fn cleanup_compact(&mut self) -> Result<()> {
-        fs::remove_file(format!("{}.cpd", self.filename()))?;
-        fs::remove_file(format!("{}.cpx", self.filename()))?;
+        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", self.filename()))?;
+        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", self.filename()))?;
         Ok(())
     }
 
@@ -272,7 +273,7 @@ impl Volume {
         let old_idx_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
-            .open(format!("{}.idx", self.filename()))?;
+            .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
         let mut nm = NeedleMapper::default();
         nm.load_idx_file(&idx_file)?;
