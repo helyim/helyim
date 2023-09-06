@@ -104,7 +104,11 @@ pub async fn fallback_handler(
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
     match extractor.method {
-        Method::GET | Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
+        Method::GET => match extractor.uri.path() {
+            "/" | "/favicon.ico" => Ok(FallbackResponse::Default(Html(PHRASE))),
+            _ => get_or_head_handler(State(ctx), extractor).await,
+        },
+        Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
         Method::POST => post_handler(State(ctx), extractor).await,
         Method::DELETE => delete_handler(State(ctx), extractor).await,
         _ => Ok(FallbackResponse::Default(Html(PHRASE))),
