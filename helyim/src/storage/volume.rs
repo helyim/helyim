@@ -132,7 +132,6 @@ fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
 }
 
 impl Volume {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dir: FastStr,
         collection: FastStr,

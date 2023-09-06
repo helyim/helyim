@@ -37,7 +37,6 @@ pub struct StorageServer {
 }
 
 impl StorageServer {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ip_bind: &str,
         ip: &str,
@@ -110,28 +109,25 @@ impl StorageServer {
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.pulse_seconds as u64;
-        let master_node = self.master_node.clone();
+
+        let client = HelyimClient::connect(self.grpc_addr()?).await?;
 
         let (looker_tx, looker_rx) = unbounded();
-        self.handles.push(rt_spawn(looker_loop(
-            Looker::new(&self.master_node),
-            looker_rx,
-        )));
+        let looker = Looker::new(client.clone());
+        self.handles.push(rt_spawn(looker_loop(looker, looker_rx)));
 
         let ctx = StorageContext {
             store,
             needle_map_type,
             read_redirect,
             pulse_seconds,
-            master_node,
             looker: LookerEventTx::new(looker_tx),
         };
 
-        let client = HelyimClient::connect(self.grpc_addr()?).await?;
         self.handles.push(
             start_heartbeat(
                 self.store.clone(),
-                client.clone(),
+                client,
                 self.pulse_seconds,
                 self.shutdown.subscribe(),
             )

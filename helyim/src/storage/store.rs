@@ -29,7 +29,6 @@ pub struct Store {
 }
 
 impl Store {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ip: &str,
         port: u16,

@@ -15,10 +15,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     directory::{
-        api::{
-            assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-            DirectoryContext,
-        },
+        api::{assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext},
         topology::{
             topology::{topology_loop, TopologyEventTx},
             volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
@@ -51,8 +48,6 @@ pub struct DirectoryServer {
 }
 
 impl DirectoryServer {
-    // TODO: add whiteList sk
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         host: &str,
         ip: &str,
@@ -74,7 +69,7 @@ impl DirectoryServer {
         let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
-        let (shutdown, mut shutdown_rx) = broadcast::channel(1);
+        let (shutdown, mut shutdown_rx) = broadcast::channel(16);
 
         let dir = DirectoryServer {
             host: FastStr::new(host),
@@ -149,7 +144,6 @@ impl DirectoryServer {
 
             let app = Router::new()
                 .route("/dir/assign", get(assign_handler).post(assign_handler))
-                .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
                 .route(
                     "/dir/status",
                     get(dir_status_handler).post(dir_status_handler),
@@ -242,25 +236,34 @@ impl Helyim for GrpcServer {
             if let Some(idx) = volume_id.rfind(',') {
                 let _fid = volume_id.split_off(idx);
             }
-            let mut locations = vec![];
             let volume_id = volume_id.parse().map_err(|err: ParseIntError| {
                 Status::invalid_argument(format!("parse volume id error: {err}"))
             })?;
-            if let Some(nodes) = self.topology.lookup(collection.clone(), volume_id).await? {
-                for dn in nodes.iter() {
-                    let url = dn.url().await?;
-                    let public_url = dn.public_url().await?;
-                    locations.push(Location {
-                        url: url.to_string(),
-                        public_url: public_url.to_string(),
-                    });
+
+            let mut locations = vec![];
+            let mut error = String::default();
+            match self.topology.lookup(collection.clone(), volume_id).await {
+                Ok(Some(nodes)) => {
+                    for dn in nodes.iter() {
+                        let url = dn.url().await?;
+                        let public_url = dn.public_url().await?;
+                        locations.push(Location {
+                            url: url.to_string(),
+                            public_url: public_url.to_string(),
+                        });
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    error!("lookup volumes error: {err}");
+                    error = err.to_string();
                 }
             }
 
             volume_locations.push(VolumeLocation {
                 volume_id,
                 locations,
-                error: String::default(),
+                error,
             });
         }
 

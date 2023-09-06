@@ -51,7 +51,6 @@ pub struct StorageContext {
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
-    pub master_node: FastStr,
     pub looker: LookerEventTx,
 }
 
@@ -205,26 +204,28 @@ async fn replicate_delete(
     }
 
     let params = vec![("type", "replicate")];
-    let res = ctx.looker.lookup(vid).await?;
+    let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
-    // TODO concurrent replicate
-    for location in res.locations.iter() {
-        if location.url == local_url {
-            continue;
-        }
-        let url = format!("http://{}{}", &location.url, path);
-        util::delete(&url, &params).await.and_then(|body| {
-            let value: serde_json::Value = serde_json::from_slice(&body)?;
-            if let Some(err) = value["error"].as_str() {
-                return if err.is_empty() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("write {} err: {}", location.url, err))
-                };
+    if let Some(volume_location) = volume_locations.pop() {
+        // TODO concurrent replicate
+        for location in volume_location.locations.iter() {
+            if location.url == local_url {
+                continue;
             }
+            let url = format!("http://{}{}", &location.url, path);
+            util::delete(&url, &params).await.and_then(|body| {
+                let value: Value = serde_json::from_slice(&body)?;
+                if let Some(err) = value["error"].as_str() {
+                    return if err.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(anyhow!("write {} err: {}", location.url, err))
+                    };
+                }
 
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        }
     }
     Ok(size)
 }
@@ -276,25 +277,27 @@ async fn replicate_write(
     let params = vec![("type", "replicate")];
     let data = bincode::serialize(n)?;
 
-    let res = ctx.looker.lookup(vid).await?;
+    let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
-    // TODO concurrent replicate
-    for location in res.locations.iter() {
-        if location.url == local_url {
-            continue;
-        }
-        let url = format!("http://{}{}", location.url, path);
-        util::post(&url, &params, &data).await.and_then(|body| {
-            let value: serde_json::Value = serde_json::from_slice(&body)?;
-            if let Some(err) = value["error"].as_str() {
-                return if err.is_empty() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("write {} err: {}", location.url, err))
-                };
+    if let Some(volume_location) = volume_locations.pop() {
+        // TODO concurrent replicate
+        for location in volume_location.locations.iter() {
+            if location.url == local_url {
+                continue;
             }
-            Ok(())
-        })?;
+            let url = format!("http://{}{}", location.url, path);
+            util::post(&url, &params, &data).await.and_then(|body| {
+                let value: Value = serde_json::from_slice(&body)?;
+                if let Some(err) = value["error"].as_str() {
+                    return if err.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(anyhow!("write {} err: {}", location.url, err))
+                    };
+                }
+                Ok(())
+            })?;
+        }
     }
 
     Ok(size)
