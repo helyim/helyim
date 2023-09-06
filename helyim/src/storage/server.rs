@@ -6,7 +6,7 @@ use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
 use tokio::{sync::broadcast, task::JoinHandle};
-use tonic::Streaming;
+use tonic::{transport::Channel, Streaming};
 use tracing::{error, info};
 
 use crate::{
@@ -95,11 +95,14 @@ impl StorageServer {
         Ok(())
     }
 
-    fn grpc_addr(&self) -> String {
-        let idx = self.master_node.rfind(':').unwrap();
-        let port = self.master_node[idx + 1..].parse::<u16>().unwrap();
-
-        format!("http://{}:{}", &self.master_node[..idx], port + 1)
+    fn grpc_addr(&self) -> Result<String> {
+        match self.master_node.rfind(':') {
+            Some(idx) => {
+                let port = self.master_node[idx + 1..].parse::<u16>()?;
+                Ok(format!("http://{}:{}", &self.master_node[..idx], port + 1))
+            }
+            None => Ok(self.master_node.to_string()),
+        }
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -124,10 +127,11 @@ impl StorageServer {
             looker: LookerEventTx::new(looker_tx),
         };
 
+        let client = HelyimClient::connect(self.grpc_addr()?).await?;
         self.handles.push(
             start_heartbeat(
                 self.store.clone(),
-                self.grpc_addr(),
+                client.clone(),
                 self.pulse_seconds,
                 self.shutdown.subscribe(),
             )
@@ -163,7 +167,7 @@ impl StorageServer {
 
 async fn start_heartbeat(
     store: Arc<Mutex<Store>>,
-    master_node: String,
+    mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
@@ -172,13 +176,13 @@ async fn start_heartbeat(
             tokio::select! {
                 stream = heartbeat_stream(
                     store.clone(),
-                    master_node.clone(),
+                    &mut client,
                     pulse_seconds,
                     shutdown_rx.resubscribe(),
                 ) => {
                     match stream {
                         Ok(mut stream) => {
-                            info!("heartbeat starting up success, master: {master_node}");
+                            info!("heartbeat starting up success");
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
@@ -207,11 +211,10 @@ async fn start_heartbeat(
 
 async fn heartbeat_stream(
     store: Arc<Mutex<Store>>,
-    master_node: String,
+    client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<Streaming<HeartbeatResponse>> {
-    let mut client = HelyimClient::connect(master_node).await?;
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
 
     let request_stream = stream! {

@@ -50,7 +50,7 @@ impl Looker {
     pub async fn lookup(&mut self, vid: VolumeId) -> Result<Lookup> {
         let now = SystemTime::now();
         if let Some((look_up, time)) = self.cache.get(&vid) {
-            if now.duration_since(*time)?.lt(&self.timeout) {
+            if now.duration_since(*time)? < self.timeout {
                 return Ok(look_up.clone());
             }
         }

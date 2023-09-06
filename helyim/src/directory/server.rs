@@ -243,9 +243,9 @@ impl Helyim for GrpcServer {
                 let _fid = volume_id.split_off(idx);
             }
             let mut locations = vec![];
-            let volume_id = volume_id
-                .parse()
-                .map_err(|err: ParseIntError| Status::invalid_argument(err.to_string()))?;
+            let volume_id = volume_id.parse().map_err(|err: ParseIntError| {
+                Status::invalid_argument(format!("parse volume id error: {err}"))
+            })?;
             if let Some(nodes) = self.topology.lookup(collection.clone(), volume_id).await? {
                 for dn in nodes.iter() {
                     let url = dn.url().await?;
