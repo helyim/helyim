@@ -32,6 +32,7 @@ use tracing::{debug, info};
 use crate::{
     anyhow,
     errors::{Error, Result},
+    images::FAVICON_ICO,
     operation::{LookerEventTx, Upload},
     storage::{
         crc,
@@ -105,7 +106,8 @@ pub async fn fallback_handler(
 ) -> Result<FallbackResponse> {
     match extractor.method {
         Method::GET => match extractor.uri.path() {
-            "/" | "/favicon.ico" => Ok(FallbackResponse::Default(Html(PHRASE))),
+            "/" => Ok(FallbackResponse::Default(Html(PHRASE))),
+            "/favicon.ico" => Ok(FallbackResponse::Favicon),
             _ => get_or_head_handler(State(ctx), extractor).await,
         },
         Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
@@ -116,6 +118,7 @@ pub async fn fallback_handler(
 }
 
 pub enum FallbackResponse {
+    Favicon,
     Default(Html<&'static str>),
     GetOrHead(Response<Body>),
     Post(Json<Upload>),
@@ -129,6 +132,7 @@ impl IntoResponse for FallbackResponse {
             FallbackResponse::Post(json) => json.into_response(),
             FallbackResponse::Delete(json) => json.into_response(),
             FallbackResponse::Default(default) => default.into_response(),
+            FallbackResponse::Favicon => FAVICON_ICO.bytes().into_response(),
         }
     }
 }

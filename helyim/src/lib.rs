@@ -4,6 +4,7 @@ use std::time::Duration;
 pub mod directory;
 
 mod errors;
+mod images;
 mod operation;
 
 pub mod storage;
