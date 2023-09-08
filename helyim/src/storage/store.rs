@@ -1,6 +1,5 @@
 use faststr::FastStr;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
-use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -36,11 +35,11 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        shutdown: broadcast::Sender<()>,
+        shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
-            let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
+            let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown_rx.clone());
             location.load_existing_volumes(needle_map_type)?;
             locations.push(location);
         }
@@ -156,7 +155,7 @@ impl Store {
             .find_free_location()
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
-        let shutdown = location.shutdown.clone();
+        let shutdown = location.shutdown_rx.clone();
         let volume = Volume::new(
             location.directory.clone(),
             collection,

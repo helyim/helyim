@@ -5,7 +5,7 @@ use axum::{routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tonic::{transport::Channel, Streaming};
 use tracing::{error, info};
 
@@ -33,7 +33,7 @@ pub struct StorageServer {
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
 
-    shutdown: broadcast::Sender<()>,
+    shutdown: async_broadcast::Sender<()>,
 }
 
 impl StorageServer {
@@ -52,7 +52,7 @@ impl StorageServer {
         _white_list: Vec<String>,
         read_redirect: bool,
     ) -> Result<StorageServer> {
-        let (shutdown, _) = broadcast::channel(16);
+        let (shutdown, shutdown_rx) = async_broadcast::broadcast(16);
 
         let store = Store::new(
             ip,
@@ -61,7 +61,7 @@ impl StorageServer {
             folders,
             max_counts,
             needle_map_type,
-            shutdown.clone(),
+            shutdown_rx,
         )?;
         Ok(StorageServer {
             host: FastStr::new(ip_bind),
@@ -79,7 +79,7 @@ impl StorageServer {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        self.shutdown.send(())?;
+        self.shutdown.broadcast(()).await?;
 
         let mut interval = tokio::time::interval(STOP_INTERVAL);
 
@@ -129,7 +129,7 @@ impl StorageServer {
                 self.store.clone(),
                 client,
                 self.pulse_seconds,
-                self.shutdown.subscribe(),
+                self.shutdown.new_receiver(),
             )
             .await,
         );
@@ -137,7 +137,7 @@ impl StorageServer {
         // http server
         let addr_str = format!("{}:{}", self.host, self.port);
         let addr = addr_str.parse()?;
-        let mut shutdown_rx = self.shutdown.subscribe();
+        let mut shutdown_rx = self.shutdown.new_receiver();
 
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
@@ -165,7 +165,7 @@ async fn start_heartbeat(
     store: Arc<Mutex<Store>>,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
-    mut shutdown_rx: broadcast::Receiver<()>,
+    mut shutdown_rx: async_broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
         'next_heartbeat: loop {
@@ -174,7 +174,7 @@ async fn start_heartbeat(
                     store.clone(),
                     &mut client,
                     pulse_seconds,
-                    shutdown_rx.resubscribe(),
+                    shutdown_rx.new_receiver(),
                 ) => {
                     match stream {
                         Ok(mut stream) => {
@@ -209,7 +209,7 @@ async fn heartbeat_stream(
     store: Arc<Mutex<Store>>,
     client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
-    mut shutdown_rx: broadcast::Receiver<()>,
+    mut shutdown_rx: async_broadcast::Receiver<()>,
 ) -> Result<Streaming<HeartbeatResponse>> {
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
 

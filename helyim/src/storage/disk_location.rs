@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use faststr::FastStr;
-use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::{
@@ -21,16 +20,20 @@ pub struct DiskLocation {
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, Volume>,
 
-    pub(crate) shutdown: broadcast::Sender<()>,
+    pub(crate) shutdown_rx: async_broadcast::Receiver<()>,
 }
 
 impl DiskLocation {
-    pub fn new(dir: &str, max_volume_count: i64, shutdown: broadcast::Sender<()>) -> DiskLocation {
+    pub fn new(
+        dir: &str,
+        max_volume_count: i64,
+        shutdown_rx: async_broadcast::Receiver<()>,
+    ) -> DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
-            shutdown,
+            shutdown_rx,
         }
     }
 
@@ -74,7 +77,7 @@ impl DiskLocation {
                     ReplicaPlacement::default(),
                     Ttl::default(),
                     0,
-                    self.shutdown.clone(),
+                    self.shutdown_rx.clone(),
                 )?;
                 info!("add volume: {}", vid);
                 self.volumes.insert(vid, volume);

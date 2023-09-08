@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
 
+use async_broadcast::broadcast;
 use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
@@ -8,7 +9,7 @@ use helyim_proto::{
     lookup_volume_response::VolumeLocation,
     HeartbeatRequest, HeartbeatResponse, Location, LookupVolumeRequest, LookupVolumeResponse,
 };
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -44,7 +45,7 @@ pub struct DirectoryServer {
     pub volume_grow: VolumeGrowthEventTx,
     handles: Vec<JoinHandle<()>>,
 
-    shutdown: broadcast::Sender<()>,
+    shutdown: async_broadcast::Sender<()>,
 }
 
 impl DirectoryServer {
@@ -69,7 +70,7 @@ impl DirectoryServer {
         let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
-        let (shutdown, mut shutdown_rx) = broadcast::channel(16);
+        let (shutdown, mut shutdown_rx) = broadcast(16);
 
         let dir = DirectoryServer {
             host: FastStr::new(host),
@@ -107,7 +108,7 @@ impl DirectoryServer {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        self.shutdown.send(())?;
+        self.shutdown.broadcast(()).await?;
 
         self.topology.close();
         self.volume_grow.close();
@@ -135,7 +136,7 @@ impl DirectoryServer {
         // http server
         let addr = format!("{}:{}", self.host, self.port);
         let addr = addr.parse()?;
-        let mut shutdown_rx = self.shutdown.subscribe();
+        let mut shutdown_rx = self.shutdown.new_receiver();
 
         let handle = rt_spawn(async move {
             async fn default_handler() -> Html<&'static str> {

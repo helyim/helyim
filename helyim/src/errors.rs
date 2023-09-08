@@ -88,7 +88,7 @@ pub enum Error {
     #[error("futures channel send error: {0}")]
     SendError(#[from] futures::channel::mpsc::SendError),
     #[error("broadcast channel closed")]
-    BroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<()>),
+    BroadcastSendError(#[from] async_broadcast::SendError<()>),
     #[error("oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
 }

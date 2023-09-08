@@ -14,7 +14,6 @@ use futures::{
     StreamExt,
 };
 use rustix::fs::ftruncate;
-use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -140,7 +139,7 @@ impl Volume {
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
         _preallocate: i64,
-        shutdown: broadcast::Sender<()>,
+        shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<Volume> {
         debug!("new volume dir: {}, id: {}", dir, id);
         let sb = SuperBlock {
@@ -167,7 +166,7 @@ impl Volume {
         };
 
         v.load(true, true)?;
-        v.spawn_index_file_writer(index_rx, shutdown)?;
+        v.spawn_index_file_writer(index_rx, shutdown_rx)?;
         debug!("new volume dir: {}, id: {} load success", dir, id);
         Ok(v)
     }
@@ -175,7 +174,7 @@ impl Volume {
     fn spawn_index_file_writer(
         &self,
         mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
-        shutdown: broadcast::Sender<()>,
+        mut shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<()> {
         let file = fs::OpenOptions::new()
             // most hardware designs cannot support write permission without read permission
@@ -188,7 +187,6 @@ impl Volume {
         let vid = self.id;
         let mut writer = BufWriter::new(file);
 
-        let mut shutdown_rx = shutdown.subscribe();
         rt_spawn(async move {
             let mut buf = vec![];
             let mut interval = tokio::time::interval(Duration::from_secs(1));
