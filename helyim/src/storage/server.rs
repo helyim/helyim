@@ -49,7 +49,6 @@ impl StorageServer {
         pulse_seconds: i64,
         data_center: &str,
         rack: &str,
-        _white_list: Vec<String>,
         read_redirect: bool,
     ) -> Result<StorageServer> {
         let (shutdown, shutdown_rx) = async_broadcast::broadcast(16);
