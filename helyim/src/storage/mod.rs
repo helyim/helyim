@@ -33,6 +33,4 @@ mod volume;
 mod volume_info;
 pub use volume_info::VolumeInfo;
 
-mod volume_vacuum;
-
 pub type VolumeId = u32;

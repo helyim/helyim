@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     errors::{Error, Result},
@@ -29,19 +29,20 @@ impl Volume {
         self.needle_mapper.deleted_bytes() as f64 / self.content_size() as f64
     }
 
-    pub fn compact(&mut self, preallocate: u64) -> Result<()> {
+    pub fn compact(&mut self) -> Result<()> {
         let file_path = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_and_generate_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
-            preallocate,
         )
     }
 
     pub fn compact2(&mut self) -> Result<()> {
         let file_path = self.filename();
+        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
+        self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_based_on_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
@@ -69,7 +70,7 @@ impl Volume {
                 fs::remove_file(compact_index_filename)?;
             }
         }
-
+        self.data_file = None;
         self.load(false, true)
     }
 
@@ -86,8 +87,12 @@ impl Volume {
         old_data_filename: String,
         old_idx_filename: String,
     ) -> Result<()> {
-        let old_idx_fie = fs::OpenOptions::new().open(old_idx_filename.as_str())?;
-        let mut old_data_fie = fs::OpenOptions::new().open(old_data_filename.as_str())?;
+        let old_idx_fie = fs::OpenOptions::new()
+            .read(true)
+            .open(old_idx_filename.as_str())?;
+        let mut old_data_fie = fs::OpenOptions::new()
+            .read(true)
+            .open(old_data_filename.as_str())?;
 
         let index_size = verify_index_file_integrity(&old_idx_fie)?;
         if index_size == 0 || index_size <= self.last_compact_index_offset {
@@ -103,31 +108,27 @@ impl Volume {
             )));
         }
 
-        struct KeyField {
-            offset: u32,
-            size: u32,
-        }
-
-        let mut increment_has_updated_index_entry = HashMap::new();
+        let mut incremented_has_updated_index_entry = HashMap::new();
 
         {
-            let mut idx_offset = index_size - NEEDLE_INDEX_SIZE as u64;
+            let mut idx_offset = index_size as i64 - NEEDLE_INDEX_SIZE as i64;
             loop {
-                if idx_offset >= self.last_compact_index_offset {
-                    let idx_entry = read_index_entry_at_offset(&old_idx_fie, idx_offset)?;
+                if idx_offset >= self.last_compact_index_offset as i64 {
+                    let idx_entry = read_index_entry_at_offset(&old_idx_fie, idx_offset as u64)?;
                     let (key, offset, size) = index_entry(&idx_entry);
-                    increment_has_updated_index_entry
+                    info!("key: {key}, offset: {offset}, size: {size}");
+                    incremented_has_updated_index_entry
                         .entry(key)
-                        .or_insert(KeyField { offset, size });
+                        .or_insert(NeedleValue { offset, size });
 
-                    idx_offset -= NEEDLE_INDEX_SIZE as u64;
+                    idx_offset -= NEEDLE_INDEX_SIZE as i64;
                 } else {
                     break;
                 }
             }
         }
 
-        if !increment_has_updated_index_entry.is_empty() {
+        if !incremented_has_updated_index_entry.is_empty() {
             let mut new_idx_file = fs::OpenOptions::new()
                 .write(true)
                 .read(true)
@@ -148,11 +149,11 @@ impl Volume {
                 )));
             }
 
-            let mut index_entry_buf = vec![0u8; 16];
-            for (key, value) in increment_has_updated_index_entry {
-                index_entry_buf.put_u64(key);
-                index_entry_buf.put_u32(value.offset);
-                index_entry_buf.put_u32(value.size);
+            let mut index_entry_buf = [0u8; 16];
+            for (key, value) in incremented_has_updated_index_entry {
+                (&mut index_entry_buf[0..8]).put_u64(key);
+                (&mut index_entry_buf[8..12]).put_u32(value.offset);
+                (&mut index_entry_buf[12..16]).put_u32(value.size);
 
                 let mut offset = new_data_file.seek(SeekFrom::End(0))?;
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
@@ -162,11 +163,8 @@ impl Volume {
                 }
 
                 if value.offset != 0 && value.size != 0 {
-                    let needle_bytes = read_needle_blob(
-                        &mut old_data_fie,
-                        value.offset * NEEDLE_PADDING_SIZE,
-                        value.size,
-                    )?;
+                    let needle_bytes =
+                        read_needle_blob(&mut old_data_fie, value.offset, value.size)?;
                     new_data_file.write_all(&needle_bytes)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
@@ -192,7 +190,6 @@ impl Volume {
         &mut self,
         dst_name: String,
         idx_name: String,
-        _preallocate: u64,
     ) -> Result<()> {
         let mut dst_file = fs::OpenOptions::new()
             .write(true)

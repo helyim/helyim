@@ -74,6 +74,32 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     Ok(Json(stat))
 }
 
+pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<()> {
+    let mut store = ctx.store.lock().await;
+    for location in store.locations.iter_mut() {
+        for (vid, v) in location.volumes.iter_mut() {
+            info!("start compacting volume {vid}.");
+            v.compact2()?;
+            info!("compact volume {vid} success.");
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn volume_commit_compact_handler(State(ctx): State<StorageContext>) -> Result<()> {
+    let mut store = ctx.store.lock().await;
+    for location in store.locations.iter_mut() {
+        for (vid, v) in location.volumes.iter_mut() {
+            info!("start committing compacted volume {vid}.");
+            v.commit_compact()?;
+            info!("commit compacted volume {vid} success.");
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AssignVolumeRequest {
     volume: Option<FastStr>,

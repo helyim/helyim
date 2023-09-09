@@ -35,6 +35,8 @@ use crate::{
     util::time::{get_time, now},
 };
 
+mod vacuum;
+
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
 pub const DATA_FILE_SUFFIX: &str = "dat";
@@ -95,7 +97,7 @@ pub struct Volume {
     pub id: VolumeId,
     pub dir: FastStr,
     pub collection: FastStr,
-    data_file: Option<File>,
+    pub(crate) data_file: Option<File>,
     pub needle_mapper: NeedleMapper,
     pub needle_map_type: NeedleMapType,
     pub read_only: bool,
@@ -119,15 +121,6 @@ impl Display for Volume {
             self.read_only
         )
     }
-}
-
-fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
-    if !buf.is_empty() {
-        writer.write_all(buf)?;
-        writer.flush()?;
-        buf.clear();
-    }
-    Ok(())
 }
 
 impl Volume {
@@ -186,6 +179,15 @@ impl Volume {
 
         let vid = self.id;
         let mut writer = BufWriter::new(file);
+
+        fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
+            if !buf.is_empty() {
+                writer.write_all(buf)?;
+                writer.flush()?;
+                buf.clear();
+            }
+            Ok(())
+        }
 
         rt_spawn(async move {
             let mut buf = vec![];
@@ -271,6 +273,15 @@ impl Volume {
                 .write(true)
                 .open(self.index_filename())?;
 
+            if let Err(err) = check_volume_data_integrity(self, &index_file) {
+                self.read_only = true;
+                error!(
+                    "volume data integrity checking failed. volume: {}, filename: {}, {err}",
+                    self.id,
+                    self.data_filename()
+                );
+            }
+
             self.needle_mapper.load_idx_file(&index_file)?;
             info!("load index file `{}` success", self.index_filename());
         }
@@ -317,7 +328,6 @@ impl Volume {
         }
 
         let version = self.version();
-
         let file = self.file_mut()?;
 
         let mut offset = file.seek(SeekFrom::End(0))?;
@@ -629,13 +639,7 @@ pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Re
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(
-        volume.file_mut()?,
-        version,
-        offset * NEEDLE_PADDING_SIZE,
-        key,
-        size,
-    )
+    verify_needle_integrity(volume.file_mut()?, version, key, offset, size)
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>> {
@@ -647,8 +651,8 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
 pub fn verify_needle_integrity(
     data_file: &mut File,
     version: Version,
-    offset: u32,
     key: u64,
+    offset: u32,
     size: u32,
 ) -> Result<()> {
     let mut needle = Needle::default();
@@ -663,3 +667,51 @@ pub fn verify_needle_integrity(
 }
 
 // volume checking end
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use async_broadcast::broadcast;
+    use bytes::Bytes;
+    use faststr::FastStr;
+
+    use crate::storage::{
+        volume::{check_volume_data_integrity, verify_index_file_integrity, Volume},
+        Needle, NeedleMapType, ReplicaPlacement, Ttl,
+    };
+
+    #[tokio::test]
+    pub async fn test_check_volume_data_integrity() {
+        let (shutdown, shutdown_rx) = broadcast(1);
+        std::fs::remove_dir_all("/tmp/helyim").unwrap();
+        std::fs::create_dir("/tmp/helyim").unwrap();
+
+        let mut volume = Volume::new(
+            FastStr::from_static_str("/tmp/helyim/"),
+            FastStr::empty(),
+            1,
+            NeedleMapType::NeedleMapInMemory,
+            ReplicaPlacement::default(),
+            Ttl::default(),
+            0,
+            shutdown_rx,
+        )
+        .unwrap();
+
+        let fid = "1b1f52120";
+        let mut needle = Needle {
+            data: Bytes::from_static(b"Hello world"),
+            ..Default::default()
+        };
+        needle.parse_path(fid).unwrap();
+        volume.write_needle(&mut needle);
+
+        let index_file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(volume.index_filename())
+            .unwrap();
+
+        assert!(check_volume_data_integrity(&mut volume, &index_file).is_ok());
+    }
+}

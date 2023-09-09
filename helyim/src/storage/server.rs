@@ -14,7 +14,10 @@ use crate::{
     operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
-        api::{assign_volume_handler, fallback_handler, status_handler, StorageContext},
+        api::{
+            assign_volume_handler, fallback_handler, status_handler, volume_clean_handler,
+            volume_commit_compact_handler, StorageContext,
+        },
         needle_map::NeedleMapType,
         store::Store,
     },
@@ -141,6 +144,8 @@ impl StorageServer {
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
                 .route("/status", get(status_handler))
+                .route("/volume/clean", get(volume_clean_handler))
+                .route("/volume/clean/commit", get(volume_commit_compact_handler))
                 .route("/admin/assign_volume", get(assign_volume_handler))
                 .fallback(fallback_handler)
                 .with_state(ctx);

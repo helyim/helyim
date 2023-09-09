@@ -26,7 +26,7 @@ struct Metric {
     file_count: u64,
     deleted_count: u64,
     deleted_bytes: u64,
-    file_byte_count: u64,
+    file_bytes: u64,
 }
 
 pub struct NeedleMapper {
@@ -83,7 +83,7 @@ impl NeedleMapper {
             self.metric.maximum_file_key = key;
         }
         self.metric.file_count += 1;
-        self.metric.file_byte_count += index.size as u64;
+        self.metric.file_bytes += index.size as u64;
         let old = self.needle_value_map.set(key, index);
 
         if let Some(n) = old {
@@ -127,7 +127,7 @@ impl NeedleMapper {
     }
 
     pub fn content_size(&self) -> u64 {
-        self.metric.file_byte_count
+        self.metric.file_bytes
     }
 
     pub fn index_file_size(&self) -> Result<u64> {
