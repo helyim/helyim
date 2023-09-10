@@ -204,7 +204,7 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
         node.close();
     }
 
-    info!("rack [{}] event loop stopping.", rack.id);
+    info!("rack [{}] event loop stopped.", rack.id);
 }
 
 #[derive(Debug, Clone)]

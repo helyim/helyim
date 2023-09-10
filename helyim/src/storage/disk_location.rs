@@ -64,7 +64,7 @@ impl DiskLocation {
             let fpath = file.as_path();
 
             if fpath.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
-                info!("load volume for dat file {:?}", fpath);
+                info!("load volume for data file {:?}", fpath);
                 let (vid, collection) = self.parse_volume_id(fpath)?;
                 if self.volumes.get(&vid).is_some() {
                     continue;
@@ -88,10 +88,13 @@ impl DiskLocation {
     }
 
     pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
-        if let Some(v) = self.volumes.get_mut(&vid) {
+        if let Some(v) = self.volumes.remove(&vid) {
             v.destroy()?;
+            info!(
+                "remove volume {vid} success, where disk location is {}",
+                self.directory
+            );
         }
-        self.volumes.remove(&vid);
         Ok(())
     }
 }

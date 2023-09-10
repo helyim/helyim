@@ -461,7 +461,7 @@ impl Volume {
         }
     }
 
-    pub fn destroy(&mut self) -> Result<()> {
+    pub fn destroy(self) -> Result<()> {
         if self.read_only {
             return Err(anyhow!("{} is read only", self.data_filename()));
         }

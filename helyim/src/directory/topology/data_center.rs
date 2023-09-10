@@ -156,7 +156,7 @@ pub async fn data_center_loop(
     for (_, rack) in data_center.racks.iter() {
         rack.close();
     }
-    info!("data center [{}] event loop stopping.", data_center.id);
+    info!("data center [{}] event loop stopped.", data_center.id);
 }
 
 #[derive(Debug, Clone)]

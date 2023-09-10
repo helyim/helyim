@@ -8,7 +8,14 @@ use futures::{
     },
     StreamExt,
 };
+use helyim_proto::{
+    volume_server_client::VolumeServerClient, AllocateVolumeRequest, AllocateVolumeResponse,
+    VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
+    VacuumVolumeCleanupResponse, VacuumVolumeCommitRequest, VacuumVolumeCommitResponse,
+    VacuumVolumeCompactRequest, VacuumVolumeCompactResponse,
+};
 use serde::Serialize;
+use tonic::transport::Channel;
 use tracing::info;
 
 use crate::{
@@ -29,6 +36,8 @@ pub struct DataNode {
     pub volumes: HashMap<VolumeId, VolumeInfo>,
     pub max_volumes: i64,
     pub max_volume_id: VolumeId,
+    #[serde(skip)]
+    client: Option<VolumeServerClient<Channel>>,
 }
 
 unsafe impl Send for DataNode {}
@@ -57,6 +66,7 @@ impl DataNode {
             volumes: HashMap::new(),
             max_volumes,
             max_volume_id: 0,
+            client: None,
         }
     }
 
@@ -131,6 +141,65 @@ impl DataNode {
 
         Ok(deleted)
     }
+
+    pub fn grpc_addr(&self) -> String {
+        format!("http://{}:{}", self.ip, self.port + 1)
+    }
+
+    pub async fn allocate_volume(
+        &mut self,
+        request: AllocateVolumeRequest,
+    ) -> Result<AllocateVolumeResponse> {
+        let client = self
+            .client
+            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
+        let response = client.allocate_volume(request).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn vacuum_volume_check(
+        &mut self,
+        request: VacuumVolumeCheckRequest,
+    ) -> Result<VacuumVolumeCheckResponse> {
+        let client = self
+            .client
+            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
+        let response = client.vacuum_volume_check(request).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn vacuum_volume_compact(
+        &mut self,
+        request: VacuumVolumeCompactRequest,
+    ) -> Result<VacuumVolumeCompactResponse> {
+        let client = self
+            .client
+            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
+        let response = client.vacuum_volume_compact(request).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn vacuum_volume_commit(
+        &mut self,
+        request: VacuumVolumeCommitRequest,
+    ) -> Result<VacuumVolumeCommitResponse> {
+        let client = self
+            .client
+            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
+        let response = client.vacuum_volume_commit(request).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn vacuum_volume_cleanup(
+        &mut self,
+        request: VacuumVolumeCleanupRequest,
+    ) -> Result<VacuumVolumeCleanupResponse> {
+        let client = self
+            .client
+            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
+        let response = client.vacuum_volume_cleanup(request).await?;
+        Ok(response.into_inner())
+    }
 }
 
 pub enum DataNodeEvent {
@@ -147,6 +216,28 @@ pub enum DataNodeEvent {
     DataCenterId(oneshot::Sender<Result<FastStr>>),
     SetRack(RackEventTx),
     UpdateVolumes(Vec<VolumeInfo>, oneshot::Sender<Result<Vec<VolumeInfo>>>),
+
+    // Volume operation
+    AllocateVolume(
+        AllocateVolumeRequest,
+        oneshot::Sender<Result<AllocateVolumeResponse>>,
+    ),
+    VacuumVolumeCheck(
+        VacuumVolumeCheckRequest,
+        oneshot::Sender<Result<VacuumVolumeCheckResponse>>,
+    ),
+    VacuumVolumeCompact(
+        VacuumVolumeCompactRequest,
+        oneshot::Sender<Result<VacuumVolumeCompactResponse>>,
+    ),
+    VacuumVolumeCommit(
+        VacuumVolumeCommitRequest,
+        oneshot::Sender<Result<VacuumVolumeCommitResponse>>,
+    ),
+    VacuumVolumeCleanup(
+        VacuumVolumeCleanupRequest,
+        oneshot::Sender<Result<VacuumVolumeCleanupResponse>>,
+    ),
 }
 
 pub async fn data_node_loop(
@@ -195,12 +286,27 @@ pub async fn data_node_loop(
             DataNodeEvent::UpdateVolumes(volumes, tx) => {
                 let _ = tx.send(data_node.update_volumes(volumes).await);
             }
+            DataNodeEvent::AllocateVolume(request, tx) => {
+                let _ = tx.send(data_node.allocate_volume(request).await);
+            }
+            DataNodeEvent::VacuumVolumeCheck(request, tx) => {
+                let _ = tx.send(data_node.vacuum_volume_check(request).await);
+            }
+            DataNodeEvent::VacuumVolumeCompact(request, tx) => {
+                let _ = tx.send(data_node.vacuum_volume_compact(request).await);
+            }
+            DataNodeEvent::VacuumVolumeCommit(request, tx) => {
+                let _ = tx.send(data_node.vacuum_volume_commit(request).await);
+            }
+            DataNodeEvent::VacuumVolumeCleanup(request, tx) => {
+                let _ = tx.send(data_node.vacuum_volume_cleanup(request).await);
+            }
         }
     }
     if let Some(rack) = data_node.rack.as_ref() {
         rack.close();
     }
-    info!("data node [{}] event loop stopping.", data_node.id);
+    info!("data node [{}] event loop stopped.", data_node.id);
 }
 
 #[derive(Debug, Clone)]
@@ -234,14 +340,6 @@ impl DataNodeEventTx {
             "http://{}:{}",
             self.ip().await?,
             self.port().await?
-        ))
-    }
-
-    pub async fn grpc_addr(&self) -> Result<String> {
-        Ok(format!(
-            "http://{}:{}",
-            self.ip().await?,
-            self.port().await? + 1
         ))
     }
 
@@ -303,6 +401,56 @@ impl DataNodeEventTx {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(DataNodeEvent::UpdateVolumes(volumes, tx))?;
+        rx.await?
+    }
+
+    pub async fn allocate_volume(
+        &self,
+        request: AllocateVolumeRequest,
+    ) -> Result<AllocateVolumeResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::AllocateVolume(request, tx))?;
+        rx.await?
+    }
+
+    pub async fn vacuum_volume_check(
+        &self,
+        request: VacuumVolumeCheckRequest,
+    ) -> Result<VacuumVolumeCheckResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::VacuumVolumeCheck(request, tx))?;
+        rx.await?
+    }
+
+    pub async fn vacuum_volume_compact(
+        &self,
+        request: VacuumVolumeCompactRequest,
+    ) -> Result<VacuumVolumeCompactResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::VacuumVolumeCompact(request, tx))?;
+        rx.await?
+    }
+
+    pub async fn vacuum_volume_commit(
+        &self,
+        request: VacuumVolumeCommitRequest,
+    ) -> Result<VacuumVolumeCommitResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::VacuumVolumeCommit(request, tx))?;
+        rx.await?
+    }
+
+    pub async fn vacuum_volume_cleanup(
+        &self,
+        request: VacuumVolumeCleanupRequest,
+    ) -> Result<VacuumVolumeCleanupResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(DataNodeEvent::VacuumVolumeCleanup(request, tx))?;
         rx.await?
     }
 

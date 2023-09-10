@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use faststr::FastStr;
 use futures::{
@@ -11,7 +11,7 @@ use futures::{
 use rand;
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     directory::topology::{
@@ -207,6 +207,11 @@ pub enum TopologyEvent {
     DataCenters(oneshot::Sender<HashMap<FastStr, DataCenterEventTx>>),
     SetMaxSequence(u64),
     Topology(oneshot::Sender<Topology>),
+    Vacuum {
+        garbage_threshold: f64,
+        preallocate: i64,
+        tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 pub async fn topology_loop(
@@ -261,12 +266,42 @@ pub async fn topology_loop(
             TopologyEvent::Topology(tx) => {
                 let _ = tx.send(topology.clone());
             }
+            TopologyEvent::Vacuum {
+                garbage_threshold,
+                preallocate,
+                tx,
+            } => {
+                let _ = tx.send(topology.vacuum(garbage_threshold, preallocate).await);
+            }
         }
     }
     for (_, data_center) in topology.data_centers.iter() {
         data_center.close();
     }
-    info!("topology event loop stopping.");
+    info!("topology event loop stopped.");
+}
+
+pub async fn topology_vacuum_loop(
+    topology: TopologyEventTx,
+    garbage_threshold: f64,
+    preallocate: i64,
+    mut shutdown: async_broadcast::Receiver<()>,
+) {
+    info!("topology vacuum loop starting");
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if let Err(err) = topology.vacuum(garbage_threshold, preallocate).await {
+                    error!("topology vacuum failed, {err}");
+                }
+            }
+            _ = shutdown.recv() => {
+                break;
+            }
+        }
+    }
+    info!("topology vacuum loop stopped")
 }
 
 #[derive(Debug, Clone)]
@@ -366,6 +401,16 @@ impl TopologyEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::Topology(tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: i64) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(TopologyEvent::Vacuum {
+            garbage_threshold,
+            preallocate,
+            tx,
+        })?;
+        rx.await?
     }
 
     pub fn close(&self) {

@@ -18,7 +18,7 @@ use crate::{
     directory::{
         api::{assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext},
         topology::{
-            topology::{topology_loop, TopologyEventTx},
+            topology::{topology_loop, topology_vacuum_loop, TopologyEventTx},
             volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
         },
         Topology, VolumeGrowth,
@@ -60,17 +60,26 @@ impl DirectoryServer {
         garbage_threshold: f64,
         seq: MemorySequencer,
     ) -> Result<DirectoryServer> {
+        let (shutdown, mut shutdown_rx) = broadcast(16);
+
+        // topology event loop
         let topology = Topology::new(seq, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
         let (tx, rx) = unbounded();
         let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
+        let preallocate = (volume_size_limit_mb * (1 << 20)) as i64;
+        rt_spawn(topology_vacuum_loop(
+            topology.clone(),
+            garbage_threshold,
+            preallocate,
+            shutdown_rx.clone(),
+        ));
 
+        // volume growth event loop
         let volume_grow = VolumeGrowth::new();
         let (tx, rx) = unbounded();
         let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);
-
-        let (shutdown, mut shutdown_rx) = broadcast(16);
 
         let dir = DirectoryServer {
             host: FastStr::new(host),
@@ -91,7 +100,7 @@ impl DirectoryServer {
 
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
-                .add_service(HelyimServer::new(GrpcServer {
+                .add_service(HelyimServer::new(DirectoryGrpcServer {
                     volume_size_limit_mb,
                     topology,
                 }))
@@ -173,13 +182,13 @@ impl DirectoryServer {
 }
 
 #[derive(Clone)]
-struct GrpcServer {
+struct DirectoryGrpcServer {
     pub volume_size_limit_mb: u64,
     pub topology: TopologyEventTx,
 }
 
 #[tonic::async_trait]
-impl Helyim for GrpcServer {
+impl Helyim for DirectoryGrpcServer {
     type HeartbeatStream = Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
 
     async fn heartbeat(

@@ -1,9 +1,9 @@
-use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
+use std::{result::Result as StdResult, sync::Arc, time::Duration};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, lock::Mutex, Stream, StreamExt};
+use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
@@ -96,7 +96,7 @@ impl StorageServer {
 
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
-                .add_service(VolumeServerServer::new(GrpcServer {
+                .add_service(VolumeServerServer::new(StorageGrpcServer {
                     store: store.clone(),
                     needle_map_type,
                 }))
@@ -267,13 +267,13 @@ async fn heartbeat_stream(
 }
 
 #[derive(Clone)]
-struct GrpcServer {
+struct StorageGrpcServer {
     store: Arc<Mutex<Store>>,
     needle_map_type: NeedleMapType,
 }
 
 #[tonic::async_trait]
-impl VolumeServer for GrpcServer {
+impl VolumeServer for StorageGrpcServer {
     async fn allocate_volume(
         &self,
         request: Request<AllocateVolumeRequest>,
@@ -295,30 +295,42 @@ impl VolumeServer for GrpcServer {
         &self,
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
-        todo!()
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+        let garbage_ratio = store.check_compact_volume(request.volume_id)?;
+        Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
-
-    type VacuumVolumeCompactStream =
-        Pin<Box<dyn Stream<Item = StdResult<VacuumVolumeCompactResponse, Status>> + Send>>;
 
     async fn vacuum_volume_compact(
         &self,
         request: Request<VacuumVolumeCompactRequest>,
-    ) -> StdResult<Response<Self::VacuumVolumeCompactStream>, Status> {
-        todo!()
+    ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
+        let mut store = self.store.lock().await;
+        let request = request.into_inner();
+        store.compact_volume(request.volume_id, request.preallocate)?;
+        Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
 
     async fn vacuum_volume_commit(
         &self,
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
-        todo!()
+        let mut store = self.store.lock().await;
+        let request = request.into_inner();
+        store.commit_compact_volume(request.volume_id)?;
+        // TODO: check whether the volume is read only
+        Ok(Response::new(VacuumVolumeCommitResponse {
+            is_read_only: false,
+        }))
     }
 
     async fn vacuum_volume_cleanup(
         &self,
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
-        todo!()
+        let mut store = self.store.lock().await;
+        let request = request.into_inner();
+        store.commit_cleanup_volume(request.volume_id)?;
+        Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 }

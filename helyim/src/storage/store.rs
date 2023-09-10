@@ -82,44 +82,43 @@ impl Store {
     }
 
     pub async fn delete_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            return v.delete_needle(n).await;
+        match self.find_volume_mut(vid) {
+            Some(v) => v.delete_needle(n).await,
+            None => Ok(0),
         }
-
-        Ok(0)
     }
 
     pub fn read_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            return v.read_needle(n);
+        match self.find_volume_mut(vid) {
+            Some(v) => v.read_needle(n),
+            None => Err(Error::MissingVolume(vid)),
         }
-        Err(anyhow!("volume {} not found", vid))
     }
 
     pub async fn write_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            if v.read_only {
-                return Err(anyhow!("volume {} is read only", vid));
-            }
+        match self.find_volume_mut(vid) {
+            Some(v) => {
+                if v.read_only {
+                    return Err(anyhow!("volume {} is read only", vid));
+                }
 
-            v.write_needle(n).await
-        } else {
-            Err(anyhow!("volume {} not found", vid))
+                v.write_needle(n).await
+            }
+            None => Err(Error::MissingVolume(vid)),
         }
     }
 
     pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
         for location in self.locations.iter_mut() {
-            if location.delete_volume(vid).is_ok() {
-                delete = true;
-            }
+            location.delete_volume(vid)?;
+            delete = true;
         }
         if delete {
             // TODO: update master
             Ok(())
         } else {
-            Err(anyhow!("volume {} not found on disk", vid))
+            Err(Error::MissingVolume(vid))
         }
     }
 
@@ -227,9 +226,9 @@ impl Store {
                     heartbeat.volumes.push(msg);
                 } else if v.expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES) {
                     deleted_vids.push(v.id);
-                    info!("volume {} is deleted.", v.id);
+                    info!("volume {} is deleted.", vid);
                 } else {
-                    info!("volume {} is expired.", *vid);
+                    info!("volume {} is expired.", vid);
                 }
             }
             for vid in deleted_vids {
@@ -270,7 +269,9 @@ impl Store {
         match self.find_volume_mut(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact2(preallocate)
+                volume.compact2(preallocate)?;
+                info!("volume {vid} compacting success.");
+                Ok(())
             }
             None => {
                 error!("volume {vid} is not found during compacting.");
@@ -283,7 +284,9 @@ impl Store {
         match self.find_volume_mut(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.commit_compact()
+                volume.commit_compact()?;
+                info!("volume {vid} committing compaction success.");
+                Ok(())
             }
             None => {
                 error!("volume {vid} is not found during committing compaction.");
@@ -294,7 +297,11 @@ impl Store {
 
     pub fn commit_cleanup_volume(&mut self, vid: VolumeId) -> Result<()> {
         match self.find_volume_mut(vid) {
-            Some(volume) => volume.cleanup_compact(),
+            Some(volume) => {
+                volume.cleanup_compact()?;
+                info!("volume {vid} committing cleanup success.");
+                Ok(())
+            }
             None => {
                 error!("volume {vid} is not found during cleaning up.");
                 Err(Error::MissingVolume(vid))

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use faststr::FastStr;
 use futures::{
     channel::{
@@ -8,9 +6,8 @@ use futures::{
     },
     StreamExt,
 };
-use helyim_proto::{volume_server_client::VolumeServerClient, AllocateVolumeRequest};
+use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
-use tonic::transport::Channel;
 use tracing::info;
 
 use crate::{
@@ -22,21 +19,11 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct VolumeGrowth {
-    clients: HashMap<String, VolumeServerClient<Channel>>,
-}
+pub struct VolumeGrowth;
 
 impl VolumeGrowth {
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub async fn grpc_client(&mut self, addr: String) -> Result<&mut VolumeServerClient<Channel>> {
-        let client = self
-            .clients
-            .entry(addr.clone())
-            .or_insert(VolumeServerClient::connect(addr).await?);
-        Ok(client)
+        Self
     }
 
     pub async fn grow_by_type(
@@ -295,17 +282,14 @@ impl VolumeGrowth {
         nodes: Vec<DataNodeEventTx>,
     ) -> Result<()> {
         for dn in nodes {
-            let addr = dn.grpc_addr().await?;
-            let client = self.grpc_client(addr).await?;
-            client
-                .allocate_volume(AllocateVolumeRequest {
-                    volumes: vec![vid],
-                    collection: option.collection.to_string(),
-                    replication: option.replica_placement.to_string(),
-                    ttl: option.ttl.to_string(),
-                    preallocate: option.preallocate,
-                })
-                .await?;
+            dn.allocate_volume(AllocateVolumeRequest {
+                volumes: vec![vid],
+                collection: option.collection.to_string(),
+                replication: option.replica_placement.to_string(),
+                ttl: option.ttl.to_string(),
+                preallocate: option.preallocate,
+            })
+            .await?;
 
             let volume_info = VolumeInfo {
                 id: vid,
@@ -349,7 +333,7 @@ pub async fn volume_growth_loop(
             }
         }
     }
-    info!("volume growth event loop stopping.");
+    info!("volume growth event loop stopped.");
 }
 
 #[derive(Debug, Clone)]
