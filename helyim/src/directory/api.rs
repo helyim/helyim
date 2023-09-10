@@ -88,7 +88,7 @@ pub async fn assign_handler(
         url: node.url().await?,
         public_url: node.public_url().await?,
         count,
-        error: FastStr::empty(),
+        error: String::default(),
     };
     Ok(Json(assignment))
 }

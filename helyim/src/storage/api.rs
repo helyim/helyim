@@ -79,7 +79,7 @@ pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<(
     for location in store.locations.iter_mut() {
         for (vid, v) in location.volumes.iter_mut() {
             info!("start compacting volume {vid}.");
-            v.compact2()?;
+            v.compact2(0)?;
             info!("compact volume {vid} success.");
         }
     }
@@ -96,32 +96,6 @@ pub async fn volume_commit_compact_handler(State(ctx): State<StorageContext>) ->
             info!("commit compacted volume {vid} success.");
         }
     }
-
-    Ok(())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AssignVolumeRequest {
-    volume: Option<FastStr>,
-    replication: Option<FastStr>,
-    ttl: Option<FastStr>,
-    preallocate: Option<i64>,
-    collection: Option<FastStr>,
-}
-
-pub async fn assign_volume_handler(
-    State(ctx): State<StorageContext>,
-    Query(request): Query<AssignVolumeRequest>,
-) -> Result<()> {
-    let mut store = ctx.store.lock().await;
-    store.add_volume(
-        &request.volume.unwrap_or_default(),
-        &request.collection.unwrap_or_default(),
-        ctx.needle_map_type,
-        &request.replication.unwrap_or_default(),
-        &request.ttl.unwrap_or_default(),
-        request.preallocate.unwrap_or_default(),
-    )?;
 
     Ok(())
 }

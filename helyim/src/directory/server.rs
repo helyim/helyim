@@ -246,10 +246,9 @@ impl Helyim for GrpcServer {
             match self.topology.lookup(collection.clone(), volume_id).await {
                 Ok(Some(nodes)) => {
                     for dn in nodes.iter() {
-                        let url = dn.url().await?;
                         let public_url = dn.public_url().await?;
                         locations.push(Location {
-                            url: url.to_string(),
+                            url: dn.url().await?,
                             public_url: public_url.to_string(),
                         });
                     }
@@ -296,7 +295,7 @@ async fn handle_heartbeat(
         .get_or_create_data_node(
             FastStr::new(node_addr),
             FastStr::new(ip),
-            heartbeat.port,
+            heartbeat.port as u16,
             FastStr::new(heartbeat.public_url),
             heartbeat.max_volume_count as i64,
         )

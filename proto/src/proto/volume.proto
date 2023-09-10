@@ -3,14 +3,53 @@ package volume;
 
 service VolumeServer {
   rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {}
+
+  rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
+  }
+  rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
+  }
+  rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
+  }
+  rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
+  }
+
 }
 
 message AllocateVolumeRequest {
-  uint32 volume_id = 1;
+  repeated uint32 volumes = 1;
   string collection = 2;
-  string replica_replacement = 3;
-  int64 ttl = 4;
+  string replication = 3;
+  string ttl = 4;
   int64 preallocate = 5;
 }
 message AllocateVolumeResponse {
+}
+
+message VacuumVolumeCheckRequest {
+  uint32 volume_id = 1;
+}
+message VacuumVolumeCheckResponse {
+  double garbage_ratio = 1;
+}
+
+message VacuumVolumeCompactRequest {
+  uint32 volume_id = 1;
+  int64 preallocate = 2;
+}
+message VacuumVolumeCompactResponse {
+  int64 processed_bytes = 1;
+  float load_avg_1m = 2;
+}
+
+message VacuumVolumeCommitRequest {
+  uint32 volume_id = 1;
+}
+message VacuumVolumeCommitResponse {
+  bool is_read_only = 1;
+}
+
+message VacuumVolumeCleanupRequest {
+  uint32 volume_id = 1;
+}
+message VacuumVolumeCleanupResponse {
 }

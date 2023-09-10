@@ -20,8 +20,8 @@ use crate::{
 #[derive(Debug, Default, Serialize)]
 pub struct DataNode {
     pub id: FastStr,
-    pub ip: FastStr,
-    pub port: u32,
+    ip: FastStr,
+    port: u16,
     pub public_url: FastStr,
     pub last_seen: i64,
     #[serde(skip)]
@@ -43,7 +43,7 @@ impl DataNode {
     pub fn new(
         id: FastStr,
         ip: FastStr,
-        port: u32,
+        port: u16,
         public_url: FastStr,
         max_volumes: i64,
     ) -> DataNode {
@@ -58,10 +58,6 @@ impl DataNode {
             max_volumes,
             max_volume_id: 0,
         }
-    }
-
-    pub fn url(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
     }
 
     pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
@@ -141,11 +137,10 @@ pub enum DataNodeEvent {
     HasVolumes(oneshot::Sender<i64>),
     MaxVolumes(oneshot::Sender<i64>),
     FreeVolumes(oneshot::Sender<i64>),
-    Url(oneshot::Sender<FastStr>),
     PublicUrl(oneshot::Sender<FastStr>),
     AddOrUpdateVolume(VolumeInfo, oneshot::Sender<Result<()>>),
     Ip(oneshot::Sender<FastStr>),
-    Port(oneshot::Sender<u32>),
+    Port(oneshot::Sender<u16>),
     GetVolume(VolumeId, oneshot::Sender<Option<VolumeInfo>>),
     Id(oneshot::Sender<FastStr>),
     RackId(oneshot::Sender<Result<FastStr>>),
@@ -169,9 +164,6 @@ pub async fn data_node_loop(
             }
             DataNodeEvent::FreeVolumes(tx) => {
                 let _ = tx.send(data_node.free_volumes());
-            }
-            DataNodeEvent::Url(tx) => {
-                let _ = tx.send(FastStr::from_string(data_node.url()));
             }
             DataNodeEvent::PublicUrl(tx) => {
                 let _ = tx.send(data_node.public_url.clone());
@@ -237,10 +229,20 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn url(&self) -> Result<FastStr> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(DataNodeEvent::Url(tx))?;
-        Ok(rx.await?)
+    pub async fn url(&self) -> Result<String> {
+        Ok(format!(
+            "http://{}:{}",
+            self.ip().await?,
+            self.port().await?
+        ))
+    }
+
+    pub async fn grpc_addr(&self) -> Result<String> {
+        Ok(format!(
+            "http://{}:{}",
+            self.ip().await?,
+            self.port().await? + 1
+        ))
     }
 
     pub async fn public_url(&self) -> Result<FastStr> {
@@ -262,7 +264,7 @@ impl DataNodeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn port(&self) -> Result<u32> {
+    pub async fn port(&self) -> Result<u16> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(DataNodeEvent::Port(tx))?;
         Ok(rx.await?)

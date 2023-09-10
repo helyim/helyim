@@ -477,6 +477,14 @@ impl Volume {
         self.needle_mapper.content_size()
     }
 
+    pub fn deleted_bytes(&self) -> u64 {
+        self.needle_mapper.deleted_bytes()
+    }
+
+    pub fn deleted_count(&self) -> u64 {
+        self.needle_mapper.delete_count()
+    }
+
     pub fn size(&self) -> Result<u64> {
         let file = self.file()?;
         Ok(file.metadata()?.len())

@@ -1,12 +1,22 @@
-use std::{sync::Arc, time::Duration};
+use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
-use helyim_proto::{helyim_client::HelyimClient, HeartbeatResponse};
+use futures::{channel::mpsc::unbounded, lock::Mutex, Stream, StreamExt};
+use helyim_proto::{
+    helyim_client::HelyimClient,
+    volume_server_server::{VolumeServer, VolumeServerServer},
+    AllocateVolumeRequest, AllocateVolumeResponse, HeartbeatResponse, VacuumVolumeCheckRequest,
+    VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
+    VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
+    VacuumVolumeCompactResponse,
+};
 use tokio::task::JoinHandle;
-use tonic::{transport::Channel, Streaming};
+use tonic::{
+    transport::{Channel, Server as TonicServer},
+    Request, Response, Status, Streaming,
+};
 use tracing::{error, info};
 
 use crate::{
@@ -15,8 +25,8 @@ use crate::{
     rt_spawn,
     storage::{
         api::{
-            assign_volume_handler, fallback_handler, status_handler, volume_clean_handler,
-            volume_commit_compact_handler, StorageContext,
+            fallback_handler, status_handler, volume_clean_handler, volume_commit_compact_handler,
+            StorageContext,
         },
         needle_map::NeedleMapType,
         store::Store,
@@ -41,7 +51,7 @@ pub struct StorageServer {
 
 impl StorageServer {
     pub fn new(
-        ip_bind: &str,
+        host: &str,
         ip: &str,
         port: u16,
         public_url: &str,
@@ -54,7 +64,7 @@ impl StorageServer {
         rack: &str,
         read_redirect: bool,
     ) -> Result<StorageServer> {
-        let (shutdown, shutdown_rx) = async_broadcast::broadcast(16);
+        let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         let store = Store::new(
             ip,
@@ -63,10 +73,12 @@ impl StorageServer {
             folders,
             max_counts,
             needle_map_type,
-            shutdown_rx,
+            shutdown_rx.clone(),
         )?;
-        Ok(StorageServer {
-            host: FastStr::new(ip_bind),
+
+        let store = Arc::new(Mutex::new(store));
+        let storage = StorageServer {
+            host: FastStr::new(host),
             port,
             master_node: FastStr::new(master_node),
             pulse_seconds,
@@ -74,10 +86,30 @@ impl StorageServer {
             rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
-            store: Arc::new(Mutex::new(store)),
+            store: store.clone(),
             handles: vec![],
             shutdown,
-        })
+        };
+
+        let addr = format!("{}:{}", host, port + 1);
+        let addr = addr.parse()?;
+
+        rt_spawn(async move {
+            if let Err(err) = TonicServer::builder()
+                .add_service(VolumeServerServer::new(GrpcServer {
+                    store: store.clone(),
+                    needle_map_type,
+                }))
+                .serve_with_shutdown(addr, async {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+            {
+                error!("grpc server starting failed, {}", err);
+            }
+        });
+
+        Ok(storage)
     }
 
     pub async fn stop(&mut self) -> Result<()> {
@@ -146,7 +178,6 @@ impl StorageServer {
                 .route("/status", get(status_handler))
                 .route("/volume/clean", get(volume_clean_handler))
                 .route("/volume/clean/commit", get(volume_commit_compact_handler))
-                .route("/admin/assign_volume", get(assign_volume_handler))
                 .fallback(fallback_handler)
                 .with_state(ctx);
 
@@ -187,16 +218,16 @@ async fn start_heartbeat(
                                 match response {
                                     Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
                                     Err(err) => {
-                                        error!("send heartbeat error: {}", err.message());
-                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
+                                        error!("send heartbeat error: {}, will try again after 10s.", err.message());
+                                        tokio::time::sleep(STOP_INTERVAL * 5).await;
                                         continue 'next_heartbeat;
                                     }
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("heartbeat starting up failed: {err}");
-                            tokio::time::sleep(STOP_INTERVAL * 2).await;
+                            error!("heartbeat starting up failed: {err}, will try agent after 10s.");
+                            tokio::time::sleep(STOP_INTERVAL * 5).await;
                         }
                     }
                 }
@@ -233,4 +264,61 @@ async fn heartbeat_stream(
     };
     let response = client.heartbeat(request_stream).await?;
     Ok(response.into_inner())
+}
+
+#[derive(Clone)]
+struct GrpcServer {
+    store: Arc<Mutex<Store>>,
+    needle_map_type: NeedleMapType,
+}
+
+#[tonic::async_trait]
+impl VolumeServer for GrpcServer {
+    async fn allocate_volume(
+        &self,
+        request: Request<AllocateVolumeRequest>,
+    ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
+        let mut store = self.store.lock().await;
+        let request = request.into_inner();
+        store.add_volume(
+            &request.volumes,
+            &request.collection,
+            self.needle_map_type,
+            &request.replication,
+            &request.ttl,
+            request.preallocate,
+        )?;
+        Ok(Response::new(AllocateVolumeResponse {}))
+    }
+
+    async fn vacuum_volume_check(
+        &self,
+        request: Request<VacuumVolumeCheckRequest>,
+    ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
+        todo!()
+    }
+
+    type VacuumVolumeCompactStream =
+        Pin<Box<dyn Stream<Item = StdResult<VacuumVolumeCompactResponse, Status>> + Send>>;
+
+    async fn vacuum_volume_compact(
+        &self,
+        request: Request<VacuumVolumeCompactRequest>,
+    ) -> StdResult<Response<Self::VacuumVolumeCompactStream>, Status> {
+        todo!()
+    }
+
+    async fn vacuum_volume_commit(
+        &self,
+        request: Request<VacuumVolumeCommitRequest>,
+    ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
+        todo!()
+    }
+
+    async fn vacuum_volume_cleanup(
+        &self,
+        request: Request<VacuumVolumeCleanupRequest>,
+    ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
+        todo!()
+    }
 }

@@ -13,6 +13,8 @@ use serde_json::json;
 use tonic::Status;
 use tracing::error;
 
+use crate::storage::VolumeId;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// directory errors
@@ -20,7 +22,9 @@ pub enum Error {
     NoFreeSpace(String),
     #[error("No writable volumes")]
     NoWritableVolumes,
-    #[error("data integrity error: {0}")]
+    #[error("Volume {0} is not found")]
+    MissingVolume(VolumeId),
+    #[error("Data integrity error: {0}")]
     DataIntegrity(String),
     #[error("Cookie not match, needle cookie is {0} but got {1}")]
     CookieNotMatch(u32, u32),
@@ -34,62 +38,62 @@ pub enum Error {
     InvalidFid(String),
 
     /// other errors
-    #[error("io error: {0}")]
+    #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("parse integer error: {0}")]
+    #[error("Parse integer error: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
-    #[error("bincode error: {0}")]
+    #[error("Bincode error: {0}")]
     BincodeError(#[from] Box<bincode::ErrorKind>),
-    #[error("other error: {0}")]
+    #[error("Other error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("serde json error: {0}")]
+    #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
-    #[error("raw error: {0}")]
+    #[error("Raw error: {0}")]
     String(String),
-    #[error("utf8 error: {0}")]
+    #[error("Utf8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
-    #[error("addr parse error: {0}")]
+    #[error("Addr parse error: {0}")]
     AddrParse(#[from] AddrParseError),
-    #[error("system time error: {0}")]
+    #[error("System time error: {0}")]
     SystemTimeError(#[from] SystemTimeError),
-    #[error("crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
+    #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
     Crc(u32, u32),
-    #[error("unsupported version: {0}")]
+    #[error("Unsupported version: {0}")]
     UnsupportedVersion(u8),
 
-    #[error("multer error: {0}")]
+    #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
 
-    #[error("errno: {0}")]
+    #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
 
     // http
-    #[error("invalid header value: {0}")]
+    #[error("Invalid header value: {0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
-    #[error("invalid header name: {0}")]
+    #[error("Invalid header name: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
-    #[error("to str error: {0}")]
+    #[error("Tostr error: {0}")]
     ToStr(#[from] ToStrError),
-    #[error("url parse error: {0}")]
+    #[error("Url parse error: {0}")]
     UrlParseError(#[from] url::ParseError),
-    #[error("timeout")]
+    #[error("Timeout")]
     Timeout,
-    #[error("hyper error: {0}")]
+    #[error("Hyper error: {0}")]
     HyperError(#[from] hyper::Error),
-    #[error("axum http error: {0}")]
+    #[error("Axum http error: {0}")]
     AxumHttpError(#[from] axum::http::Error),
 
     // tonic
-    #[error("tonic status: {0}")]
+    #[error("Tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
-    #[error("tonic transport error: {0}")]
+    #[error("Tonic transport error: {0}")]
     TonicTransport(#[from] tonic::transport::Error),
 
-    #[error("futures channel send error: {0}")]
+    #[error("Futures channel send error: {0}")]
     SendError(#[from] futures::channel::mpsc::SendError),
-    #[error("broadcast channel closed")]
+    #[error("Broadcast channel closed")]
     BroadcastSendError(#[from] async_broadcast::SendError<()>),
-    #[error("oneshot channel canceled")]
+    #[error("Oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
 }
 

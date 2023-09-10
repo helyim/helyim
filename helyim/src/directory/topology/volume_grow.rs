@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use faststr::FastStr;
 use futures::{
     channel::{
@@ -6,8 +8,9 @@ use futures::{
     },
     StreamExt,
 };
+use helyim_proto::{volume_server_client::VolumeServerClient, AllocateVolumeRequest};
 use rand::{prelude::SliceRandom, random};
-use serde_json::Value;
+use tonic::transport::Channel;
 use tracing::info;
 
 use crate::{
@@ -16,19 +19,20 @@ use crate::{
     },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    util,
 };
 
-#[derive(Debug, Copy, Clone, Default)]
-pub struct VolumeGrowth;
+#[derive(Debug, Clone, Default)]
+pub struct VolumeGrowth {
+    clients: HashMap<String, VolumeServerClient<Channel>>,
+}
 
 impl VolumeGrowth {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub async fn grow_by_type(
-        &self,
+        &mut self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
@@ -250,7 +254,7 @@ impl VolumeGrowth {
     }
 
     async fn find_and_grow(
-        &self,
+        &mut self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
@@ -262,7 +266,7 @@ impl VolumeGrowth {
     }
 
     async fn grow_by_count_and_type(
-        &self,
+        &mut self,
         count: usize,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
@@ -276,14 +280,29 @@ impl VolumeGrowth {
     }
 
     async fn grow(
-        &self,
+        &mut self,
         vid: VolumeId,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
         nodes: Vec<DataNodeEventTx>,
     ) -> Result<()> {
         for dn in nodes {
-            allocate_volume(&dn, vid, option).await?;
+            let addr = dn.grpc_addr().await?;
+            let client = self
+                .clients
+                .entry(addr.clone())
+                .or_insert(VolumeServerClient::connect(addr.to_string()).await?);
+
+            client
+                .allocate_volume(AllocateVolumeRequest {
+                    volumes: vec![vid],
+                    collection: option.collection.to_string(),
+                    replication: option.replica_placement.to_string(),
+                    ttl: option.ttl.to_string(),
+                    preallocate: option.preallocate,
+                })
+                .await?;
+
             let volume_info = VolumeInfo {
                 id: vid,
                 size: 0,
@@ -311,7 +330,7 @@ pub enum VolumeGrowthEvent {
 }
 
 pub async fn volume_growth_loop(
-    volume_grow: VolumeGrowth,
+    mut volume_grow: VolumeGrowth,
     mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
 ) {
     info!("volume growth event loop starting.");
@@ -365,39 +384,4 @@ pub struct VolumeGrowOption {
     pub data_center: FastStr,
     pub rack: FastStr,
     pub data_node: FastStr,
-}
-
-async fn allocate_volume(
-    dn: &DataNodeEventTx,
-    vid: VolumeId,
-    option: &VolumeGrowOption,
-) -> Result<()> {
-    let vid = &vid.to_string();
-    let collection = &option.collection;
-    let rp = &option.replica_placement.to_string();
-    let ttl = &option.ttl.to_string();
-    let preallocate = &format!("{}", option.preallocate);
-
-    let params: Vec<(&str, &str)> = vec![
-        ("volume", vid),
-        ("collection", collection),
-        ("replication", rp),
-        ("ttl", ttl),
-        ("preallocate", preallocate),
-    ];
-
-    let body = util::get(
-        &format!("http://{}/admin/assign_volume", dn.url().await?),
-        &params,
-    )
-    .await?;
-
-    if !body.is_empty() {
-        let value: Value = serde_json::from_slice(&body)?;
-        if let Value::String(ref error) = value["error"] {
-            return Err(Error::String(error.clone()));
-        }
-    }
-
-    Ok(())
 }

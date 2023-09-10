@@ -1,6 +1,6 @@
 use faststr::FastStr;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     anyhow,
@@ -174,7 +174,7 @@ impl Store {
 
     pub fn add_volume(
         &mut self,
-        volumes: &str,
+        volumes: &[u32],
         collection: &str,
         needle_map_type: NeedleMapType,
         replica_placement: &str,
@@ -185,34 +185,15 @@ impl Store {
         let ttl = Ttl::new(ttl)?;
 
         let collection = FastStr::new(collection);
-        for volume in volumes.split(',') {
-            let parts: Vec<&str> = volume.split('-').collect();
-            if parts.len() == 1 {
-                let id_str = parts[0];
-                let vid = id_str.parse::<u32>()?;
-                self.do_add_volume(
-                    vid,
-                    collection.clone(),
-                    needle_map_type,
-                    rp,
-                    ttl,
-                    preallocate,
-                )?;
-            } else {
-                let start = parts[0].parse::<u32>()?;
-                let end = parts[1].parse::<u32>()?;
-
-                for id in start..(end + 1) {
-                    self.do_add_volume(
-                        id,
-                        collection.clone(),
-                        needle_map_type,
-                        rp,
-                        ttl,
-                        preallocate,
-                    )?;
-                }
-            }
+        for volume in volumes {
+            self.do_add_volume(
+                *volume,
+                collection.clone(),
+                needle_map_type,
+                rp,
+                ttl,
+                preallocate,
+            )?;
         }
         Ok(())
     }
@@ -267,5 +248,57 @@ impl Store {
         heartbeat.rack = self.rack.to_string();
 
         heartbeat
+    }
+}
+
+/// compact volume
+impl Store {
+    pub fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                info!("volume {vid} garbage level: {}", volume.garbage_level());
+                Ok(volume.garbage_level())
+            }
+            None => {
+                error!("volume {vid} is not found during check compact");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub fn compact_volume(&mut self, vid: VolumeId, preallocate: i64) -> Result<()> {
+        match self.find_volume_mut(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.compact2(preallocate)
+            }
+            None => {
+                error!("volume {vid} is not found during compacting.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<()> {
+        match self.find_volume_mut(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.commit_compact()
+            }
+            None => {
+                error!("volume {vid} is not found during committing compaction.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub fn commit_cleanup_volume(&mut self, vid: VolumeId) -> Result<()> {
+        match self.find_volume_mut(vid) {
+            Some(volume) => volume.cleanup_compact(),
+            None => {
+                error!("volume {vid} is not found during cleaning up.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
     }
 }
