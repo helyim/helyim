@@ -23,7 +23,7 @@ impl Topology {
                         && batch_vacuum_volume_compact(*vid, data_nodes, preallocate).await?
                     {
                         batch_vacuum_volume_commit(*vid, data_nodes).await?;
-                        batch_vacuum_volume_cleanup(*vid, data_nodes).await?;
+                        let _ = batch_vacuum_volume_cleanup(*vid, data_nodes).await;
                     }
                 }
             }
@@ -118,8 +118,8 @@ async fn batch_vacuum_volume_cleanup(
                 info!("cleanup volume {volume_id} success.");
                 cleanup_success = true;
             }
-            Err(err) => {
-                error!("cleanup volume {volume_id} failed, {err}");
+            Err(_err) => {
+                // error!("cleanup volume {volume_id} failed, {err}");
                 cleanup_success = false;
             }
         }

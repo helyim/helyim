@@ -678,15 +678,17 @@ pub fn verify_needle_integrity(
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
 
     use async_broadcast::broadcast;
     use bytes::Bytes;
     use faststr::FastStr;
 
-    use crate::storage::{
-        volume::{check_volume_data_integrity, verify_index_file_integrity, Volume},
-        Needle, NeedleMapType, ReplicaPlacement, Ttl,
+    use crate::{
+        errors::Result,
+        storage::{
+            volume::{check_volume_data_integrity, Volume},
+            Needle, NeedleMapType, ReplicaPlacement, Ttl,
+        },
     };
 
     #[tokio::test]

@@ -218,16 +218,16 @@ async fn start_heartbeat(
                                 match response {
                                     Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
                                     Err(err) => {
-                                        error!("send heartbeat error: {err}, will try again after 10s.");
-                                        tokio::time::sleep(STOP_INTERVAL * 5).await;
+                                        error!("send heartbeat error: {err}, will try again after 4s.");
+                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
                                         continue 'next_heartbeat;
                                     }
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("heartbeat starting up failed: {err}, will try agent after 10s.");
-                            tokio::time::sleep(STOP_INTERVAL * 5).await;
+                            error!("heartbeat starting up failed: {err}, will try agent after 4s.");
+                            tokio::time::sleep(STOP_INTERVAL * 2).await;
                         }
                     }
                 }

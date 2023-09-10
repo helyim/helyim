@@ -268,6 +268,7 @@ impl Store {
     pub fn compact_volume(&mut self, vid: VolumeId, preallocate: i64) -> Result<()> {
         match self.find_volume_mut(vid) {
             Some(volume) => {
+                volume.read_only = true;
                 // TODO: check disk status
                 volume.compact2(preallocate)?;
                 info!("volume {vid} compacting success.");
@@ -285,6 +286,7 @@ impl Store {
             Some(volume) => {
                 // TODO: check disk status
                 volume.commit_compact()?;
+                volume.read_only = false;
                 info!("volume {vid} committing compaction success.");
                 Ok(())
             }

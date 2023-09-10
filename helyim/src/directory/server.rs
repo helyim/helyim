@@ -68,7 +68,7 @@ impl DirectoryServer {
         let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
         let preallocate = (volume_size_limit_mb * (1 << 20)) as i64;
-        rt_spawn(topology_vacuum_loop(
+        let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
             preallocate,
@@ -92,7 +92,7 @@ impl DirectoryServer {
             volume_grow,
             topology: topology.clone(),
             shutdown,
-            handles: vec![topology_handle, volume_grow_handle],
+            handles: vec![topology_handle, topology_vacuum_handle, volume_grow_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1);
