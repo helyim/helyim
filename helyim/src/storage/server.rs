@@ -105,7 +105,7 @@ impl StorageServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {}", err);
+                error!("grpc server starting failed, {err}");
             }
         });
 
@@ -218,7 +218,7 @@ async fn start_heartbeat(
                                 match response {
                                     Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
                                     Err(err) => {
-                                        error!("send heartbeat error: {}, will try again after 10s.", err.message());
+                                        error!("send heartbeat error: {err}, will try again after 10s.");
                                         tokio::time::sleep(STOP_INTERVAL * 5).await;
                                         continue 'next_heartbeat;
                                     }

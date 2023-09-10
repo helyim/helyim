@@ -231,7 +231,7 @@ impl Volume {
         let meta = match metadata(&name) {
             Ok(m) => m,
             Err(err) => {
-                debug!("get metadata err: {}", err);
+                debug!("get metadata err: {err}");
                 if err.kind() == ErrorKind::NotFound && create_if_missing {
                     // TODO support preallocate
                     fs::OpenOptions::new()

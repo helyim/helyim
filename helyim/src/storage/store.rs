@@ -234,7 +234,7 @@ impl Store {
             }
             for vid in deleted_vids {
                 if let Err(err) = location.delete_volume(vid) {
-                    warn!("delete volume {} err: {}", vid, err);
+                    warn!("delete volume {vid} err: {err}");
                 }
             }
         }

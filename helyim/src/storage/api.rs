@@ -227,7 +227,7 @@ async fn replicate_delete(
                     return if err.is_empty() {
                         Ok(())
                     } else {
-                        Err(anyhow!("write {} err: {}", location.url, err))
+                        Err(anyhow!("write {} err: {err}", location.url))
                     };
                 }
 
@@ -300,7 +300,7 @@ async fn replicate_write(
                     return if err.is_empty() {
                         Ok(())
                     } else {
-                        Err(anyhow!("write {} err: {}", location.url, err))
+                        Err(anyhow!("write {} err: {err}", location.url))
                     };
                 }
                 Ok(())

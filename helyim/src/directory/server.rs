@@ -100,7 +100,7 @@ impl DirectoryServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {}", err);
+                error!("grpc server starting failed, {err}");
             }
         });
 
@@ -204,7 +204,7 @@ impl Helyim for GrpcServer {
                                 let _ = tx.send(Ok(resp));
                             }
                             Err(err) => {
-                                error!("handle heartbeat error: {}", err);
+                                error!("handle heartbeat error: {err}");
                             }
                         }
                     }
@@ -306,7 +306,7 @@ async fn handle_heartbeat(
     for info_msg in heartbeat.volumes {
         match VolumeInfo::new(info_msg) {
             Ok(info) => infos.push(info),
-            Err(err) => info!("fail to convert joined volume: {}", err),
+            Err(err) => info!("fail to convert joined volume: {err}"),
         };
     }
 
