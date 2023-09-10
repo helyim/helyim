@@ -31,6 +31,14 @@ impl VolumeGrowth {
         Self::default()
     }
 
+    pub async fn grpc_client(&mut self, addr: String) -> Result<&mut VolumeServerClient<Channel>> {
+        let client = self
+            .clients
+            .entry(addr.clone())
+            .or_insert(VolumeServerClient::connect(addr).await?);
+        Ok(client)
+    }
+
     pub async fn grow_by_type(
         &mut self,
         option: &VolumeGrowOption,
@@ -288,11 +296,7 @@ impl VolumeGrowth {
     ) -> Result<()> {
         for dn in nodes {
             let addr = dn.grpc_addr().await?;
-            let client = self
-                .clients
-                .entry(addr.clone())
-                .or_insert(VolumeServerClient::connect(addr.to_string()).await?);
-
+            let client = self.grpc_client(addr).await?;
             client
                 .allocate_volume(AllocateVolumeRequest {
                     volumes: vec![vid],
