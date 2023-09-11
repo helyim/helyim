@@ -5,7 +5,7 @@ use helyim_proto::{
 use tracing::{error, info, warn};
 
 use crate::{
-    directory::{topology::DataNodeEventTx, Topology},
+    directory::{topology::DataNodeEventTx, Topology, VolumeLayout},
     errors::Result,
     storage::VolumeId,
 };
@@ -14,16 +14,20 @@ impl Topology {
     pub async fn vacuum(&self, garbage_ratio: f64, preallocate: i64) -> Result<()> {
         for (_name, collection) in self.collections.iter() {
             for (_key, volume_layout) in collection.volume_layouts.iter() {
-                for (vid, data_nodes) in volume_layout.locations.iter() {
-                    if volume_layout.readonly_volumes.contains(vid) {
+                for location in volume_layout.locations.iter() {
+                    let vid = *location.key();
+                    let data_nodes = location.value();
+
+                    if volume_layout.readonly_volumes.contains(&vid) {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(*vid, data_nodes, garbage_ratio).await?
-                        && batch_vacuum_volume_compact(*vid, data_nodes, preallocate).await?
+                    if batch_vacuum_volume_check(vid, data_nodes, garbage_ratio).await?
+                        && batch_vacuum_volume_compact(volume_layout, vid, data_nodes, preallocate)
+                            .await?
                     {
-                        batch_vacuum_volume_commit(*vid, data_nodes).await?;
-                        let _ = batch_vacuum_volume_cleanup(*vid, data_nodes).await;
+                        batch_vacuum_volume_commit(volume_layout, vid, data_nodes).await?;
+                        let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
             }
@@ -56,10 +60,12 @@ async fn batch_vacuum_volume_check(
 }
 
 async fn batch_vacuum_volume_compact(
+    volume_layout: &VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
     preallocate: i64,
 ) -> Result<bool> {
+    volume_layout.remove_from_writable(volume_id);
     let mut compact_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCompactRequest {
@@ -81,6 +87,7 @@ async fn batch_vacuum_volume_compact(
 }
 
 async fn batch_vacuum_volume_commit(
+    volume_layout: &VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
 ) -> Result<bool> {
@@ -95,6 +102,9 @@ async fn batch_vacuum_volume_commit(
                 } else {
                     info!("commit volume {volume_id} success.");
                     commit_success = true;
+                    volume_layout
+                        .set_volume_available(volume_id, data_node_tx)
+                        .await?;
                 }
             }
             Err(err) => {

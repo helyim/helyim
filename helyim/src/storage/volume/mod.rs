@@ -516,7 +516,7 @@ impl Volume {
     }
 
     pub fn need_to_replicate(&self) -> bool {
-        self.super_block.replica_placement.get_copy_count() > 1
+        self.super_block.replica_placement.copy_count() > 1
     }
 
     // wait either maxDelayMinutes or 10% of ttl minutes

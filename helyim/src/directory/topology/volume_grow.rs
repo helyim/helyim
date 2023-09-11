@@ -31,7 +31,7 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
-        let count = self.find_volume_count(option.replica_placement.get_copy_count());
+        let count = self.find_volume_count(option.replica_placement.copy_count());
         self.grow_by_count_and_type(count, option, topology).await
     }
 
