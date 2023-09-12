@@ -678,23 +678,24 @@ pub fn verify_needle_integrity(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
 
     use async_broadcast::broadcast;
     use bytes::Bytes;
     use faststr::FastStr;
 
-    use crate::{
-        errors::Result,
-        storage::{
-            volume::{check_volume_data_integrity, Volume},
-            Needle, NeedleMapType, ReplicaPlacement, Ttl,
-        },
+    use crate::storage::{
+        volume::{check_volume_data_integrity, Volume},
+        Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
-        let (shutdown, shutdown_rx) = broadcast(1);
-        std::fs::remove_dir_all("/tmp/helyim").unwrap();
+        let (_shutdown, shutdown_rx) = broadcast(1);
+        let path = Path::new("/tmp/helyim");
+        if path.exists() {
+            std::fs::remove_dir_all("/tmp/helyim").unwrap();
+        }
         std::fs::create_dir("/tmp/helyim").unwrap();
 
         let mut volume = Volume::new(
@@ -715,7 +716,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(&mut needle);
+        volume.write_needle(&mut needle).await.unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)
