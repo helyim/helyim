@@ -33,30 +33,36 @@ impl Volume {
     }
 
     pub fn compact(&mut self) -> Result<()> {
-        let file_path = self.filename();
+        let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_and_generate_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
-        )
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
+        )?;
+        info!("compact {filename} success");
+        Ok(())
     }
 
     pub fn compact2(&mut self, _preallocate: i64) -> Result<()> {
-        let file_path = self.filename();
+        let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
         self.copy_data_based_on_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", file_path),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", file_path),
-        )
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
+        )?;
+        info!("compact {filename} success");
+        Ok(())
     }
 
     pub fn commit_compact(&mut self) -> Result<()> {
-        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", self.filename());
-        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", self.filename());
-        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", self.filename());
-        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", self.filename());
+        let filename = self.filename();
+        info!("starting to commit compaction, filename: {filename}");
+        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
+        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
+        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
+        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
         match self.makeup_diff(
             compact_data_filename.clone(),
             compact_index_filename.clone(),
@@ -66,9 +72,10 @@ impl Volume {
             Ok(()) => {
                 fs::rename(compact_data_filename, data_filename)?;
                 fs::rename(compact_index_filename, index_filename)?;
+                error!("makeup diff in commit compaction success, filename: {filename}");
             }
             Err(err) => {
-                error!("makeup diff in commit compact failed, {err}");
+                error!("makeup diff in commit compaction failed, {err}");
                 fs::remove_file(compact_data_filename)?;
                 fs::remove_file(compact_index_filename)?;
             }
@@ -78,8 +85,10 @@ impl Volume {
     }
 
     pub fn cleanup_compact(&mut self) -> Result<()> {
-        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", self.filename()))?;
-        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", self.filename()))?;
+        let filename = self.filename();
+        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
+        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
+        info!("cleanup compaction success, filename: {filename}");
         Ok(())
     }
 

@@ -292,8 +292,10 @@ pub async fn topology_vacuum_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(err) = topology.vacuum(garbage_threshold, preallocate).await {
-                    error!("topology vacuum failed, {err}");
+                info!("topology vacuum starting.");
+                match topology.vacuum(garbage_threshold, preallocate).await {
+                    Ok(_) => info!("topology vacuum success."),
+                    Err(err) => error!("topology vacuum failed, {err}")
                 }
             }
             _ = shutdown.recv() => {
