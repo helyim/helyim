@@ -69,7 +69,7 @@ impl Looker {
     async fn do_lookup(&mut self, vids: &[VolumeId]) -> Result<LookupVolumeResponse> {
         let request = LookupVolumeRequest {
             volumes: vids.iter().map(|vid| vid.to_string()).collect(),
-            collection: None,
+            collection: String::default(),
         };
         let response = self.client.lookup_volume(request).await?;
         Ok(response.into_inner())

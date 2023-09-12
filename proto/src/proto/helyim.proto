@@ -43,7 +43,7 @@ message VolumeInformationMessage {
 
 message LookupVolumeRequest {
   repeated string volumes = 1;
-  optional string collection = 2;
+  string collection = 2;
 }
 
 message LookupVolumeResponse {

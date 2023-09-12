@@ -238,8 +238,7 @@ impl Helyim for DirectoryGrpcServer {
         if request.volumes.is_empty() {
             return Err(Status::invalid_argument("volumes can't be empty"));
         }
-        let collection = request.collection.unwrap_or_default();
-        let collection = FastStr::from(collection);
+        let collection = FastStr::from(request.collection);
 
         let mut volume_locations = vec![];
         for mut volume_id in request.volumes {
