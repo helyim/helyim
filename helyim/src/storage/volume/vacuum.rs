@@ -58,11 +58,11 @@ impl Volume {
 
     pub fn commit_compact(&mut self) -> Result<()> {
         let filename = self.filename();
-        info!("starting to commit compaction, filename: {filename}");
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
         let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
         let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
+        info!("starting to commit compaction, filename: {compact_data_filename}");
         match self.makeup_diff(
             compact_data_filename.clone(),
             compact_index_filename.clone(),
@@ -70,9 +70,11 @@ impl Volume {
             index_filename.clone(),
         ) {
             Ok(()) => {
-                fs::rename(compact_data_filename, data_filename)?;
+                fs::rename(compact_data_filename.as_str(), data_filename)?;
                 fs::rename(compact_index_filename, index_filename)?;
-                info!("makeup diff in commit compaction success, filename: {filename}");
+                info!(
+                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
+                );
             }
             Err(err) => {
                 error!("makeup diff in commit compaction failed, {err}");
@@ -99,19 +101,19 @@ impl Volume {
         old_data_filename: String,
         old_idx_filename: String,
     ) -> Result<()> {
-        let old_idx_fie = fs::OpenOptions::new()
+        let old_idx_file = fs::OpenOptions::new()
             .read(true)
             .open(old_idx_filename.as_str())?;
-        let mut old_data_fie = fs::OpenOptions::new()
+        let mut old_data_file = fs::OpenOptions::new()
             .read(true)
             .open(old_data_filename.as_str())?;
 
-        let index_size = verify_index_file_integrity(&old_idx_fie)?;
+        let index_size = verify_index_file_integrity(&old_idx_file)?;
         if index_size == 0 || index_size <= self.last_compact_index_offset {
             return Ok(());
         }
 
-        let old_compact_revision = fetch_compact_revision_from_data_file(&mut old_data_fie)?;
+        let old_compact_revision = fetch_compact_revision_from_data_file(&mut old_data_file)?;
         if old_compact_revision != self.last_compact_revision {
             return Err(Error::String(format!(
                 "current old data file's compact revision {old_compact_revision} is not the \
@@ -126,7 +128,7 @@ impl Volume {
             let mut idx_offset = index_size as i64 - NEEDLE_INDEX_SIZE as i64;
             loop {
                 if idx_offset >= self.last_compact_index_offset as i64 {
-                    let idx_entry = read_index_entry_at_offset(&old_idx_fie, idx_offset as u64)?;
+                    let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
                     let (key, offset, size) = index_entry(&idx_entry);
                     info!("key: {key}, offset: {offset}, size: {size}");
                     incremented_has_updated_index_entry
@@ -176,7 +178,7 @@ impl Volume {
 
                 if value.offset != 0 && value.size != 0 {
                     let needle_bytes =
-                        read_needle_blob(&mut old_data_fie, value.offset, value.size)?;
+                        read_needle_blob(&mut old_data_file, value.offset, value.size)?;
                     new_data_file.write_all(&needle_bytes)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {

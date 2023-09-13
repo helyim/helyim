@@ -1,10 +1,9 @@
 use std::{
     fmt::Display,
     fs::{self, metadata, File},
-    io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
-    time::Duration,
 };
 
 use bytes::{Buf, BufMut};
@@ -169,7 +168,7 @@ impl Volume {
         mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
         mut shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<()> {
-        let file = fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             // most hardware designs cannot support write permission without read permission
             .read(true)
             .write(true)
@@ -178,43 +177,27 @@ impl Volume {
             .open(self.index_filename())?;
 
         let vid = self.id;
-        let mut writer = BufWriter::new(file);
-
-        fn write_index_file<W: Write>(buf: &mut Vec<u8>, writer: &mut W) -> Result<()> {
-            if !buf.is_empty() {
-                writer.write_all(buf)?;
-                writer.flush()?;
-                buf.clear();
-            }
-            Ok(())
-        }
-
         rt_spawn(async move {
+            info!("index file writer starting, volume: {vid}");
             let mut buf = vec![];
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
-
             loop {
                 tokio::select! {
                     Some((key, value)) = index_rx.next() => {
                         buf.put_u64(key);
                         buf.put_u32(value.offset);
                         buf.put_u32(value.size);
-                    },
-                    _ = interval.tick() => {
-                        if let Err(err) = write_index_file(&mut buf, &mut writer) {
-                            error!("failed to write index file, volume {vid}, error: {err}");
-                            break;
+
+                        match file.write_all(&buf) {
+                            Ok(_) => buf.clear(),
+                            Err(err) => error!("failed to write index file, volume {vid}, error: {err}"),
                         }
-                    }
+                    },
                     _ = shutdown_rx.recv() => {
                         break;
                     }
                 }
             }
-            if let Err(err) = write_index_file(&mut buf, &mut writer) {
-                error!("failed to write index file, volume {vid}, error: {err}");
-            }
-            info!("index file writer stopped, volume: {}", vid);
+            info!("index file writer stopped, volume: {vid}");
         });
 
         Ok(())
@@ -243,7 +226,7 @@ impl Volume {
                     debug!("create volume {} data file success", self.id);
                     metadata(&name)?
                 } else {
-                    return Err(Error::from(err));
+                    return Err(Error::Io(err));
                 }
             }
         };

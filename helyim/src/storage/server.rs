@@ -297,6 +297,7 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let store = self.store.lock().await;
         let request = request.into_inner();
+        info!("vacuum volume {} check", request.volume_id);
         let garbage_ratio = store.check_compact_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
@@ -307,6 +308,7 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
         let mut store = self.store.lock().await;
         let request = request.into_inner();
+        info!("vacuum volume {} compact", request.volume_id);
         store.compact_volume(request.volume_id, request.preallocate)?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
@@ -317,6 +319,7 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let mut store = self.store.lock().await;
         let request = request.into_inner();
+        info!("vacuum volume {} commit compaction", request.volume_id);
         store.commit_compact_volume(request.volume_id)?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
@@ -330,6 +333,7 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let mut store = self.store.lock().await;
         let request = request.into_inner();
+        info!("vacuum volume {} cleanup", request.volume_id);
         store.commit_cleanup_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }

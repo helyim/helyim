@@ -26,6 +26,7 @@ axum-macros.workspace = true
 bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
+console-subscriber.workspace = true
 crc.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
@@ -44,7 +45,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sonyflake.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "tracing"] }
 tokio-stream.workspace = true
 tokio-uring = { workspace = true, optional = true }
 tracing.workspace = true

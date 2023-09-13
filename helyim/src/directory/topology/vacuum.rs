@@ -27,7 +27,7 @@ impl Topology {
                             .await?
                     {
                         batch_vacuum_volume_commit(volume_layout, vid, data_nodes).await?;
-                        let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
+                        // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
             }
@@ -116,6 +116,7 @@ async fn batch_vacuum_volume_commit(
     Ok(commit_success)
 }
 
+#[allow(dead_code)]
 async fn batch_vacuum_volume_cleanup(
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
@@ -129,7 +130,6 @@ async fn batch_vacuum_volume_cleanup(
                 cleanup_success = true;
             }
             Err(_err) => {
-                // error!("cleanup volume {volume_id} failed, {err}");
                 cleanup_success = false;
             }
         }
