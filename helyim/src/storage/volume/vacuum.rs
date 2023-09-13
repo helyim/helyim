@@ -72,7 +72,7 @@ impl Volume {
             Ok(()) => {
                 fs::rename(compact_data_filename, data_filename)?;
                 fs::rename(compact_index_filename, index_filename)?;
-                error!("makeup diff in commit compaction success, filename: {filename}");
+                info!("makeup diff in commit compaction success, filename: {filename}");
             }
             Err(err) => {
                 error!("makeup diff in commit compaction failed, {err}");
