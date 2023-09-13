@@ -14,19 +14,17 @@ impl Topology {
     pub async fn vacuum(&self, garbage_ratio: f64, preallocate: i64) -> Result<()> {
         for (_name, collection) in self.collections.iter() {
             for (_key, volume_layout) in collection.volume_layouts.iter() {
-                for location in volume_layout.locations.iter() {
-                    let vid = *location.key();
-                    let data_nodes = location.value();
-
+                let location = volume_layout.locations.clone();
+                for (vid, data_nodes) in location {
                     if volume_layout.readonly_volumes.contains(&vid) {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(vid, data_nodes, garbage_ratio).await?
-                        && batch_vacuum_volume_compact(volume_layout, vid, data_nodes, preallocate)
+                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_ratio).await?
+                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
                             .await?
                     {
-                        batch_vacuum_volume_commit(volume_layout, vid, data_nodes).await?;
+                        batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
