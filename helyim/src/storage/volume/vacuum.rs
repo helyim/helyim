@@ -36,6 +36,7 @@ impl Volume {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
+        self.read_only = true;
         self.copy_data_and_generate_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
@@ -48,6 +49,7 @@ impl Volume {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
+        self.read_only = true;
         self.copy_data_based_on_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
@@ -64,13 +66,13 @@ impl Volume {
         let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
         info!("starting to commit compaction, filename: {compact_data_filename}");
         match self.makeup_diff(
-            compact_data_filename.clone(),
-            compact_index_filename.clone(),
-            data_filename.clone(),
-            index_filename.clone(),
+            &compact_data_filename,
+            &compact_index_filename,
+            &data_filename,
+            &index_filename,
         ) {
             Ok(()) => {
-                fs::rename(compact_data_filename.as_str(), data_filename)?;
+                fs::rename(&compact_data_filename, data_filename)?;
                 fs::rename(compact_index_filename, index_filename)?;
                 info!(
                     "makeup diff in commit compaction success, filename: {compact_data_filename}"
@@ -83,6 +85,7 @@ impl Volume {
             }
         }
         self.data_file = None;
+        self.read_only = false;
         self.load(false, true)
     }
 
@@ -96,17 +99,13 @@ impl Volume {
 
     pub fn makeup_diff(
         &self,
-        new_data_filename: String,
-        new_idx_filename: String,
-        old_data_filename: String,
-        old_idx_filename: String,
+        new_data_filename: &str,
+        new_idx_filename: &str,
+        old_data_filename: &str,
+        old_idx_filename: &str,
     ) -> Result<()> {
-        let old_idx_file = fs::OpenOptions::new()
-            .read(true)
-            .open(old_idx_filename.as_str())?;
-        let mut old_data_file = fs::OpenOptions::new()
-            .read(true)
-            .open(old_data_filename.as_str())?;
+        let old_idx_file = fs::OpenOptions::new().read(true).open(old_idx_filename)?;
+        let mut old_data_file = fs::OpenOptions::new().read(true).open(old_data_filename)?;
 
         let index_size = verify_index_file_integrity(&old_idx_file)?;
         if index_size == 0 || index_size <= self.last_compact_index_offset {
@@ -147,12 +146,12 @@ impl Volume {
                 .write(true)
                 .read(true)
                 .mode(0o644)
-                .open(new_idx_filename.as_str())?;
+                .open(new_idx_filename)?;
             let mut new_data_file = fs::OpenOptions::new()
                 .write(true)
                 .read(true)
                 .mode(0o644)
-                .open(new_data_filename.as_str())?;
+                .open(new_data_filename)?;
 
             let new_compact_revision = fetch_compact_revision_from_data_file(&mut new_data_file)?;
             if old_compact_revision + 1 != new_compact_revision {
