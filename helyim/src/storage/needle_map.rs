@@ -57,10 +57,10 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_idx_file(&mut self, index_file: &File) -> Result<()> {
+    pub fn load_idx_file(&mut self, index_file: File) -> Result<()> {
         let mut last_offset = 0;
         let mut last_size = 0;
-        walk_index_file(index_file, |key, offset, size| -> Result<()> {
+        walk_index_file(&index_file, |key, offset, size| -> Result<()> {
             if offset > last_offset {
                 last_offset = offset;
                 last_size = size;
@@ -73,7 +73,7 @@ impl NeedleMapper {
             }
             Ok(())
         })?;
-        self.index_file = Some(index_file.try_clone()?);
+        self.index_file = Some(index_file);
         Ok(())
     }
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     errors::{Error, Result},
@@ -129,7 +129,6 @@ impl Volume {
                 if idx_offset >= self.last_compact_index_offset as i64 {
                     let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
                     let (key, offset, size) = index_entry(&idx_entry);
-                    info!("key: {key}, offset: {offset}, size: {size}");
                     incremented_has_updated_index_entry
                         .entry(key)
                         .or_insert(NeedleValue { offset, size });
@@ -164,6 +163,10 @@ impl Volume {
 
             let mut index_entry_buf = [0u8; 16];
             for (key, value) in incremented_has_updated_index_entry {
+                debug!(
+                    "incremented index entry -> key: {key}, offset: {}, size: {}",
+                    value.offset, value.size
+                );
                 (&mut index_entry_buf[0..8]).put_u64(key);
                 (&mut index_entry_buf[8..12]).put_u32(value.offset);
                 (&mut index_entry_buf[12..16]).put_u32(value.size);
@@ -218,7 +221,7 @@ impl Volume {
             .open(idx_name)?;
 
         let mut nm = NeedleMapper::default();
-        nm.load_idx_file(&idx_file)?;
+        nm.load_idx_file(idx_file)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
         let now = now().as_millis() as u64;
@@ -286,7 +289,7 @@ impl Volume {
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
         let mut nm = NeedleMapper::default();
-        nm.load_idx_file(&idx_file)?;
+        nm.load_idx_file(idx_file)?;
 
         let now = now().as_millis() as u64;
 

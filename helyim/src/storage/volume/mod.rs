@@ -133,7 +133,6 @@ impl Volume {
         _preallocate: i64,
         shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<Volume> {
-        debug!("new volume dir: {}, id: {}", dir, id);
         let sb = SuperBlock {
             replica_placement,
             ttl,
@@ -159,7 +158,7 @@ impl Volume {
 
         v.load(true, true)?;
         v.spawn_index_file_writer(index_rx, shutdown_rx)?;
-        debug!("new volume dir: {}, id: {} load success", dir, id);
+        debug!("load volume {id} success, path: {dir}");
         Ok(v)
     }
 
@@ -265,7 +264,7 @@ impl Volume {
                 );
             }
 
-            self.needle_mapper.load_idx_file(&index_file)?;
+            self.needle_mapper.load_idx_file(index_file)?;
             info!("load index file `{}` success", self.index_filename());
         }
 
