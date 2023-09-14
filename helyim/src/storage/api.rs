@@ -252,11 +252,10 @@ pub async fn post_handler(
     };
 
     let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
-    let mut upload = Upload::default();
+    let mut upload = Upload { size, ..Default::default()};
     if needle.has_name() {
         upload.name = String::from_utf8(needle.name.to_vec())?;
     }
-    upload.size = size;
 
     // TODO: add etag support
     Ok(FallbackResponse::Post(Json(upload)))
@@ -266,24 +265,24 @@ async fn replicate_write(
     ctx: &StorageContext,
     path: &str,
     vid: VolumeId,
-    n: &mut Needle,
+    needle: &mut Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let mut s = ctx.store.lock().await;
-    let local_url = format!("{}:{}", s.ip, s.port);
-    let size = s.write_volume_needle(vid, n).await?;
+    let mut store = ctx.store.lock().await;
+    let local_url = format!("{}:{}", store.ip, store.port);
+    let size = store.write_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = s.find_volume_mut(vid) {
+    if let Some(volume) = store.find_volume_mut(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
 
     let params = vec![("type", "replicate")];
-    let data = bincode::serialize(n)?;
+    let data = bincode::serialize(needle)?;
 
     let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
@@ -312,44 +311,40 @@ async fn replicate_write(
 }
 
 async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle> {
-    let mut resp = parse_upload(extractor).await?;
+    let mut parse_upload = parse_upload(extractor).await?;
 
     let mut needle = Needle {
-        data: Bytes::from(resp.data),
+        data: Bytes::from(parse_upload.data),
         ..Default::default()
     };
 
-    if !resp.pair_map.is_empty() {
+    if !parse_upload.pair_map.is_empty() {
         needle.set_has_pairs();
-        needle.pairs = Bytes::from(serde_json::to_vec(&resp.pair_map)?);
+        needle.pairs = Bytes::from(serde_json::to_vec(&parse_upload.pair_map)?);
     }
 
-    if !resp.filename.is_empty() {
-        needle.name = Bytes::from(resp.filename);
+    if !parse_upload.filename.is_empty() {
+        needle.name = Bytes::from(parse_upload.filename);
         needle.set_name();
     }
 
-    if resp.mime_type.len() < 256 {
-        needle.mime = Bytes::from(resp.mime_type);
+    if parse_upload.mime_type.len() < 256 {
+        needle.mime = Bytes::from(parse_upload.mime_type);
         needle.set_has_mime();
     }
 
-    // if resp.is_gzipped {
-    //     n.set_gzipped();
-    // }
-
-    if resp.modified_time == 0 {
-        resp.modified_time = now().as_secs();
+    if parse_upload.modified_time == 0 {
+        parse_upload.modified_time = now().as_secs();
     }
-    needle.last_modified = resp.modified_time;
+    needle.last_modified = parse_upload.modified_time;
     needle.set_has_last_modified_date();
 
-    if resp.ttl.minutes() != 0 {
-        needle.ttl = resp.ttl;
+    if parse_upload.ttl.minutes() != 0 {
+        needle.ttl = parse_upload.ttl;
         needle.set_has_ttl();
     }
 
-    if resp.is_chunked_file {
+    if parse_upload.is_chunked_file {
         needle.set_is_chunk_manifest();
     }
 
@@ -358,7 +353,6 @@ async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle>
     let path = extractor.uri.path();
     let start = path.find(',').map(|idx| idx + 1).unwrap_or(0);
     let end = path.rfind('.').unwrap_or(path.len());
-
     needle.parse_path(&path[start..end])?;
 
     Ok(needle)
@@ -495,14 +489,14 @@ pub async fn get_or_head_handler(
     let cookie = needle.cookie;
 
     let mut store = ctx.store.lock().await;
-    let mut resp = Response::new(Body::empty());
+    let mut response = Response::new(Body::empty());
 
     if !store.has_volume(vid) {
         // TODO support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
-            *resp.status_mut() = StatusCode::NOT_FOUND;
-            return Ok(FallbackResponse::GetOrHead(resp));
+            *response.status_mut() = StatusCode::NOT_FOUND;
+            return Ok(FallbackResponse::GetOrHead(response));
         }
     }
 
@@ -519,12 +513,12 @@ pub async fn get_or_head_handler(
                 .unwrap()
                 .as_millis() as u64,
         );
-        resp.headers_mut().insert(LAST_MODIFIED, modified.clone());
+        response.headers_mut().insert(LAST_MODIFIED, modified.clone());
 
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if since <= modified {
-                *resp.status_mut() = StatusCode::NOT_MODIFIED;
-                return Ok(FallbackResponse::GetOrHead(resp));
+                *response.status_mut() = StatusCode::NOT_MODIFIED;
+                return Ok(FallbackResponse::GetOrHead(response));
             }
         }
     }
@@ -532,8 +526,8 @@ pub async fn get_or_head_handler(
     let etag = needle.etag();
     if let Some(not_match) = extractor.headers.get(IF_NONE_MATCH) {
         if not_match == etag.as_str() {
-            *resp.status_mut() = StatusCode::NOT_MODIFIED;
-            return Ok(FallbackResponse::GetOrHead(resp));
+            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            return Ok(FallbackResponse::GetOrHead(response));
         }
     }
 
@@ -542,7 +536,7 @@ pub async fn get_or_head_handler(
         if let Some(map) = pairs.as_object() {
             for (k, v) in map {
                 if let Some(value) = v.as_str() {
-                    resp.headers_mut()
+                    response.headers_mut()
                         .insert(HeaderName::from_str(k)?, HeaderValue::from_str(value)?);
                 }
             }
@@ -568,7 +562,7 @@ pub async fn get_or_head_handler(
             }
         }
         if gzip {
-            resp.headers_mut()
+            response.headers_mut()
                 .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         } else {
             let mut decoded = Vec::new();
@@ -580,12 +574,12 @@ pub async fn get_or_head_handler(
         }
     }
 
-    resp.headers_mut()
+    response.headers_mut()
         .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
-    *resp.body_mut() = Body::from(needle.data);
-    *resp.status_mut() = StatusCode::ACCEPTED;
+    *response.body_mut() = Body::from(needle.data);
+    *response.status_mut() = StatusCode::ACCEPTED;
 
-    Ok(FallbackResponse::GetOrHead(resp))
+    Ok(FallbackResponse::GetOrHead(response))
 }
 
 // support following format
