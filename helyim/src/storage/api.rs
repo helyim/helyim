@@ -175,7 +175,7 @@ pub async fn delete_handler(
 
     {
         let mut store = ctx.store.lock().await;
-        store.read_volume_needle(vid, &mut needle)?;
+        needle = store.read_volume_needle(vid, needle)?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
@@ -185,7 +185,7 @@ pub async fn delete_handler(
         }
     }
 
-    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let size = replicate_delete(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let size = json!({ "size": size });
 
     Ok(FallbackResponse::Delete(Json(size)))
@@ -195,17 +195,17 @@ async fn replicate_delete(
     ctx: &StorageContext,
     path: &str,
     vid: VolumeId,
-    n: &mut Needle,
+    needle: Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let mut s = ctx.store.lock().await;
-    let local_url = format!("{}:{}", s.ip, s.port);
-    let size = s.delete_volume_needle(vid, n).await?;
+    let mut store = ctx.store.lock().await;
+    let local_url = format!("{}:{}", store.ip, store.port);
+    let size = store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = s.find_volume_mut(vid) {
+    if let Some(volume) = store.find_volume_mut(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -251,8 +251,11 @@ pub async fn post_handler(
         bincode::deserialize(&extractor.body)?
     };
 
-    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
-    let mut upload = Upload { size, ..Default::default()};
+    needle = replicate_write(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
+    let mut upload = Upload {
+        size: needle.data_size(),
+        ..Default::default()
+    };
     if needle.has_name() {
         upload.name = String::from_utf8(needle.name.to_vec())?;
     }
@@ -265,24 +268,24 @@ async fn replicate_write(
     ctx: &StorageContext,
     path: &str,
     vid: VolumeId,
-    needle: &mut Needle,
+    mut needle: Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<Needle> {
     let mut store = ctx.store.lock().await;
     let local_url = format!("{}:{}", store.ip, store.port);
-    let size = store.write_volume_needle(vid, needle).await?;
+    needle = store.write_volume_needle(vid, needle).await?;
     if is_replicate {
-        return Ok(size);
+        return Ok(needle);
     }
 
     if let Some(volume) = store.find_volume_mut(vid) {
         if !volume.need_to_replicate() {
-            return Ok(size);
+            return Ok(needle);
         }
     }
 
     let params = vec![("type", "replicate")];
-    let data = bincode::serialize(needle)?;
+    let data = bincode::serialize(&needle)?;
 
     let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
@@ -307,7 +310,7 @@ async fn replicate_write(
         }
     }
 
-    Ok(size)
+    Ok(needle)
 }
 
 async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle> {
@@ -500,7 +503,7 @@ pub async fn get_or_head_handler(
         }
     }
 
-    store.read_volume_needle(vid, &mut needle)?;
+    needle = store.read_volume_needle(vid, needle)?;
     if needle.cookie != cookie {
         return Err(Error::CookieNotMatch(needle.cookie, cookie));
     }
@@ -513,7 +516,9 @@ pub async fn get_or_head_handler(
                 .unwrap()
                 .as_millis() as u64,
         );
-        response.headers_mut().insert(LAST_MODIFIED, modified.clone());
+        response
+            .headers_mut()
+            .insert(LAST_MODIFIED, modified.clone());
 
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if since <= modified {
@@ -536,7 +541,8 @@ pub async fn get_or_head_handler(
         if let Some(map) = pairs.as_object() {
             for (k, v) in map {
                 if let Some(value) = v.as_str() {
-                    response.headers_mut()
+                    response
+                        .headers_mut()
                         .insert(HeaderName::from_str(k)?, HeaderValue::from_str(value)?);
                 }
             }
@@ -562,7 +568,8 @@ pub async fn get_or_head_handler(
             }
         }
         if gzip {
-            response.headers_mut()
+            response
+                .headers_mut()
                 .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         } else {
             let mut decoded = Vec::new();
@@ -574,7 +581,8 @@ pub async fn get_or_head_handler(
         }
     }
 
-    response.headers_mut()
+    response
+        .headers_mut()
         .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
     *response.body_mut() = Body::from(needle.data);
     *response.status_mut() = StatusCode::ACCEPTED;

@@ -114,7 +114,7 @@ impl NeedleMapper {
         self.metric.file_count
     }
 
-    pub fn delete_count(&self) -> u64 {
+    pub fn deleted_count(&self) -> u64 {
         self.metric.deleted_count
     }
 

@@ -9,7 +9,10 @@ use std::{
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    channel::{
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     StreamExt,
 };
 use rustix::fs::ftruncate;
@@ -94,16 +97,16 @@ impl SuperBlock {
 #[derive(Default)]
 pub struct Volume {
     pub id: VolumeId,
-    pub dir: FastStr,
+    dir: FastStr,
     pub collection: FastStr,
-    pub(crate) data_file: Option<File>,
+    data_file: Option<File>,
     pub needle_mapper: NeedleMapper,
-    pub needle_map_type: NeedleMapType,
+    needle_map_type: NeedleMapType,
     pub read_only: bool,
     pub super_block: SuperBlock,
-    pub last_modified: u64,
-    pub last_compact_index_offset: u64,
-    pub last_compact_revision: u16,
+    last_modified: u64,
+    last_compact_index_offset: u64,
+    last_compact_revision: u16,
     index_tx: Option<UnboundedSender<(u64, NeedleValue)>>,
 }
 
@@ -160,46 +163,6 @@ impl Volume {
         v.spawn_index_file_writer(index_rx, shutdown_rx)?;
         debug!("load volume {id} success, path: {dir}");
         Ok(v)
-    }
-
-    fn spawn_index_file_writer(
-        &self,
-        mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
-        mut shutdown_rx: async_broadcast::Receiver<()>,
-    ) -> Result<()> {
-        let mut file = fs::OpenOptions::new()
-            // most hardware designs cannot support write permission without read permission
-            .read(true)
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(self.index_filename())?;
-
-        let vid = self.id;
-        rt_spawn(async move {
-            info!("index file writer starting, volume: {vid}");
-            let mut buf = vec![];
-            loop {
-                tokio::select! {
-                    Some((key, value)) = index_rx.next() => {
-                        buf.put_u64(key);
-                        buf.put_u32(value.offset);
-                        buf.put_u32(value.size);
-
-                        match file.write_all(&buf) {
-                            Ok(_) => buf.clear(),
-                            Err(err) => error!("failed to write index file, volume {vid}, error: {err}"),
-                        }
-                    },
-                    _ = shutdown_rx.recv() => {
-                        break;
-                    }
-                }
-            }
-            info!("index file writer stopped, volume: {vid}");
-        });
-
-        Ok(())
     }
 
     pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<()> {
@@ -271,40 +234,7 @@ impl Volume {
         Ok(())
     }
 
-    fn write_super_block(&mut self) -> Result<()> {
-        let mut file = self.file()?;
-        let meta = file.metadata()?;
-
-        if meta.len() != 0 {
-            return Ok(());
-        }
-
-        let bytes = self.super_block.as_bytes();
-        file.write_all(&bytes)?;
-        debug!("write super block success");
-        Ok(())
-    }
-
-    fn read_super_block(&mut self) -> Result<()> {
-        let mut buf = [0; SUPER_BLOCK_SIZE];
-        {
-            let file = self.file_mut()?;
-            file.seek(SeekFrom::Start(0))?;
-            file.read_exact(&mut buf)?;
-        }
-        self.super_block = SuperBlock::parse(buf)?;
-
-        Ok(())
-    }
-
-    async fn write_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
-        if let Some(index_tx) = self.index_tx.as_ref() {
-            index_tx.unbounded_send((key, value))?;
-        }
-        Ok(())
-    }
-
-    pub async fn write_needle(&mut self, n: &mut Needle) -> Result<u32> {
+    pub async fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
         if self.read_only {
             return Err(anyhow!("data file {} is read only", self.data_filename()));
         }
@@ -319,74 +249,71 @@ impl Volume {
         }
         offset /= NEEDLE_PADDING_SIZE as u64;
 
-        let size = match n.append(file, version) {
-            Ok((data_size, _actual_size)) => data_size,
-            Err(err) => {
-                if let Err(err) = ftruncate(file, offset) {
-                    error!("cannot truncate file: {}, {err}", self.data_filename());
-                    return Err(Error::Errno(err));
-                }
-                return Err(err);
-            }
-        };
+        if let Err(err) = needle.append(file, version) {
+            error!("write needle {} error: {err}, will do ftruncate.", needle);
+            ftruncate(file, offset)?;
+            return Err(err);
+        }
 
         let nv = NeedleValue {
             offset: offset as u32,
-            size: n.size,
+            size: needle.size,
         };
-        self.needle_mapper.set(n.id, nv);
-        self.write_index_file(n.id, nv).await?;
+        self.needle_mapper.set(needle.id, nv);
+        self.write_index_file(needle.id, nv).await?;
 
-        if self.last_modified < n.last_modified {
-            self.last_modified = n.last_modified;
+        if self.last_modified < needle.last_modified {
+            self.last_modified = needle.last_modified;
         }
 
-        Ok(size)
+        Ok(needle)
     }
 
-    pub async fn delete_needle(&mut self, n: &mut Needle) -> Result<u32> {
+    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<u32> {
         if self.read_only {
             return Err(anyhow!("{} is read only", self.data_filename()));
         }
 
-        let mut nv = match self.needle_mapper.get(n.id) {
+        let mut nv = match self.needle_mapper.get(needle.id) {
             Some(nv) => nv,
             None => return Ok(0),
         };
         nv.offset = 0;
 
-        self.needle_mapper.set(n.id, nv);
-        self.write_index_file(n.id, nv).await?;
+        self.needle_mapper.set(needle.id, nv);
+        self.write_index_file(needle.id, nv).await?;
 
-        n.set_is_delete();
-        n.data.clear();
+        needle.set_is_delete();
+        needle.data.clear();
 
         let version = self.version();
         let file = self.file_mut()?;
-        n.append(file, version)?;
+        needle.append(file, version)?;
         Ok(nv.size)
     }
 
-    pub fn read_needle(&mut self, n: &mut Needle) -> Result<u32> {
-        match self.needle_mapper.get(n.id) {
+    pub fn read_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+        match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 {
-                    return Err(anyhow!("needle {} already deleted", n.id));
+                    return Err(anyhow!("needle {} already deleted", needle.id));
                 }
 
                 let version = self.version();
                 let data_file = self.file_mut()?;
-                n.read_data(data_file, nv.offset, nv.size, version)?;
+                needle.read_data(data_file, nv.offset, nv.size, version)?;
 
-                if n.has_ttl() && n.has_last_modified_date() {
-                    let minutes = n.ttl.minutes();
-                    if minutes > 0 && now().as_secs() >= (n.last_modified + minutes as u64 * 60) {
-                        return Err(anyhow!("needle {} has expired", n.id));
+                if needle.has_ttl() && needle.has_last_modified_date() {
+                    let minutes = needle.ttl.minutes();
+                    if minutes > 0
+                        && now().as_secs() >= (needle.last_modified + minutes as u64 * 60)
+                    {
+                        return Err(anyhow!("needle {} has expired", needle.id));
                     }
                 }
-                Ok(n.data.len() as u32)
+                Ok(needle)
             }
-            None => Err(anyhow!("needle {} not found", n.id)),
+            None => Err(anyhow!("needle {} not found", needle.id)),
         }
     }
 
@@ -437,7 +364,7 @@ impl Volume {
             collection: self.collection.clone(),
             version: self.version(),
             file_count: self.needle_mapper.file_count() as i64,
-            delete_count: self.needle_mapper.delete_count() as i64,
+            delete_count: self.needle_mapper.deleted_count() as i64,
             delete_bytes: self.needle_mapper.deleted_bytes(),
             read_only: self.read_only,
         }
@@ -454,7 +381,6 @@ impl Volume {
         Ok(())
     }
 
-    /// the volume file size
     pub fn content_size(&self) -> u64 {
         self.needle_mapper.content_size()
     }
@@ -464,7 +390,7 @@ impl Volume {
     }
 
     pub fn deleted_count(&self) -> u64 {
-        self.needle_mapper.delete_count()
+        self.needle_mapper.deleted_count()
     }
 
     pub fn size(&self) -> Result<u64> {
@@ -519,6 +445,148 @@ impl Volume {
 
         false
     }
+}
+
+impl Volume {
+    fn spawn_index_file_writer(
+        &self,
+        mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
+        mut shutdown_rx: async_broadcast::Receiver<()>,
+    ) -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            // most hardware designs cannot support write permission without read permission
+            .read(true)
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(self.index_filename())?;
+
+        let vid = self.id;
+        rt_spawn(async move {
+            info!("index file writer starting, volume: {vid}");
+            let mut buf = vec![];
+            loop {
+                tokio::select! {
+                    Some((key, value)) = index_rx.next() => {
+                        buf.put_u64(key);
+                        buf.put_u32(value.offset);
+                        buf.put_u32(value.size);
+
+                        match file.write_all(&buf) {
+                            Ok(_) => buf.clear(),
+                            Err(err) => error!("failed to write index file, volume {vid}, error: {err}"),
+                        }
+                    },
+                    _ = shutdown_rx.recv() => {
+                        break;
+                    }
+                }
+            }
+            info!("index file writer stopped, volume: {vid}");
+        });
+
+        Ok(())
+    }
+
+    fn write_super_block(&mut self) -> Result<()> {
+        let mut file = self.file()?;
+        let meta = file.metadata()?;
+
+        if meta.len() != 0 {
+            return Ok(());
+        }
+
+        let bytes = self.super_block.as_bytes();
+        file.write_all(&bytes)?;
+        debug!("write super block success");
+        Ok(())
+    }
+
+    fn read_super_block(&mut self) -> Result<()> {
+        let mut buf = [0; SUPER_BLOCK_SIZE];
+        {
+            let file = self.file_mut()?;
+            file.seek(SeekFrom::Start(0))?;
+            file.read_exact(&mut buf)?;
+        }
+        self.super_block = SuperBlock::parse(buf)?;
+
+        Ok(())
+    }
+
+    async fn write_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
+        if let Some(index_tx) = self.index_tx.as_ref() {
+            index_tx.unbounded_send((key, value))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeEventTx(UnboundedSender<VolumeEvent>);
+
+pub enum VolumeEvent {
+    Load {
+        create_if_missing: bool,
+        load_index: bool,
+        tx: oneshot::Sender<Result<()>>,
+    },
+    WriteNeedle {
+        needle: Needle,
+        tx: oneshot::Sender<Result<Needle>>,
+    },
+    DeleteNeedle {
+        needle: Needle,
+        tx: oneshot::Sender<Result<u32>>,
+    },
+    ReadNeedle {
+        needle: Needle,
+        tx: oneshot::Sender<Result<Needle>>,
+    },
+    Version {
+        tx: oneshot::Sender<Result<Version>>,
+    },
+    DataFile {
+        tx: oneshot::Sender<Result<File>>,
+    },
+    Filename {
+        tx: oneshot::Sender<Result<String>>,
+    },
+    DataFilename {
+        tx: oneshot::Sender<Result<String>>,
+    },
+    IndexFilename {
+        tx: oneshot::Sender<Result<String>>,
+    },
+    VolumeInfo {
+        tx: oneshot::Sender<VolumeInfo>,
+    },
+    Destroy {
+        tx: oneshot::Sender<Result<()>>,
+    },
+    ContentSize {
+        tx: oneshot::Sender<u64>,
+    },
+    DeletedBytes {
+        tx: oneshot::Sender<u64>,
+    },
+    DeletedCount {
+        tx: oneshot::Sender<u64>,
+    },
+    Size {
+        tx: oneshot::Sender<Result<u64>>,
+    },
+    Expired {
+        volume_size_limit: u64,
+        tx: oneshot::Sender<bool>,
+    },
+    ExpiredLongEnough {
+        volume_size_limit: u64,
+        tx: oneshot::Sender<bool>,
+    },
+    NeedToReplicate {
+        tx: oneshot::Sender<bool>,
+    },
 }
 
 fn load_volume_without_index(

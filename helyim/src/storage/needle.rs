@@ -387,6 +387,10 @@ impl Needle {
     pub fn disk_size(&self) -> u32 {
         actual_size(self.size)
     }
+
+    pub fn data_size(&self) -> u32 {
+        self.data.len() as u32
+    }
 }
 
 fn parse_key_hash(hash: &str) -> Result<(u64, u32)> {

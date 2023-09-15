@@ -29,7 +29,7 @@ impl Volume {
         if self.content_size() == 0 {
             return 0.0;
         }
-        self.needle_mapper.deleted_bytes() as f64 / self.content_size() as f64
+        self.deleted_bytes() as f64 / self.content_size() as f64
     }
 
     pub fn compact(&mut self) -> Result<()> {

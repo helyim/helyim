@@ -81,28 +81,28 @@ impl Store {
         None
     }
 
-    pub async fn delete_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
+    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<u32> {
         match self.find_volume_mut(vid) {
-            Some(v) => v.delete_needle(n).await,
+            Some(volume) => volume.delete_needle(needle).await,
             None => Ok(0),
         }
     }
 
-    pub fn read_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
+    pub fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume_mut(vid) {
-            Some(v) => v.read_needle(n),
+            Some(volume) => volume.read_needle(needle),
             None => Err(Error::MissingVolume(vid)),
         }
     }
 
-    pub async fn write_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
+    pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume_mut(vid) {
-            Some(v) => {
-                if v.read_only {
+            Some(volume) => {
+                if volume.read_only {
                     return Err(anyhow!("volume {} is read only", vid));
                 }
 
-                v.write_needle(n).await
+                volume.write_needle(needle).await
             }
             None => Err(Error::MissingVolume(vid)),
         }
@@ -216,11 +216,11 @@ impl Store {
                         size: v.size().unwrap_or(0),
                         collection: v.collection.to_string(),
                         file_count: v.needle_mapper.file_count(),
-                        delete_count: v.needle_mapper.delete_count(),
-                        deleted_bytes: v.needle_mapper.deleted_bytes(),
+                        delete_count: v.deleted_count(),
+                        deleted_bytes: v.deleted_bytes(),
                         read_only: v.read_only,
                         replica_placement: Into::<u8>::into(v.super_block.replica_placement) as u32,
-                        version: v.super_block.version as u32,
+                        version: v.version() as u32,
                         ttl: v.super_block.ttl.into(),
                     };
                     heartbeat.volumes.push(msg);
