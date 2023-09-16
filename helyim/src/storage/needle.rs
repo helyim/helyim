@@ -16,7 +16,6 @@ use crate::{
     errors::{Error, Result},
     storage::{
         crc,
-        crc::checksum,
         ttl::Ttl,
         version::{Version, CURRENT_VERSION, VERSION2},
     },
@@ -165,7 +164,7 @@ impl Needle {
                 let mut buf = vec![0u8; body_len as usize];
                 data_file.read_exact_at(&mut buf, offset as u64)?;
                 self.read_needle_data(Bytes::from(buf));
-                self.checksum = checksum(&self.data);
+                self.checksum = crc::checksum(&self.data);
             }
             n => return Err(Error::UnsupportedVersion(n)),
         }

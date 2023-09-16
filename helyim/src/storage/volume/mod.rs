@@ -952,6 +952,7 @@ mod tests {
     use faststr::FastStr;
 
     use crate::storage::{
+        crc,
         volume::{check_volume_data_integrity, Volume},
         Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
@@ -976,8 +977,11 @@ mod tests {
         .unwrap();
 
         let fid = "1b1f52120";
+        let data = Bytes::from_static(b"Hello world");
+        let checksum = crc::checksum(&data);
         let mut needle = Needle {
-            data: Bytes::from_static(b"Hello world"),
+            data,
+            checksum,
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
@@ -988,6 +992,8 @@ mod tests {
             .open(volume.index_filename())
             .unwrap();
 
-        assert!(check_volume_data_integrity(&mut volume, &index_file).is_ok());
+        let ret = check_volume_data_integrity(&mut volume, &index_file);
+        println!("{ret:?}");
+        assert!(ret.is_ok());
     }
 }
