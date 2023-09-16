@@ -36,7 +36,7 @@ impl Volume {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
-        self.read_only = true;
+        self.readonly = true;
         self.copy_data_and_generate_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
@@ -49,7 +49,7 @@ impl Volume {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
-        self.read_only = true;
+        self.readonly = true;
         self.copy_data_based_on_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
@@ -85,7 +85,7 @@ impl Volume {
             }
         }
         self.data_file = None;
-        self.read_only = false;
+        self.readonly = false;
         self.load(false, true)
     }
 

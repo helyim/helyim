@@ -98,7 +98,7 @@ impl Store {
     pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume_mut(vid) {
             Some(volume) => {
-                if volume.read_only {
+                if volume.readonly {
                     return Err(anyhow!("volume {} is read only", vid));
                 }
 
@@ -206,8 +206,8 @@ impl Store {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
             for (vid, v) in location.volumes.iter() {
-                if v.needle_mapper.max_file_key() > max_file_key {
-                    max_file_key = v.needle_mapper.max_file_key();
+                if v.max_file_key() > max_file_key {
+                    max_file_key = v.max_file_key();
                 }
 
                 if !v.expired(self.volume_size_limit) {
@@ -215,10 +215,10 @@ impl Store {
                         id: *vid,
                         size: v.size().unwrap_or(0),
                         collection: v.collection.to_string(),
-                        file_count: v.needle_mapper.file_count(),
+                        file_count: v.file_count(),
                         delete_count: v.deleted_count(),
                         deleted_bytes: v.deleted_bytes(),
-                        read_only: v.read_only,
+                        read_only: v.readonly,
                         replica_placement: Into::<u8>::into(v.super_block.replica_placement) as u32,
                         version: v.version() as u32,
                         ttl: v.super_block.ttl.into(),
@@ -268,7 +268,6 @@ impl Store {
     pub fn compact_volume(&mut self, vid: VolumeId, preallocate: i64) -> Result<()> {
         match self.find_volume_mut(vid) {
             Some(volume) => {
-                volume.read_only = true;
                 // TODO: check disk status
                 volume.compact2(preallocate)?;
                 info!("volume {vid} compacting success.");
@@ -286,7 +285,6 @@ impl Store {
             Some(volume) => {
                 // TODO: check disk status
                 volume.commit_compact()?;
-                volume.read_only = false;
                 info!("volume {vid} committing compaction success.");
                 Ok(())
             }
