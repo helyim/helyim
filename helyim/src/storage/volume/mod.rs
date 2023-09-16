@@ -992,8 +992,6 @@ mod tests {
             .open(volume.index_filename())
             .unwrap();
 
-        let ret = check_volume_data_integrity(&mut volume, &index_file);
-        println!("{ret:?}");
-        assert!(ret.is_ok());
+        assert!(check_volume_data_integrity(&mut volume, &index_file).is_ok());
     }
 }
