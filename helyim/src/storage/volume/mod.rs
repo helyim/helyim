@@ -948,7 +948,6 @@ pub fn verify_needle_integrity(
 mod tests {
     use std::path::Path;
 
-    use async_broadcast::broadcast;
     use bytes::Bytes;
     use faststr::FastStr;
 
