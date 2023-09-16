@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
 
-use async_broadcast::broadcast;
 use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
@@ -60,10 +59,15 @@ impl DirectoryServer {
         garbage_threshold: f64,
         seq: MemorySequencer,
     ) -> Result<DirectoryServer> {
-        let (shutdown, mut shutdown_rx) = broadcast(16);
+        let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         // topology event loop
-        let topology = Topology::new(seq, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        let topology = Topology::new(
+            seq,
+            volume_size_limit_mb * 1024 * 1024,
+            pulse_seconds,
+            shutdown_rx.clone(),
+        );
         let (tx, rx) = unbounded();
         let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
@@ -76,7 +80,7 @@ impl DirectoryServer {
         ));
 
         // volume growth event loop
-        let volume_grow = VolumeGrowth::new();
+        let volume_grow = VolumeGrowth::new(shutdown_rx.clone());
         let (tx, rx) = unbounded();
         let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);

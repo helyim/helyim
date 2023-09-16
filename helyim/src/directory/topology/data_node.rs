@@ -24,7 +24,7 @@ use crate::{
     storage::{VolumeId, VolumeInfo},
 };
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DataNode {
     pub id: FastStr,
     ip: FastStr,
@@ -38,6 +38,8 @@ pub struct DataNode {
     pub max_volume_id: VolumeId,
     #[serde(skip)]
     client: Option<VolumeServerClient<Channel>>,
+    #[serde(skip)]
+    shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for DataNode {}
@@ -55,6 +57,7 @@ impl DataNode {
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
+        shutdown: async_broadcast::Receiver<()>,
     ) -> DataNode {
         DataNode {
             id,
@@ -67,6 +70,7 @@ impl DataNode {
             max_volumes,
             max_volume_id: 0,
             client: None,
+            shutdown,
         }
     }
 
@@ -245,66 +249,70 @@ pub async fn data_node_loop(
     mut data_node_rx: UnboundedReceiver<DataNodeEvent>,
 ) {
     info!("data node [{}] event loop starting.", data_node.id);
-    while let Some(event) = data_node_rx.next().await {
-        match event {
-            DataNodeEvent::HasVolumes(tx) => {
-                let _ = tx.send(data_node.has_volumes());
+    loop {
+        tokio::select! {
+            Some(event) = data_node_rx.next() => {
+                match event {
+                    DataNodeEvent::HasVolumes(tx) => {
+                        let _ = tx.send(data_node.has_volumes());
+                    }
+                    DataNodeEvent::MaxVolumes(tx) => {
+                        let _ = tx.send(data_node.max_volumes());
+                    }
+                    DataNodeEvent::FreeVolumes(tx) => {
+                        let _ = tx.send(data_node.free_volumes());
+                    }
+                    DataNodeEvent::PublicUrl(tx) => {
+                        let _ = tx.send(data_node.public_url.clone());
+                    }
+                    DataNodeEvent::AddOrUpdateVolume(v, tx) => {
+                        let _ = tx.send(data_node.add_or_update_volume(v).await);
+                    }
+                    DataNodeEvent::Ip(tx) => {
+                        let _ = tx.send(data_node.ip.clone());
+                    }
+                    DataNodeEvent::Port(tx) => {
+                        let _ = tx.send(data_node.port);
+                    }
+                    DataNodeEvent::GetVolume(vid, tx) => {
+                        let _ = tx.send(data_node.volumes.get(&vid).cloned());
+                    }
+                    DataNodeEvent::Id(tx) => {
+                        let _ = tx.send(data_node.id.clone());
+                    }
+                    DataNodeEvent::RackId(tx) => {
+                        let _ = tx.send(data_node.rack_id().await);
+                    }
+                    DataNodeEvent::DataCenterId(tx) => {
+                        let _ = tx.send(data_node.data_center_id().await);
+                    }
+                    DataNodeEvent::SetRack(tx) => {
+                        data_node.rack = Some(tx);
+                    }
+                    DataNodeEvent::UpdateVolumes(volumes, tx) => {
+                        let _ = tx.send(data_node.update_volumes(volumes).await);
+                    }
+                    DataNodeEvent::AllocateVolume(request, tx) => {
+                        let _ = tx.send(data_node.allocate_volume(request).await);
+                    }
+                    DataNodeEvent::VacuumVolumeCheck(request, tx) => {
+                        let _ = tx.send(data_node.vacuum_volume_check(request).await);
+                    }
+                    DataNodeEvent::VacuumVolumeCompact(request, tx) => {
+                        let _ = tx.send(data_node.vacuum_volume_compact(request).await);
+                    }
+                    DataNodeEvent::VacuumVolumeCommit(request, tx) => {
+                        let _ = tx.send(data_node.vacuum_volume_commit(request).await);
+                    }
+                    DataNodeEvent::VacuumVolumeCleanup(request, tx) => {
+                        let _ = tx.send(data_node.vacuum_volume_cleanup(request).await);
+                    }
+                }
             }
-            DataNodeEvent::MaxVolumes(tx) => {
-                let _ = tx.send(data_node.max_volumes());
-            }
-            DataNodeEvent::FreeVolumes(tx) => {
-                let _ = tx.send(data_node.free_volumes());
-            }
-            DataNodeEvent::PublicUrl(tx) => {
-                let _ = tx.send(data_node.public_url.clone());
-            }
-            DataNodeEvent::AddOrUpdateVolume(v, tx) => {
-                let _ = tx.send(data_node.add_or_update_volume(v).await);
-            }
-            DataNodeEvent::Ip(tx) => {
-                let _ = tx.send(data_node.ip.clone());
-            }
-            DataNodeEvent::Port(tx) => {
-                let _ = tx.send(data_node.port);
-            }
-            DataNodeEvent::GetVolume(vid, tx) => {
-                let _ = tx.send(data_node.volumes.get(&vid).cloned());
-            }
-            DataNodeEvent::Id(tx) => {
-                let _ = tx.send(data_node.id.clone());
-            }
-            DataNodeEvent::RackId(tx) => {
-                let _ = tx.send(data_node.rack_id().await);
-            }
-            DataNodeEvent::DataCenterId(tx) => {
-                let _ = tx.send(data_node.data_center_id().await);
-            }
-            DataNodeEvent::SetRack(tx) => {
-                data_node.rack = Some(tx);
-            }
-            DataNodeEvent::UpdateVolumes(volumes, tx) => {
-                let _ = tx.send(data_node.update_volumes(volumes).await);
-            }
-            DataNodeEvent::AllocateVolume(request, tx) => {
-                let _ = tx.send(data_node.allocate_volume(request).await);
-            }
-            DataNodeEvent::VacuumVolumeCheck(request, tx) => {
-                let _ = tx.send(data_node.vacuum_volume_check(request).await);
-            }
-            DataNodeEvent::VacuumVolumeCompact(request, tx) => {
-                let _ = tx.send(data_node.vacuum_volume_compact(request).await);
-            }
-            DataNodeEvent::VacuumVolumeCommit(request, tx) => {
-                let _ = tx.send(data_node.vacuum_volume_commit(request).await);
-            }
-            DataNodeEvent::VacuumVolumeCleanup(request, tx) => {
-                let _ = tx.send(data_node.vacuum_volume_cleanup(request).await);
+            _ = data_node.shutdown.recv() => {
+                break;
             }
         }
-    }
-    if let Some(rack) = data_node.rack.as_ref() {
-        rack.close();
     }
     info!("data node [{}] event loop stopped.", data_node.id);
 }
@@ -452,9 +460,5 @@ impl DataNodeEventTx {
         self.0
             .unbounded_send(DataNodeEvent::VacuumVolumeCleanup(request, tx))?;
         rx.await?
-    }
-
-    pub fn close(&self) {
-        self.0.close_channel();
     }
 }

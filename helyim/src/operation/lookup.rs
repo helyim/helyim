@@ -23,15 +23,17 @@ pub struct Looker {
     client: HelyimClient<Channel>,
     volumes: HashMap<VolumeId, (VolumeLocation, SystemTime)>,
     timeout: Duration,
+    shutdown: async_broadcast::Receiver<()>,
 }
 
 impl Looker {
-    pub fn new(client: HelyimClient<Channel>) -> Looker {
+    pub fn new(client: HelyimClient<Channel>, shutdown: async_broadcast::Receiver<()>) -> Looker {
         Looker {
             client,
             // should bigger than volume number
             volumes: HashMap::new(),
             timeout: Duration::from_secs(600),
+            shutdown,
         }
     }
 
@@ -82,13 +84,21 @@ pub enum LookerEvent {
 
 pub async fn looker_loop(mut looker: Looker, mut looker_rx: UnboundedReceiver<LookerEvent>) {
     info!("looker event loop starting.");
-    while let Some(event) = looker_rx.next().await {
-        match event {
-            LookerEvent::Lookup(vid, tx) => {
-                let _ = tx.send(looker.lookup(&vid).await);
+    loop {
+        tokio::select! {
+            Some(event) = looker_rx.next() => {
+                match event {
+                    LookerEvent::Lookup(vid, tx) => {
+                        let _ = tx.send(looker.lookup(&vid).await);
+                    }
+                }
+            }
+            _ = looker.shutdown.recv() => {
+                break;
             }
         }
     }
+    info!("looker event loop stopped.");
 }
 
 #[derive(Debug, Clone)]

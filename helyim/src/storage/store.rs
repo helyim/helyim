@@ -43,11 +43,11 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        shutdown_rx: async_broadcast::Receiver<()>,
+        shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
-            let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown_rx.clone());
+            let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
             location.load_existing_volumes(needle_map_type)?;
             locations.push(location);
         }
@@ -163,7 +163,7 @@ impl Store {
         )?;
         let (tx, rx) = unbounded();
         let volume_tx = VolumeEventTx::new(tx);
-        rt_spawn(volume_loop(volume, rx, location.shutdown_rx.clone()));
+        rt_spawn(volume_loop(volume, rx, location.shutdown.clone()));
         location.volumes.insert(vid, volume_tx);
 
         Ok(())

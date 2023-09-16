@@ -21,7 +21,7 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, VolumeEventTx>,
-    pub(crate) shutdown_rx: async_broadcast::Receiver<()>,
+    pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for DiskLocation {}
@@ -37,7 +37,7 @@ impl DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
-            shutdown_rx,
+            shutdown: shutdown_rx,
         }
     }
 
@@ -84,7 +84,7 @@ impl DiskLocation {
                 )?;
                 let (tx, rx) = unbounded();
                 let volume_tx = VolumeEventTx::new(tx);
-                rt_spawn(volume_loop(volume, rx, self.shutdown_rx.clone()));
+                rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
                 self.volumes.insert(vid, volume_tx);
             }
         }

@@ -18,12 +18,14 @@ use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
 };
 
-#[derive(Debug, Clone, Default)]
-pub struct VolumeGrowth;
+#[derive(Debug, Clone)]
+pub struct VolumeGrowth {
+    shutdown: async_broadcast::Receiver<()>,
+}
 
 impl VolumeGrowth {
-    pub fn new() -> Self {
-        Self
+    pub fn new(shutdown: async_broadcast::Receiver<()>) -> Self {
+        Self { shutdown }
     }
 
     pub async fn grow_by_type(
@@ -322,14 +324,21 @@ pub async fn volume_growth_loop(
     mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
 ) {
     info!("volume growth event loop starting.");
-    while let Some(event) = volume_grow_rx.next().await {
-        match event {
-            VolumeGrowthEvent::GrowByType {
-                option,
-                topology,
-                tx,
-            } => {
-                let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
+    loop {
+        tokio::select! {
+            Some(event) = volume_grow_rx.next() => {
+                match event {
+                    VolumeGrowthEvent::GrowByType {
+                        option,
+                        topology,
+                        tx,
+                    } => {
+                        let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
+                    }
+                }
+            }
+            _ = volume_grow.shutdown.recv() => {
+                break;
             }
         }
     }

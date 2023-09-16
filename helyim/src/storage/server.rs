@@ -147,7 +147,7 @@ impl StorageServer {
         let client = HelyimClient::connect(self.grpc_addr()?).await?;
 
         let (looker_tx, looker_rx) = unbounded();
-        let looker = Looker::new(client.clone());
+        let looker = Looker::new(client.clone(), self.shutdown.new_receiver());
         self.handles.push(rt_spawn(looker_loop(looker, looker_rx)));
 
         let ctx = StorageContext {
@@ -200,7 +200,7 @@ async fn start_heartbeat(
     store: Arc<Mutex<Store>>,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
-    mut shutdown_rx: async_broadcast::Receiver<()>,
+    mut shutdown: async_broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
         'next_heartbeat: loop {
@@ -209,7 +209,7 @@ async fn start_heartbeat(
                     store.clone(),
                     &mut client,
                     pulse_seconds,
-                    shutdown_rx.new_receiver(),
+                    shutdown.clone(),
                 ) => {
                     match stream {
                         Ok(mut stream) => {
@@ -231,7 +231,7 @@ async fn start_heartbeat(
                         }
                     }
                 }
-                _ = shutdown_rx.recv() => {
+                _ = shutdown.recv() => {
                     info!("stopping heartbeat.");
                     return;
                 }
