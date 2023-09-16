@@ -55,7 +55,7 @@ impl ReplicaPlacement {
         Ok(rp)
     }
 
-    pub fn get_copy_count(&self) -> usize {
+    pub fn copy_count(&self) -> usize {
         (self.diff_data_center_count + self.diff_rack_count + self.same_rack_count + 1) as usize
     }
 }

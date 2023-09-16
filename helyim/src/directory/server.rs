@@ -1,26 +1,23 @@
-use std::{net::SocketAddr, pin::Pin, result::Result as StdResult};
+use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
 
-use axum::{routing::get, Router};
+use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
-    HeartbeatRequest, HeartbeatResponse,
+    lookup_volume_response::VolumeLocation,
+    HeartbeatRequest, HeartbeatResponse, Location, LookupVolumeRequest, LookupVolumeResponse,
 };
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::{
-    default_handler,
     directory::{
-        api::{
-            assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-            DirectoryContext,
-        },
+        api::{assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext},
         topology::{
-            topology::{topology_loop, TopologyEventTx},
+            topology::{topology_loop, topology_vacuum_loop, TopologyEventTx},
             volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
         },
         Topology, VolumeGrowth,
@@ -30,7 +27,7 @@ use crate::{
     sequence::MemorySequencer,
     storage::{ReplicaPlacement, VolumeInfo},
     util::get_or_default,
-    STOP_INTERVAL,
+    PHRASE, STOP_INTERVAL,
 };
 
 pub struct DirectoryServer {
@@ -47,12 +44,10 @@ pub struct DirectoryServer {
     pub volume_grow: VolumeGrowthEventTx,
     handles: Vec<JoinHandle<()>>,
 
-    shutdown: broadcast::Sender<()>,
+    shutdown: async_broadcast::Sender<()>,
 }
 
 impl DirectoryServer {
-    // TODO: add whiteList sk
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         host: &str,
         ip: &str,
@@ -64,17 +59,31 @@ impl DirectoryServer {
         garbage_threshold: f64,
         seq: MemorySequencer,
     ) -> Result<DirectoryServer> {
-        let topology = Topology::new(seq, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
+
+        // topology event loop
+        let topology = Topology::new(
+            seq,
+            volume_size_limit_mb * 1024 * 1024,
+            pulse_seconds,
+            shutdown_rx.clone(),
+        );
         let (tx, rx) = unbounded();
         let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
+        let preallocate = (volume_size_limit_mb * (1 << 20)) as i64;
+        let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
+            topology.clone(),
+            garbage_threshold,
+            preallocate,
+            shutdown_rx.clone(),
+        ));
 
-        let volume_grow = VolumeGrowth::new();
+        // volume growth event loop
+        let volume_grow = VolumeGrowth::new(shutdown_rx.clone());
         let (tx, rx) = unbounded();
         let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
         let volume_grow = VolumeGrowthEventTx::new(tx);
-
-        let (shutdown, mut shutdown_rx) = broadcast::channel(1);
 
         let dir = DirectoryServer {
             host: FastStr::new(host),
@@ -87,7 +96,7 @@ impl DirectoryServer {
             volume_grow,
             topology: topology.clone(),
             shutdown,
-            handles: vec![topology_handle, volume_grow_handle],
+            handles: vec![topology_handle, topology_vacuum_handle, volume_grow_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1);
@@ -95,7 +104,7 @@ impl DirectoryServer {
 
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
-                .add_service(HelyimServer::new(GrpcServer {
+                .add_service(HelyimServer::new(DirectoryGrpcServer {
                     volume_size_limit_mb,
                     topology,
                 }))
@@ -104,7 +113,7 @@ impl DirectoryServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {}", err);
+                error!("grpc server starting failed, {err}");
             }
         });
 
@@ -112,7 +121,7 @@ impl DirectoryServer {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        self.shutdown.send(())?;
+        self.shutdown.broadcast(()).await?;
 
         self.topology.close();
         self.volume_grow.close();
@@ -140,12 +149,15 @@ impl DirectoryServer {
         // http server
         let addr = format!("{}:{}", self.host, self.port);
         let addr = addr.parse()?;
-        let mut shutdown_rx = self.shutdown.subscribe();
+        let mut shutdown_rx = self.shutdown.new_receiver();
 
         let handle = rt_spawn(async move {
+            async fn default_handler() -> Html<&'static str> {
+                Html(PHRASE)
+            }
+
             let app = Router::new()
                 .route("/dir/assign", get(assign_handler).post(assign_handler))
-                .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
                 .route(
                     "/dir/status",
                     get(dir_status_handler).post(dir_status_handler),
@@ -174,13 +186,13 @@ impl DirectoryServer {
 }
 
 #[derive(Clone)]
-struct GrpcServer {
+struct DirectoryGrpcServer {
     pub volume_size_limit_mb: u64,
     pub topology: TopologyEventTx,
 }
 
 #[tonic::async_trait]
-impl Helyim for GrpcServer {
+impl Helyim for DirectoryGrpcServer {
     type HeartbeatStream = Pin<Box<dyn Stream<Item = StdResult<HeartbeatResponse, Status>> + Send>>;
 
     async fn heartbeat(
@@ -205,7 +217,7 @@ impl Helyim for GrpcServer {
                                 let _ = tx.send(Ok(resp));
                             }
                             Err(err) => {
-                                error!("handle heartbeat error: {}", err);
+                                error!("handle heartbeat error: {err}");
                             }
                         }
                     }
@@ -220,6 +232,54 @@ impl Helyim for GrpcServer {
 
         let out_stream = UnboundedReceiverStream::new(rx);
         Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
+    }
+
+    async fn lookup_volume(
+        &self,
+        request: Request<LookupVolumeRequest>,
+    ) -> StdResult<Response<LookupVolumeResponse>, Status> {
+        let request = request.into_inner();
+        if request.volumes.is_empty() {
+            return Err(Status::invalid_argument("volumes can't be empty"));
+        }
+        let collection = FastStr::from(request.collection);
+
+        let mut volume_locations = vec![];
+        for mut volume_id in request.volumes {
+            if let Some(idx) = volume_id.rfind(',') {
+                let _fid = volume_id.split_off(idx);
+            }
+            let volume_id = volume_id.parse().map_err(|err: ParseIntError| {
+                Status::invalid_argument(format!("parse volume id error: {err}"))
+            })?;
+
+            let mut locations = vec![];
+            let mut error = String::default();
+            match self.topology.lookup(collection.clone(), volume_id).await {
+                Ok(Some(nodes)) => {
+                    for dn in nodes.iter() {
+                        let public_url = dn.public_url().await?;
+                        locations.push(Location {
+                            url: dn.url().await?,
+                            public_url: public_url.to_string(),
+                        });
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    error!("lookup volumes error: {err}");
+                    error = err.to_string();
+                }
+            }
+
+            volume_locations.push(VolumeLocation {
+                volume_id,
+                locations,
+                error,
+            });
+        }
+
+        Ok(Response::new(LookupVolumeResponse { volume_locations }))
     }
 }
 
@@ -247,7 +307,7 @@ async fn handle_heartbeat(
         .get_or_create_data_node(
             FastStr::new(node_addr),
             FastStr::new(ip),
-            heartbeat.port,
+            heartbeat.port as u16,
             FastStr::new(heartbeat.public_url),
             heartbeat.max_volume_count as i64,
         )
@@ -258,7 +318,7 @@ async fn handle_heartbeat(
     for info_msg in heartbeat.volumes {
         match VolumeInfo::new(info_msg) {
             Ok(info) => infos.push(info),
-            Err(err) => info!("fail to convert joined volume: {}", err),
+            Err(err) => info!("fail to convert joined volume: {err}"),
         };
     }
 

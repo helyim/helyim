@@ -16,7 +16,7 @@ pub struct VolumeInfo {
     pub version: Version,
     pub file_count: i64,
     pub delete_count: i64,
-    pub delete_byte_count: u64,
+    pub delete_bytes: u64,
     pub read_only: bool,
 }
 
@@ -29,7 +29,7 @@ impl VolumeInfo {
             collection: FastStr::new(m.collection),
             file_count: m.file_count as i64,
             delete_count: m.delete_count as i64,
-            delete_byte_count: m.deleted_byte_count,
+            delete_bytes: m.deleted_bytes,
             read_only: m.read_only,
             version: m.version as Version,
             ttl: Ttl::from(m.ttl),

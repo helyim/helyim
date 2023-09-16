@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use faststr::FastStr;
 use futures::{
@@ -11,7 +11,7 @@ use futures::{
 use rand;
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     directory::topology::{
@@ -35,6 +35,8 @@ pub struct Topology {
     pub data_centers: HashMap<FastStr, DataCenterEventTx>,
     #[serde(skip)]
     pub handles: Vec<JoinHandle<()>>,
+    #[serde(skip)]
+    shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for Topology {}
@@ -48,12 +50,18 @@ impl Clone for Topology {
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
             handles: Vec::new(),
+            shutdown: self.shutdown.clone(),
         }
     }
 }
 
 impl Topology {
-    pub fn new(sequence: MemorySequencer, volume_size_limit: u64, pulse: u64) -> Topology {
+    pub fn new(
+        sequence: MemorySequencer,
+        volume_size_limit: u64,
+        pulse: u64,
+        shutdown: async_broadcast::Receiver<()>,
+    ) -> Topology {
         Topology {
             sequence,
             collections: HashMap::new(),
@@ -61,6 +69,7 @@ impl Topology {
             volume_size_limit,
             data_centers: HashMap::new(),
             handles: Vec::new(),
+            shutdown,
         }
     }
 
@@ -69,8 +78,10 @@ impl Topology {
             .entry(name.clone())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
-                self.handles
-                    .push(rt_spawn(data_center_loop(DataCenter::new(name), rx)));
+                self.handles.push(rt_spawn(data_center_loop(
+                    DataCenter::new(name, self.shutdown.clone()),
+                    rx,
+                )));
 
                 DataCenterEventTx::new(tx)
             })
@@ -207,6 +218,11 @@ pub enum TopologyEvent {
     DataCenters(oneshot::Sender<HashMap<FastStr, DataCenterEventTx>>),
     SetMaxSequence(u64),
     Topology(oneshot::Sender<Topology>),
+    Vacuum {
+        garbage_threshold: f64,
+        preallocate: i64,
+        tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 pub async fn topology_loop(
@@ -214,59 +230,95 @@ pub async fn topology_loop(
     mut topology_rx: UnboundedReceiver<TopologyEvent>,
 ) {
     info!("topology event loop starting.");
-    while let Some(event) = topology_rx.next().await {
-        match event {
-            TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
-                let _ = tx.send(topology.get_or_create_data_center(data_center));
+    loop {
+        tokio::select! {
+            Some(event) = topology_rx.next() => {
+                match event {
+                    TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
+                        let _ = tx.send(topology.get_or_create_data_center(data_center));
+                    }
+                    TopologyEvent::Lookup {
+                        collection,
+                        volume_id,
+                        tx,
+                    } => {
+                        let _ = tx.send(topology.lookup(collection, volume_id));
+                    }
+                    TopologyEvent::HasWritableVolume(option, tx) => {
+                        let _ = tx.send(topology.has_writable_volume(&option).await);
+                    }
+                    TopologyEvent::FreeVolumes(tx) => {
+                        let _ = tx.send(topology.free_volumes().await);
+                    }
+                    TopologyEvent::PickForWrite { count, option, tx } => {
+                        let _ = tx.send(topology.pick_for_write(count, &option).await);
+                    }
+                    TopologyEvent::RegisterVolumeLayout {
+                        volume_info,
+                        data_node,
+                        tx,
+                    } => {
+                        let _ = tx.send(
+                            topology
+                                .register_volume_layout(volume_info, data_node)
+                                .await,
+                        );
+                    }
+                    TopologyEvent::UnregisterVolumeLayout(volume) => {
+                        topology.unregister_volume_layout(volume).await;
+                    }
+                    TopologyEvent::NextVolumeId(tx) => {
+                        let _ = tx.send(topology.next_volume_id().await);
+                    }
+                    TopologyEvent::DataCenters(tx) => {
+                        let _ = tx.send(topology.data_centers.clone());
+                    }
+                    TopologyEvent::SetMaxSequence(seq) => {
+                        topology.sequence.set_max(seq);
+                    }
+                    TopologyEvent::Topology(tx) => {
+                        let _ = tx.send(topology.clone());
+                    }
+                    TopologyEvent::Vacuum {
+                        garbage_threshold,
+                        preallocate,
+                        tx,
+                    } => {
+                        let _ = tx.send(topology.vacuum(garbage_threshold, preallocate).await);
+                    }
+                }
             }
-            TopologyEvent::Lookup {
-                collection,
-                volume_id,
-                tx,
-            } => {
-                let _ = tx.send(topology.lookup(collection, volume_id));
-            }
-            TopologyEvent::HasWritableVolume(option, tx) => {
-                let _ = tx.send(topology.has_writable_volume(&option).await);
-            }
-            TopologyEvent::FreeVolumes(tx) => {
-                let _ = tx.send(topology.free_volumes().await);
-            }
-            TopologyEvent::PickForWrite { count, option, tx } => {
-                let _ = tx.send(topology.pick_for_write(count, &option).await);
-            }
-            TopologyEvent::RegisterVolumeLayout {
-                volume_info,
-                data_node,
-                tx,
-            } => {
-                let _ = tx.send(
-                    topology
-                        .register_volume_layout(volume_info, data_node)
-                        .await,
-                );
-            }
-            TopologyEvent::UnregisterVolumeLayout(volume) => {
-                topology.unregister_volume_layout(volume).await;
-            }
-            TopologyEvent::NextVolumeId(tx) => {
-                let _ = tx.send(topology.next_volume_id().await);
-            }
-            TopologyEvent::DataCenters(tx) => {
-                let _ = tx.send(topology.data_centers.clone());
-            }
-            TopologyEvent::SetMaxSequence(seq) => {
-                topology.sequence.set_max(seq);
-            }
-            TopologyEvent::Topology(tx) => {
-                let _ = tx.send(topology.clone());
+            _ = topology.shutdown.recv() => {
+                break;
             }
         }
     }
-    for (_, data_center) in topology.data_centers.iter() {
-        data_center.close();
+    info!("topology event loop stopped.");
+}
+
+pub async fn topology_vacuum_loop(
+    topology: TopologyEventTx,
+    garbage_threshold: f64,
+    preallocate: i64,
+    mut shutdown: async_broadcast::Receiver<()>,
+) {
+    info!("topology vacuum loop starting");
+    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                info!("topology vacuum starting.");
+                match topology.vacuum(garbage_threshold, preallocate).await {
+                    Ok(_) => info!("topology vacuum success."),
+                    Err(err) => error!("topology vacuum failed, {err}")
+                }
+            }
+            _ = shutdown.recv() => {
+                break;
+            }
+        }
     }
-    info!("topology event loop stopping.");
+    info!("topology vacuum loop stopped")
 }
 
 #[derive(Debug, Clone)]
@@ -366,6 +418,16 @@ impl TopologyEventTx {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::Topology(tx))?;
         Ok(rx.await?)
+    }
+
+    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: i64) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(TopologyEvent::Vacuum {
+            garbage_threshold,
+            preallocate,
+            tx,
+        })?;
+        rx.await?
     }
 
     pub fn close(&self) {

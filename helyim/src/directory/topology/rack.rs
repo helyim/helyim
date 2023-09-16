@@ -32,16 +32,19 @@ pub struct Rack {
     pub data_center: Option<DataCenterEventTx>,
     #[serde(skip)]
     pub handles: Vec<JoinHandle<()>>,
+    #[serde(skip)]
+    shutdown: async_broadcast::Receiver<()>,
 }
 
 impl Rack {
-    pub fn new(id: FastStr) -> Rack {
+    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
         Rack {
             id,
             nodes: HashMap::new(),
             max_volume_id: 0,
             data_center: None,
             handles: Vec::new(),
+            shutdown,
         }
     }
 
@@ -61,14 +64,15 @@ impl Rack {
         &mut self,
         id: FastStr,
         ip: FastStr,
-        port: u32,
+        port: u16,
         public_url: FastStr,
         max_volumes: i64,
     ) -> DataNodeEventTx {
         self.nodes
             .entry(id.clone())
             .or_insert_with(|| {
-                let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
+                let data_node =
+                    DataNode::new(id, ip, port, public_url, max_volumes, self.shutdown.clone());
                 let (tx, rx) = unbounded();
                 self.handles.push(rt_spawn(data_node_loop(data_node, rx)));
 
@@ -143,7 +147,7 @@ pub enum RackEvent {
     GetOrCreateDataNode {
         id: FastStr,
         ip: FastStr,
-        port: u32,
+        port: u16,
         public_url: FastStr,
         max_volumes: i64,
         tx: oneshot::Sender<DataNodeEventTx>,
@@ -153,58 +157,56 @@ pub enum RackEvent {
 
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
     info!("rack [{}] event loop starting.", rack.id);
-    while let Some(event) = rack_rx.next().await {
-        match event {
-            RackEvent::HasVolumes(tx) => {
-                let _ = tx.send(rack.has_volumes().await);
+    loop {
+        tokio::select! {
+            Some(event) = rack_rx.next() => {
+                match event {
+                    RackEvent::HasVolumes(tx) => {
+                        let _ = tx.send(rack.has_volumes().await);
+                    }
+                    RackEvent::MaxVolumes(tx) => {
+                        let _ = tx.send(rack.max_volumes().await);
+                    }
+                    RackEvent::FreeVolumes(tx) => {
+                        let _ = tx.send(rack.free_volumes().await);
+                    }
+                    RackEvent::SetDataCenter(tx) => {
+                        rack.data_center = Some(tx);
+                    }
+                    RackEvent::ReserveOneVolume(tx) => {
+                        let _ = tx.send(rack.reserve_one_volume().await);
+                    }
+                    RackEvent::DataNodes(tx) => {
+                        let _ = tx.send(rack.nodes.clone());
+                    }
+                    RackEvent::Id(tx) => {
+                        let _ = tx.send(rack.id.clone());
+                    }
+                    RackEvent::DataCenterId(tx) => {
+                        let _ = tx.send(rack.data_center_id().await);
+                    }
+                    RackEvent::GetOrCreateDataNode {
+                        id,
+                        ip,
+                        port,
+                        public_url,
+                        max_volumes,
+                        tx,
+                    } => {
+                        let _ =
+                            tx.send(rack.get_or_create_data_node(id, ip, port, public_url, max_volumes));
+                    }
+                    RackEvent::AdjustMaxVolumeId(vid, tx) => {
+                        let _ = tx.send(rack.adjust_max_volume_id(vid).await);
+                    }
+                }
             }
-            RackEvent::MaxVolumes(tx) => {
-                let _ = tx.send(rack.max_volumes().await);
-            }
-            RackEvent::FreeVolumes(tx) => {
-                let _ = tx.send(rack.free_volumes().await);
-            }
-            RackEvent::SetDataCenter(tx) => {
-                rack.data_center = Some(tx);
-            }
-            RackEvent::ReserveOneVolume(tx) => {
-                let _ = tx.send(rack.reserve_one_volume().await);
-            }
-            RackEvent::DataNodes(tx) => {
-                let _ = tx.send(rack.nodes.clone());
-            }
-            RackEvent::Id(tx) => {
-                let _ = tx.send(rack.id.clone());
-            }
-            RackEvent::DataCenterId(tx) => {
-                let _ = tx.send(rack.data_center_id().await);
-            }
-            RackEvent::GetOrCreateDataNode {
-                id,
-                ip,
-                port,
-                public_url,
-                max_volumes,
-                tx,
-            } => {
-                let _ =
-                    tx.send(rack.get_or_create_data_node(id, ip, port, public_url, max_volumes));
-            }
-            RackEvent::AdjustMaxVolumeId(vid, tx) => {
-                let _ = tx.send(rack.adjust_max_volume_id(vid).await);
+            _ = rack.shutdown.recv() => {
+                break;
             }
         }
     }
-
-    if let Some(data_center) = rack.data_center.as_ref() {
-        data_center.close();
-    }
-
-    for (_, node) in rack.nodes.iter() {
-        node.close();
-    }
-
-    info!("rack [{}] event loop stopping.", rack.id);
+    info!("rack [{}] event loop stopped.", rack.id);
 }
 
 #[derive(Debug, Clone)]
@@ -267,7 +269,7 @@ impl RackEventTx {
         &self,
         id: FastStr,
         ip: FastStr,
-        port: u32,
+        port: u16,
         public_url: FastStr,
         max_volumes: i64,
     ) -> Result<DataNodeEventTx> {
@@ -288,9 +290,5 @@ impl RackEventTx {
         self.0
             .unbounded_send(RackEvent::AdjustMaxVolumeId(vid, tx))?;
         rx.await?
-    }
-
-    pub fn close(&self) {
-        self.0.close_channel();
     }
 }

@@ -1,17 +1,18 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use faststr::FastStr;
-use tokio::sync::broadcast;
+use futures::channel::mpsc::unbounded;
 use tracing::info;
 
 use crate::{
     anyhow,
     errors::Result,
+    rt_spawn,
     storage::{
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
-        volume::{Volume, DATA_FILE_SUFFIX},
+        volume::{volume_loop, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
         VolumeId,
     },
 };
@@ -19,18 +20,24 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, Volume>,
-
-    pub(crate) shutdown: broadcast::Sender<()>,
+    pub volumes: HashMap<VolumeId, VolumeEventTx>,
+    pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
+unsafe impl Send for DiskLocation {}
+unsafe impl Sync for DiskLocation {}
+
 impl DiskLocation {
-    pub fn new(dir: &str, max_volume_count: i64, shutdown: broadcast::Sender<()>) -> DiskLocation {
+    pub fn new(
+        dir: &str,
+        max_volume_count: i64,
+        shutdown_rx: async_broadcast::Receiver<()>,
+    ) -> DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
-            shutdown,
+            shutdown: shutdown_rx,
         }
     }
 
@@ -61,7 +68,7 @@ impl DiskLocation {
             let fpath = file.as_path();
 
             if fpath.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
-                info!("load volume for dat file {:?}", fpath);
+                info!("load volume for data file {:?}", fpath);
                 let (vid, collection) = self.parse_volume_id(fpath)?;
                 if self.volumes.get(&vid).is_some() {
                     continue;
@@ -74,21 +81,25 @@ impl DiskLocation {
                     ReplicaPlacement::default(),
                     Ttl::default(),
                     0,
-                    self.shutdown.clone(),
                 )?;
-                info!("add volume: {}", vid);
-                self.volumes.insert(vid, volume);
+                let (tx, rx) = unbounded();
+                let volume_tx = VolumeEventTx::new(tx);
+                rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
+                self.volumes.insert(vid, volume_tx);
             }
         }
 
         Ok(())
     }
 
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
-        if let Some(v) = self.volumes.get_mut(&vid) {
-            v.destroy()?;
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+        if let Some(v) = self.volumes.remove(&vid) {
+            v.destroy().await?;
+            info!(
+                "remove volume {vid} success, where disk location is {}",
+                self.directory
+            );
         }
-        self.volumes.remove(&vid);
         Ok(())
     }
 }

@@ -120,7 +120,6 @@ async fn start_volume(host: &str, volume: Volume) -> Result<(), Box<dyn std::err
         volume.pulse_seconds,
         &volume.data_center,
         &volume.rack,
-        vec![],
         false,
     )?;
     server.start().await?;
@@ -160,7 +159,6 @@ fn log_init(level: Level) {
         .with_level(true)
         .with_max_level(level)
         .with_ansi(true)
-        .with_file(true)
         .with_line_number(true)
         .init();
 }

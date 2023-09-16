@@ -1,13 +1,17 @@
 use faststr::FastStr;
+use futures::channel::mpsc::unbounded;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
-use tokio::sync::broadcast;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     anyhow,
     errors::{Error, Result},
+    rt_spawn,
     storage::{
-        disk_location::DiskLocation, needle::Needle, needle_map::NeedleMapType, volume::Volume,
+        disk_location::DiskLocation,
+        needle::Needle,
+        needle_map::NeedleMapType,
+        volume::{volume_loop, Volume, VolumeEventTx},
         ReplicaPlacement, Ttl, VolumeId,
     },
 };
@@ -28,8 +32,10 @@ pub struct Store {
     pub needle_map_type: NeedleMapType,
 }
 
+unsafe impl Send for Store {}
+unsafe impl Sync for Store {}
+
 impl Store {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ip: &str,
         port: u16,
@@ -37,7 +43,7 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        shutdown: broadcast::Sender<()>,
+        shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
@@ -59,21 +65,11 @@ impl Store {
         })
     }
 
-    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
-        for location in self.locations.iter_mut() {
-            let volume = location.volumes.get_mut(&vid);
-            if volume.is_some() {
-                return volume;
-            }
-        }
-        None
-    }
-
     pub fn has_volume(&self, vid: VolumeId) -> bool {
         self.find_volume(vid).is_some()
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
+    pub fn find_volume(&self, vid: VolumeId) -> Option<&VolumeEventTx> {
         for location in self.locations.iter() {
             let volume = location.volumes.get(&vid);
             if volume.is_some() {
@@ -83,50 +79,45 @@ impl Store {
         None
     }
 
-    pub async fn delete_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            return v.delete_needle(n).await;
+    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<u32> {
+        match self.find_volume(vid) {
+            Some(volume) => volume.delete_needle(needle).await,
+            None => Ok(0),
         }
-
-        Ok(0)
     }
 
-    pub fn read_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            return v.read_needle(n);
+    pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume(vid) {
+            Some(volume) => volume.read_needle(needle).await,
+            None => Err(Error::MissingVolume(vid)),
         }
-        Err(anyhow!("volume {} not found", vid))
     }
 
-    pub async fn write_volume_needle(&mut self, vid: VolumeId, n: &mut Needle) -> Result<u32> {
-        if let Some(v) = self.find_volume_mut(vid) {
-            if v.read_only {
-                return Err(anyhow!("volume {} is read only", vid));
+    pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                if volume.is_readonly().await? {
+                    return Err(anyhow!("volume {} is read only", vid));
+                }
+
+                volume.write_needle(needle).await
             }
-
-            v.write_needle(n).await
-        } else {
-            Err(anyhow!("volume {} not found", vid))
+            None => Err(Error::MissingVolume(vid)),
         }
     }
 
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
         for location in self.locations.iter_mut() {
-            if location.delete_volume(vid).is_ok() {
-                delete = true;
-            }
+            location.delete_volume(vid).await?;
+            delete = true;
         }
         if delete {
-            self.update_master();
+            // TODO: update master
             Ok(())
         } else {
-            Err(anyhow!("volume {} not found on disk", vid))
+            Err(Error::MissingVolume(vid))
         }
-    }
-
-    pub fn update_master(&self) {
-        panic!("TODO");
     }
 
     fn find_free_location(&mut self) -> Option<&mut DiskLocation> {
@@ -161,7 +152,6 @@ impl Store {
             .find_free_location()
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
-        let shutdown = location.shutdown.clone();
         let volume = Volume::new(
             location.directory.clone(),
             collection,
@@ -170,17 +160,18 @@ impl Store {
             replica_placement,
             ttl,
             preallocate,
-            shutdown,
         )?;
-
-        location.volumes.insert(vid, volume);
+        let (tx, rx) = unbounded();
+        let volume_tx = VolumeEventTx::new(tx);
+        rt_spawn(volume_loop(volume, rx, location.shutdown.clone()));
+        location.volumes.insert(vid, volume_tx);
 
         Ok(())
     }
 
     pub fn add_volume(
         &mut self,
-        volumes: &str,
+        volumes: &[u32],
         collection: &str,
         needle_map_type: NeedleMapType,
         replica_placement: &str,
@@ -191,39 +182,20 @@ impl Store {
         let ttl = Ttl::new(ttl)?;
 
         let collection = FastStr::new(collection);
-        for volume in volumes.split(',') {
-            let parts: Vec<&str> = volume.split('-').collect();
-            if parts.len() == 1 {
-                let id_str = parts[0];
-                let vid = id_str.parse::<u32>()?;
-                self.do_add_volume(
-                    vid,
-                    collection.clone(),
-                    needle_map_type,
-                    rp,
-                    ttl,
-                    preallocate,
-                )?;
-            } else {
-                let start = parts[0].parse::<u32>()?;
-                let end = parts[1].parse::<u32>()?;
-
-                for id in start..(end + 1) {
-                    self.do_add_volume(
-                        id,
-                        collection.clone(),
-                        needle_map_type,
-                        rp,
-                        ttl,
-                        preallocate,
-                    )?;
-                }
-            }
+        for volume in volumes {
+            self.do_add_volume(
+                *volume,
+                collection.clone(),
+                needle_map_type,
+                rp,
+                ttl,
+                preallocate,
+            )?;
         }
         Ok(())
     }
 
-    pub fn collect_heartbeat(&mut self) -> HeartbeatRequest {
+    pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
         let mut heartbeat = HeartbeatRequest::default();
 
         let mut max_file_key: u64 = 0;
@@ -231,35 +203,40 @@ impl Store {
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
-            for (vid, v) in location.volumes.iter() {
-                if v.needle_mapper.max_file_key() > max_file_key {
-                    max_file_key = v.needle_mapper.max_file_key();
+            for (vid, volume) in location.volumes.iter() {
+                let volume_max_file_key = volume.max_file_key().await?;
+                if volume_max_file_key > max_file_key {
+                    max_file_key = volume_max_file_key;
                 }
 
-                if !v.expired(self.volume_size_limit) {
+                if !volume.expired(self.volume_size_limit).await? {
+                    let super_block = volume.super_block().await?;
                     let msg = VolumeInformationMessage {
                         id: *vid,
-                        size: v.size().unwrap_or(0),
-                        collection: v.collection.to_string(),
-                        file_count: v.needle_mapper.file_count(),
-                        delete_count: v.needle_mapper.delete_count(),
-                        deleted_byte_count: v.needle_mapper.deleted_byte_count(),
-                        read_only: v.read_only,
-                        replica_placement: Into::<u8>::into(v.super_block.replica_placement) as u32,
-                        version: v.super_block.version as u32,
-                        ttl: v.super_block.ttl.into(),
+                        size: volume.size().await.unwrap_or(0),
+                        collection: volume.collection().await?.to_string(),
+                        file_count: volume.file_count().await?,
+                        delete_count: volume.deleted_count().await?,
+                        deleted_bytes: volume.deleted_bytes().await?,
+                        read_only: volume.is_readonly().await?,
+                        replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
+                        version: volume.version().await? as u32,
+                        ttl: super_block.ttl.into(),
                     };
                     heartbeat.volumes.push(msg);
-                } else if v.expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES) {
-                    deleted_vids.push(v.id);
-                    info!("volume {} is deleted.", v.id);
+                } else if volume
+                    .expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES)
+                    .await?
+                {
+                    deleted_vids.push(*vid);
+                    info!("volume {} is deleted.", vid);
                 } else {
-                    info!("volume {} is expired.", *vid);
+                    info!("volume {} is expired.", vid);
                 }
             }
             for vid in deleted_vids {
-                if let Err(err) = location.delete_volume(vid) {
-                    warn!("delete volume {} err: {}", vid, err);
+                if let Err(err) = location.delete_volume(vid).await {
+                    warn!("delete volume {vid} err: {err}");
                 }
             }
         }
@@ -272,6 +249,67 @@ impl Store {
         heartbeat.data_center = self.data_center.to_string();
         heartbeat.rack = self.rack.to_string();
 
-        heartbeat
+        Ok(heartbeat)
+    }
+}
+
+/// compact volume
+impl Store {
+    pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                let garbage_level = volume.garbage_level().await?;
+                info!("volume {vid} garbage level: {garbage_level}");
+                Ok(garbage_level)
+            }
+            None => {
+                error!("volume {vid} is not found during check compact");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub async fn compact_volume(&self, vid: VolumeId, preallocate: i64) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.compact(preallocate).await?;
+                info!("volume {vid} compacting success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during compacting.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.commit_compact().await?;
+                info!("volume {vid} committing compaction success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during committing compaction.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
+    }
+
+    pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                volume.cleanup_compact().await?;
+                info!("volume {vid} committing cleanup success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during cleaning up.");
+                Err(Error::MissingVolume(vid))
+            }
+        }
     }
 }

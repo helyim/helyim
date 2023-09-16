@@ -6,8 +6,8 @@ use futures::{
     },
     StreamExt,
 };
+use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
-use serde_json::Value;
 use tracing::info;
 
 use crate::{
@@ -16,23 +16,24 @@ use crate::{
     },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    util,
 };
 
-#[derive(Debug, Copy, Clone, Default)]
-pub struct VolumeGrowth;
+#[derive(Debug, Clone)]
+pub struct VolumeGrowth {
+    shutdown: async_broadcast::Receiver<()>,
+}
 
 impl VolumeGrowth {
-    pub fn new() -> Self {
-        Self
+    pub fn new(shutdown: async_broadcast::Receiver<()>) -> Self {
+        Self { shutdown }
     }
 
     pub async fn grow_by_type(
-        &self,
+        &mut self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
-        let count = self.find_volume_count(option.replica_placement.get_copy_count());
+        let count = self.find_volume_count(option.replica_placement.copy_count());
         self.grow_by_count_and_type(count, option, topology).await
     }
 
@@ -250,7 +251,7 @@ impl VolumeGrowth {
     }
 
     async fn find_and_grow(
-        &self,
+        &mut self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
@@ -262,7 +263,7 @@ impl VolumeGrowth {
     }
 
     async fn grow_by_count_and_type(
-        &self,
+        &mut self,
         count: usize,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
@@ -276,14 +277,22 @@ impl VolumeGrowth {
     }
 
     async fn grow(
-        &self,
+        &mut self,
         vid: VolumeId,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
         nodes: Vec<DataNodeEventTx>,
     ) -> Result<()> {
         for dn in nodes {
-            allocate_volume(&dn, vid, option).await?;
+            dn.allocate_volume(AllocateVolumeRequest {
+                volumes: vec![vid],
+                collection: option.collection.to_string(),
+                replication: option.replica_placement.to_string(),
+                ttl: option.ttl.to_string(),
+                preallocate: option.preallocate,
+            })
+            .await?;
+
             let volume_info = VolumeInfo {
                 id: vid,
                 size: 0,
@@ -311,22 +320,29 @@ pub enum VolumeGrowthEvent {
 }
 
 pub async fn volume_growth_loop(
-    volume_grow: VolumeGrowth,
+    mut volume_grow: VolumeGrowth,
     mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
 ) {
     info!("volume growth event loop starting.");
-    while let Some(event) = volume_grow_rx.next().await {
-        match event {
-            VolumeGrowthEvent::GrowByType {
-                option,
-                topology,
-                tx,
-            } => {
-                let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
+    loop {
+        tokio::select! {
+            Some(event) = volume_grow_rx.next() => {
+                match event {
+                    VolumeGrowthEvent::GrowByType {
+                        option,
+                        topology,
+                        tx,
+                    } => {
+                        let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
+                    }
+                }
+            }
+            _ = volume_grow.shutdown.recv() => {
+                break;
             }
         }
     }
-    info!("volume growth event loop stopping.");
+    info!("volume growth event loop stopped.");
 }
 
 #[derive(Debug, Clone)]
@@ -365,38 +381,4 @@ pub struct VolumeGrowOption {
     pub data_center: FastStr,
     pub rack: FastStr,
     pub data_node: FastStr,
-}
-
-async fn allocate_volume(
-    dn: &DataNodeEventTx,
-    vid: VolumeId,
-    option: &VolumeGrowOption,
-) -> Result<()> {
-    let vid = &vid.to_string();
-    let collection = &option.collection;
-    let rp = &option.replica_placement.to_string();
-    let ttl = &option.ttl.to_string();
-    let preallocate = &format!("{}", option.preallocate);
-
-    let params: Vec<(&str, &str)> = vec![
-        ("volume", vid),
-        ("collection", collection),
-        ("replication", rp),
-        ("ttl", ttl),
-        ("preallocate", preallocate),
-    ];
-
-    let body = util::get(
-        &format!("http://{}/admin/assign_volume", dn.url().await?),
-        &params,
-    )
-    .await?;
-
-    let v: Value = serde_json::from_slice(&body)?;
-
-    if let Value::String(ref s) = v["Error"] {
-        return Err(Error::String(s.clone()));
-    }
-
-    Ok(())
 }
