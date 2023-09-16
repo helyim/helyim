@@ -1,12 +1,17 @@
 use faststr::FastStr;
+use futures::channel::mpsc::unbounded;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     anyhow,
     errors::{Error, Result},
+    rt_spawn,
     storage::{
-        disk_location::DiskLocation, needle::Needle, needle_map::NeedleMapType, volume::Volume,
+        disk_location::DiskLocation,
+        needle::Needle,
+        needle_map::NeedleMapType,
+        volume::{volume_loop, Volume, VolumeEventTx},
         ReplicaPlacement, Ttl, VolumeId,
     },
 };
@@ -26,6 +31,9 @@ pub struct Store {
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
 }
+
+unsafe impl Send for Store {}
+unsafe impl Sync for Store {}
 
 impl Store {
     pub fn new(
@@ -57,21 +65,11 @@ impl Store {
         })
     }
 
-    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
-        for location in self.locations.iter_mut() {
-            let volume = location.volumes.get_mut(&vid);
-            if volume.is_some() {
-                return volume;
-            }
-        }
-        None
-    }
-
     pub fn has_volume(&self, vid: VolumeId) -> bool {
         self.find_volume(vid).is_some()
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
+    pub fn find_volume(&self, vid: VolumeId) -> Option<&VolumeEventTx> {
         for location in self.locations.iter() {
             let volume = location.volumes.get(&vid);
             if volume.is_some() {
@@ -82,23 +80,23 @@ impl Store {
     }
 
     pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<u32> {
-        match self.find_volume_mut(vid) {
+        match self.find_volume(vid) {
             Some(volume) => volume.delete_needle(needle).await,
             None => Ok(0),
         }
     }
 
-    pub fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume_mut(vid) {
-            Some(volume) => volume.read_needle(needle),
+    pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume(vid) {
+            Some(volume) => volume.read_needle(needle).await,
             None => Err(Error::MissingVolume(vid)),
         }
     }
 
     pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume_mut(vid) {
+        match self.find_volume(vid) {
             Some(volume) => {
-                if volume.readonly {
+                if volume.is_readonly().await? {
                     return Err(anyhow!("volume {} is read only", vid));
                 }
 
@@ -108,10 +106,10 @@ impl Store {
         }
     }
 
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
         for location in self.locations.iter_mut() {
-            location.delete_volume(vid)?;
+            location.delete_volume(vid).await?;
             delete = true;
         }
         if delete {
@@ -154,7 +152,6 @@ impl Store {
             .find_free_location()
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
-        let shutdown = location.shutdown_rx.clone();
         let volume = Volume::new(
             location.directory.clone(),
             collection,
@@ -163,10 +160,11 @@ impl Store {
             replica_placement,
             ttl,
             preallocate,
-            shutdown,
         )?;
-
-        location.volumes.insert(vid, volume);
+        let (tx, rx) = unbounded();
+        let volume_tx = VolumeEventTx::new(tx);
+        rt_spawn(volume_loop(volume, rx, location.shutdown_rx.clone()));
+        location.volumes.insert(vid, volume_tx);
 
         Ok(())
     }
@@ -197,7 +195,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn collect_heartbeat(&mut self) -> HeartbeatRequest {
+    pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
         let mut heartbeat = HeartbeatRequest::default();
 
         let mut max_file_key: u64 = 0;
@@ -205,34 +203,39 @@ impl Store {
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
-            for (vid, v) in location.volumes.iter() {
-                if v.max_file_key() > max_file_key {
-                    max_file_key = v.max_file_key();
+            for (vid, volume) in location.volumes.iter() {
+                let volume_max_file_key = volume.max_file_key().await?;
+                if volume_max_file_key > max_file_key {
+                    max_file_key = volume_max_file_key;
                 }
 
-                if !v.expired(self.volume_size_limit) {
+                if !volume.expired(self.volume_size_limit).await? {
+                    let super_block = volume.super_block().await?;
                     let msg = VolumeInformationMessage {
                         id: *vid,
-                        size: v.size().unwrap_or(0),
-                        collection: v.collection.to_string(),
-                        file_count: v.file_count(),
-                        delete_count: v.deleted_count(),
-                        deleted_bytes: v.deleted_bytes(),
-                        read_only: v.readonly,
-                        replica_placement: Into::<u8>::into(v.super_block.replica_placement) as u32,
-                        version: v.version() as u32,
-                        ttl: v.super_block.ttl.into(),
+                        size: volume.size().await.unwrap_or(0),
+                        collection: volume.collection().await?.to_string(),
+                        file_count: volume.file_count().await?,
+                        delete_count: volume.deleted_count().await?,
+                        deleted_bytes: volume.deleted_bytes().await?,
+                        read_only: volume.is_readonly().await?,
+                        replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
+                        version: volume.version().await? as u32,
+                        ttl: super_block.ttl.into(),
                     };
                     heartbeat.volumes.push(msg);
-                } else if v.expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES) {
-                    deleted_vids.push(v.id);
+                } else if volume
+                    .expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES)
+                    .await?
+                {
+                    deleted_vids.push(*vid);
                     info!("volume {} is deleted.", vid);
                 } else {
                     info!("volume {} is expired.", vid);
                 }
             }
             for vid in deleted_vids {
-                if let Err(err) = location.delete_volume(vid) {
+                if let Err(err) = location.delete_volume(vid).await {
                     warn!("delete volume {vid} err: {err}");
                 }
             }
@@ -246,17 +249,18 @@ impl Store {
         heartbeat.data_center = self.data_center.to_string();
         heartbeat.rack = self.rack.to_string();
 
-        heartbeat
+        Ok(heartbeat)
     }
 }
 
 /// compact volume
 impl Store {
-    pub fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
+    pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid) {
             Some(volume) => {
-                info!("volume {vid} garbage level: {}", volume.garbage_level());
-                Ok(volume.garbage_level())
+                let garbage_level = volume.garbage_level().await?;
+                info!("volume {vid} garbage level: {garbage_level}");
+                Ok(garbage_level)
             }
             None => {
                 error!("volume {vid} is not found during check compact");
@@ -265,11 +269,11 @@ impl Store {
         }
     }
 
-    pub fn compact_volume(&mut self, vid: VolumeId, preallocate: i64) -> Result<()> {
-        match self.find_volume_mut(vid) {
+    pub async fn compact_volume(&self, vid: VolumeId, preallocate: i64) -> Result<()> {
+        match self.find_volume(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact2(preallocate)?;
+                volume.compact(preallocate).await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }
@@ -280,11 +284,11 @@ impl Store {
         }
     }
 
-    pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<()> {
-        match self.find_volume_mut(vid) {
+    pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.commit_compact()?;
+                volume.commit_compact().await?;
                 info!("volume {vid} committing compaction success.");
                 Ok(())
             }
@@ -295,10 +299,10 @@ impl Store {
         }
     }
 
-    pub fn commit_cleanup_volume(&mut self, vid: VolumeId) -> Result<()> {
-        match self.find_volume_mut(vid) {
+    pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
             Some(volume) => {
-                volume.cleanup_compact()?;
+                volume.cleanup_compact().await?;
                 info!("volume {vid} committing cleanup success.");
                 Ok(())
             }

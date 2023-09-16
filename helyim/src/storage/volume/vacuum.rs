@@ -220,7 +220,7 @@ impl Volume {
             .mode(0o644)
             .open(idx_name)?;
 
-        let mut nm = NeedleMapper::default();
+        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
         nm.load_idx_file(idx_file)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
@@ -251,9 +251,7 @@ impl Volume {
                             offset: new_offset / NEEDLE_PADDING_SIZE,
                             size: needle.size,
                         };
-                        nm.set(needle.id, nv);
-                        nm.append_to_index_file(needle.id, nv)?;
-
+                        nm.set(needle.id, nv)?;
                         needle.append(&mut dst, version)?;
                         new_offset += needle.disk_size();
                     }
@@ -262,6 +260,7 @@ impl Volume {
             },
         )?;
 
+        self.needle_mapper = nm;
         Ok(())
     }
 
@@ -288,7 +287,7 @@ impl Volume {
             .mode(0o644)
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
-        let mut nm = NeedleMapper::default();
+        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
         nm.load_idx_file(idx_file)?;
 
         let now = now().as_millis() as u64;
@@ -323,9 +322,7 @@ impl Volume {
                     offset: new_offset / NEEDLE_PADDING_SIZE,
                     size: needle.size,
                 };
-                nm.set(needle.id, nv);
-                nm.append_to_index_file(needle.id, nv)?;
-
+                nm.set(needle.id, nv)?;
                 needle.append(&mut dst_file, version)?;
                 new_offset += needle.disk_size();
             }

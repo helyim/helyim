@@ -10,7 +10,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        mpsc::{UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     StreamExt,
@@ -21,7 +21,6 @@ use tracing::{debug, error, info};
 use crate::{
     anyhow,
     errors::{Error, Result},
-    rt_spawn,
     storage::{
         needle::{
             read_needle_header, Needle, NeedleValue, NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE,
@@ -37,6 +36,7 @@ use crate::{
     util::time::{get_time, now},
 };
 
+#[allow(dead_code)]
 mod vacuum;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
@@ -46,7 +46,7 @@ pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
 pub const IDX_FILE_SUFFIX: &str = "idx";
 pub const COMPACT_IDX_FILE_SUFFIX: &str = "cpx";
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct SuperBlock {
     pub version: Version,
     pub replica_placement: ReplicaPlacement,
@@ -96,18 +96,17 @@ impl SuperBlock {
 
 #[derive(Default)]
 pub struct Volume {
-    pub id: VolumeId,
+    id: VolumeId,
     dir: FastStr,
-    pub collection: FastStr,
+    collection: FastStr,
     data_file: Option<File>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
-    pub readonly: bool,
-    pub super_block: SuperBlock,
+    readonly: bool,
+    super_block: SuperBlock,
     last_modified: u64,
     last_compact_index_offset: u64,
     last_compact_revision: u16,
-    index_tx: Option<UnboundedSender<(u64, NeedleValue)>>,
 }
 
 impl Display for Volume {
@@ -134,15 +133,12 @@ impl Volume {
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
         _preallocate: i64,
-        shutdown_rx: async_broadcast::Receiver<()>,
     ) -> Result<Volume> {
         let sb = SuperBlock {
             replica_placement,
             ttl,
             ..Default::default()
         };
-
-        let (index_tx, index_rx) = unbounded();
 
         let mut v = Volume {
             id,
@@ -151,8 +147,7 @@ impl Volume {
             super_block: sb,
             data_file: None,
             needle_map_type,
-            index_tx: Some(index_tx),
-            needle_mapper: NeedleMapper::default(),
+            needle_mapper: NeedleMapper::new(id, needle_map_type),
             readonly: false,
             last_compact_index_offset: 0,
             last_compact_revision: 0,
@@ -160,7 +155,6 @@ impl Volume {
         };
 
         v.load(true, true)?;
-        v.spawn_index_file_writer(index_rx, shutdown_rx)?;
         debug!("load volume {id} success, path: {dir}");
         Ok(v)
     }
@@ -226,7 +220,7 @@ impl Volume {
                     self.data_filename()
                 );
             }
-
+            self.needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
             self.needle_mapper.load_idx_file(index_file)?;
             info!("load index file `{}` success", self.index_filename());
         }
@@ -259,8 +253,7 @@ impl Volume {
             offset: offset as u32,
             size: needle.size,
         };
-        self.needle_mapper.set(needle.id, nv);
-        self.write_index_file(needle.id, nv).await?;
+        self.needle_mapper.set(needle.id, nv)?;
 
         if self.last_modified < needle.last_modified {
             self.last_modified = needle.last_modified;
@@ -280,9 +273,7 @@ impl Volume {
         };
         nv.offset = 0;
 
-        self.needle_mapper.set(needle.id, nv);
-        self.write_index_file(needle.id, nv).await?;
-
+        self.needle_mapper.set(needle.id, nv)?;
         needle.set_is_delete();
         needle.data.clear();
 
@@ -456,46 +447,6 @@ impl Volume {
 }
 
 impl Volume {
-    fn spawn_index_file_writer(
-        &self,
-        mut index_rx: UnboundedReceiver<(u64, NeedleValue)>,
-        mut shutdown_rx: async_broadcast::Receiver<()>,
-    ) -> Result<()> {
-        let mut file = fs::OpenOptions::new()
-            // most hardware designs cannot support write permission without read permission
-            .read(true)
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(self.index_filename())?;
-
-        let vid = self.id;
-        rt_spawn(async move {
-            info!("index file writer starting, volume: {vid}");
-            let mut buf = vec![];
-            loop {
-                tokio::select! {
-                    Some((key, value)) = index_rx.next() => {
-                        buf.put_u64(key);
-                        buf.put_u32(value.offset);
-                        buf.put_u32(value.size);
-
-                        match file.write_all(&buf) {
-                            Ok(_) => buf.clear(),
-                            Err(err) => error!("failed to write index file, volume {vid}, error: {err}"),
-                        }
-                    },
-                    _ = shutdown_rx.recv() => {
-                        break;
-                    }
-                }
-            }
-            info!("index file writer stopped, volume: {vid}");
-        });
-
-        Ok(())
-    }
-
     fn write_super_block(&mut self) -> Result<()> {
         let mut file = self.file()?;
         let meta = file.metadata()?;
@@ -521,114 +472,160 @@ impl Volume {
 
         Ok(())
     }
-
-    async fn write_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
-        if let Some(index_tx) = self.index_tx.as_ref() {
-            index_tx.unbounded_send((key, value))?;
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct VolumeEventTx(UnboundedSender<VolumeEvent>);
 
 impl VolumeEventTx {
-    pub async fn load(&self, create_if_missing: bool,
-                load_index: bool) -> Result<()> {
+    pub fn new(tx: UnboundedSender<VolumeEvent>) -> Self {
+        Self(tx)
+    }
+    pub async fn load(&self, create_if_missing: bool, load_index: bool) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::Load {create_if_missing, load_index, tx})?;
+        self.0.unbounded_send(VolumeEvent::Load {
+            create_if_missing,
+            load_index,
+            tx,
+        })?;
         rx.await?
     }
 
     pub async fn write_needle(&self, needle: Needle) -> Result<Needle> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::WriteNeedle {needle, tx})?;
+        self.0
+            .unbounded_send(VolumeEvent::WriteNeedle { needle, tx })?;
         rx.await?
     }
 
     pub async fn delete_needle(&self, needle: Needle) -> Result<u32> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::DeleteNeedle {needle, tx})?;
+        self.0
+            .unbounded_send(VolumeEvent::DeleteNeedle { needle, tx })?;
         rx.await?
     }
 
     pub async fn read_needle(&self, needle: Needle) -> Result<Needle> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::ReadNeedle {needle, tx})?;
+        self.0
+            .unbounded_send(VolumeEvent::ReadNeedle { needle, tx })?;
         rx.await?
+    }
+
+    pub async fn collection(&self) -> Result<FastStr> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::Collection { tx })?;
+        Ok(rx.await?)
+    }
+
+    pub async fn super_block(&self) -> Result<SuperBlock> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::SuperBlock { tx })?;
+        Ok(rx.await?)
     }
 
     pub async fn version(&self) -> Result<Version> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::Version {tx})?;
+        self.0.unbounded_send(VolumeEvent::Version { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn volume_info(&self) -> Result<VolumeInfo> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::VolumeInfo {tx})?;
+        self.0.unbounded_send(VolumeEvent::VolumeInfo { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn destroy(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::Destroy {tx})?;
+        self.0.unbounded_send(VolumeEvent::Destroy { tx })?;
         rx.await?
     }
 
     pub async fn is_readonly(&self) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::IsReadOnly {tx})?;
+        self.0.unbounded_send(VolumeEvent::IsReadOnly { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn deleted_count(&self) -> Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::DeletedCount {tx})?;
+        self.0.unbounded_send(VolumeEvent::DeletedCount { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn deleted_bytes(&self) -> Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::DeletedBytes {tx})?;
+        self.0.unbounded_send(VolumeEvent::DeletedBytes { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn max_file_key(&self) -> Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::MaxFileKey {tx})?;
+        self.0.unbounded_send(VolumeEvent::MaxFileKey { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn file_count(&self) -> Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::FileCount {tx})?;
+        self.0.unbounded_send(VolumeEvent::FileCount { tx })?;
         Ok(rx.await?)
     }
 
     pub async fn size(&self) -> Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::Size {tx})?;
+        self.0.unbounded_send(VolumeEvent::Size { tx })?;
         rx.await?
     }
 
     pub async fn expired(&self, volume_size_limit: u64) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::Expired {volume_size_limit, tx})?;
+        self.0.unbounded_send(VolumeEvent::Expired {
+            volume_size_limit,
+            tx,
+        })?;
         Ok(rx.await?)
     }
 
     pub async fn expired_long_enough(&self, volume_size_limit: u64) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::ExpiredLongEnough {volume_size_limit, tx})?;
+        self.0.unbounded_send(VolumeEvent::ExpiredLongEnough {
+            volume_size_limit,
+            tx,
+        })?;
         Ok(rx.await?)
     }
 
     pub async fn need_to_replicate(&self) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeEvent::NeedToReplicate {tx})?;
+        self.0.unbounded_send(VolumeEvent::NeedToReplicate { tx })?;
         Ok(rx.await?)
+    }
+
+    // vacuum
+    pub async fn garbage_level(&self) -> Result<f64> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::GarbageLevel { tx })?;
+        Ok(rx.await?)
+    }
+
+    pub async fn compact(&self, preallocate: i64) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .unbounded_send(VolumeEvent::Compact { preallocate, tx })?;
+        rx.await?
+    }
+
+    pub async fn commit_compact(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::CommitCompact { tx })?;
+        rx.await?
+    }
+
+    pub async fn cleanup_compact(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::CleanupCompact { tx })?;
+        rx.await?
     }
 }
 
@@ -649,6 +646,12 @@ pub enum VolumeEvent {
     ReadNeedle {
         needle: Needle,
         tx: oneshot::Sender<Result<Needle>>,
+    },
+    Collection {
+        tx: oneshot::Sender<FastStr>,
+    },
+    SuperBlock {
+        tx: oneshot::Sender<SuperBlock>,
     },
     Version {
         tx: oneshot::Sender<Version>,
@@ -672,7 +675,7 @@ pub enum VolumeEvent {
         tx: oneshot::Sender<u64>,
     },
     FileCount {
-      tx: oneshot::Sender<u64>
+        tx: oneshot::Sender<u64>,
     },
     Size {
         tx: oneshot::Sender<Result<u64>>,
@@ -688,73 +691,116 @@ pub enum VolumeEvent {
     NeedToReplicate {
         tx: oneshot::Sender<bool>,
     },
+    GarbageLevel {
+        tx: oneshot::Sender<f64>,
+    },
+    Compact {
+        preallocate: i64,
+        tx: oneshot::Sender<Result<()>>,
+    },
+    CommitCompact {
+        tx: oneshot::Sender<Result<()>>,
+    },
+    CleanupCompact {
+        tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 pub async fn volume_loop(
     mut volume: Volume,
     mut volume_rx: UnboundedReceiver<VolumeEvent>,
+    mut shutdown_rx: async_broadcast::Receiver<()>,
 ) {
     let volume_id = volume.id;
     info!("volume {volume_id} event loop starting.");
-    while let Some(event) = volume_rx.next().await {
-        match event {
-            VolumeEvent::Load {
-                create_if_missing,
-                load_index,
-                tx
-            } => {
-                let _ = tx.send(volume.load(create_if_missing, load_index));
-            }
-            VolumeEvent::WriteNeedle {
-                needle,
-                tx
-            } => {
-                let _ = tx.send(volume.write_needle(needle).await);
-            }
-            VolumeEvent::DeleteNeedle {needle, tx} => {
-                let _ = tx.send(volume.delete_needle(needle).await);
-            }
-            VolumeEvent::ReadNeedle {needle, tx} => {
-                let _ = tx.send(volume.read_needle(needle));
-            }
-            VolumeEvent::Version { tx} => {
-                let _ = tx.send(volume.version());
-            }
-            VolumeEvent::VolumeInfo {tx} => {
-                let _ = tx.send(volume.get_volume_info());
-            }
-            VolumeEvent::Destroy {tx} => {
-                let _ = tx.send(volume.destroy());
-                info!("volume {volume_id} is destroyed");
+    loop {
+        tokio::select! {
+            Some(event) = volume_rx.next() => {
+                match event {
+                    VolumeEvent::Load {
+                        create_if_missing,
+                        load_index,
+                        tx,
+                    } => {
+                        let _ = tx.send(volume.load(create_if_missing, load_index));
+                    }
+                    VolumeEvent::WriteNeedle { needle, tx } => {
+                        let _ = tx.send(volume.write_needle(needle).await);
+                    }
+                    VolumeEvent::DeleteNeedle { needle, tx } => {
+                        let _ = tx.send(volume.delete_needle(needle).await);
+                    }
+                    VolumeEvent::ReadNeedle { needle, tx } => {
+                        let _ = tx.send(volume.read_needle(needle));
+                    }
+                    VolumeEvent::SuperBlock { tx } => {
+                        let super_block = volume.super_block;
+                        let _ = tx.send(super_block);
+                    }
+                    VolumeEvent::Collection { tx } => {
+                        let _ = tx.send(volume.collection.clone());
+                    }
+                    VolumeEvent::Version { tx } => {
+                        let _ = tx.send(volume.version());
+                    }
+                    VolumeEvent::VolumeInfo { tx } => {
+                        let _ = tx.send(volume.get_volume_info());
+                    }
+                    VolumeEvent::Destroy { tx } => {
+                        let _ = tx.send(volume.destroy());
+                        info!("volume {volume_id} is destroyed");
+                        break;
+                    }
+                    VolumeEvent::IsReadOnly { tx } => {
+                        let readonly = volume.readonly;
+                        let _ = tx.send(readonly);
+                    }
+                    VolumeEvent::DeletedBytes { tx } => {
+                        let _ = tx.send(volume.deleted_bytes());
+                    }
+                    VolumeEvent::DeletedCount { tx } => {
+                        let _ = tx.send(volume.deleted_count());
+                    }
+                    VolumeEvent::MaxFileKey { tx } => {
+                        let _ = tx.send(volume.max_file_key());
+                    }
+                    VolumeEvent::FileCount { tx } => {
+                        let _ = tx.send(volume.file_count());
+                    }
+                    VolumeEvent::Size { tx } => {
+                        let _ = tx.send(volume.size());
+                    }
+                    VolumeEvent::Expired {
+                        volume_size_limit,
+                        tx,
+                    } => {
+                        let _ = tx.send(volume.expired(volume_size_limit));
+                    }
+                    VolumeEvent::ExpiredLongEnough {
+                        volume_size_limit,
+                        tx,
+                    } => {
+                        let _ = tx.send(volume.expired_long_enough(volume_size_limit));
+                    }
+                    VolumeEvent::NeedToReplicate { tx } => {
+                        let _ = tx.send(volume.need_to_replicate());
+                    }
+                    VolumeEvent::GarbageLevel { tx } => {
+                        let _ = tx.send(volume.garbage_level());
+                    }
+                    VolumeEvent::Compact { preallocate, tx } => {
+                        let _ = tx.send(volume.compact2(preallocate));
+                    }
+                    VolumeEvent::CommitCompact { tx } => {
+                        let _ = tx.send(volume.commit_compact());
+                    }
+                    VolumeEvent::CleanupCompact { tx } => {
+                        let _ = tx.send(volume.cleanup_compact());
+                    }
+                }
+            },
+            _ = shutdown_rx.recv() => {
                 break;
-            }
-            VolumeEvent::IsReadOnly {tx} => {
-                let readonly = volume.readonly;
-                let _ = tx.send(readonly);
-            }
-            VolumeEvent::DeletedBytes {tx} => {
-                let _ = tx.send(volume.deleted_bytes());
-            }
-            VolumeEvent::DeletedCount {tx} => {
-                let _ = tx.send(volume.deleted_count());
-            }
-            VolumeEvent::MaxFileKey {tx} => {
-                let _ = tx.send(volume.max_file_key());
-            }
-            VolumeEvent::FileCount {tx} => {
-                let _ = tx.send(volume.file_count());
-            }
-            VolumeEvent::Size {tx} => {
-                let _ = tx.send(volume.size());
-            }
-            VolumeEvent::Expired {volume_size_limit, tx} => {
-                let _ = tx.send(volume.expired(volume_size_limit));
-            }
-            VolumeEvent::ExpiredLongEnough {volume_size_limit, tx} => {
-                let _ = tx.send(volume.expired_long_enough(volume_size_limit));
-            }
-            VolumeEvent::NeedToReplicate {tx} => {
-                let _ = tx.send(volume.need_to_replicate());
             }
         }
     }
@@ -913,7 +959,6 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
-        let (_shutdown, shutdown_rx) = broadcast(1);
         let path = Path::new("/tmp/helyim");
         if path.exists() {
             std::fs::remove_dir_all("/tmp/helyim").unwrap();
@@ -928,7 +973,6 @@ mod tests {
             ReplicaPlacement::default(),
             Ttl::default(),
             0,
-            shutdown_rx,
         )
         .unwrap();
 
@@ -938,7 +982,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(&mut needle).await.unwrap();
+        volume.write_needle(needle).await.unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)

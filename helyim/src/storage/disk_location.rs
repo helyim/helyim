@@ -1,16 +1,18 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use faststr::FastStr;
+use futures::channel::mpsc::unbounded;
 use tracing::info;
 
 use crate::{
     anyhow,
     errors::Result,
+    rt_spawn,
     storage::{
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
-        volume::{Volume, DATA_FILE_SUFFIX},
+        volume::{volume_loop, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
         VolumeId,
     },
 };
@@ -18,10 +20,12 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, Volume>,
-
+    pub volumes: HashMap<VolumeId, VolumeEventTx>,
     pub(crate) shutdown_rx: async_broadcast::Receiver<()>,
 }
+
+unsafe impl Send for DiskLocation {}
+unsafe impl Sync for DiskLocation {}
 
 impl DiskLocation {
     pub fn new(
@@ -77,19 +81,20 @@ impl DiskLocation {
                     ReplicaPlacement::default(),
                     Ttl::default(),
                     0,
-                    self.shutdown_rx.clone(),
                 )?;
-                info!("add volume: {}", vid);
-                self.volumes.insert(vid, volume);
+                let (tx, rx) = unbounded();
+                let volume_tx = VolumeEventTx::new(tx);
+                rt_spawn(volume_loop(volume, rx, self.shutdown_rx.clone()));
+                self.volumes.insert(vid, volume_tx);
             }
         }
 
         Ok(())
     }
 
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.destroy()?;
+            v.destroy().await?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory

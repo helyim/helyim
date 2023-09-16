@@ -4,13 +4,14 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
-    errors::Result,
+    errors::{Error, Result},
     storage::{
         needle::NeedleValue,
         needle_value_map::{MemoryNeedleValueMap, NeedleValueMap},
+        VolumeId,
     },
 };
 
@@ -30,6 +31,7 @@ struct Metric {
 }
 
 pub struct NeedleMapper {
+    volume_id: VolumeId,
     needle_value_map: Box<dyn NeedleValueMap>,
     index_file: Option<File>,
     metric: Metric,
@@ -38,6 +40,7 @@ pub struct NeedleMapper {
 impl Default for NeedleMapper {
     fn default() -> Self {
         NeedleMapper {
+            volume_id: 0,
             needle_value_map: Box::new(MemoryNeedleValueMap::new()),
             metric: Metric::default(),
             index_file: None,
@@ -46,11 +49,12 @@ impl Default for NeedleMapper {
 }
 
 impl NeedleMapper {
-    pub fn new(kind: NeedleMapType) -> NeedleMapper {
+    pub fn new(volume_id: VolumeId, kind: NeedleMapType) -> NeedleMapper {
         #[allow(unreachable_patterns)]
         match kind {
             NeedleMapType::NeedleMapInMemory => NeedleMapper {
                 needle_value_map: Box::new(MemoryNeedleValueMap::new()),
+                volume_id,
                 ..Default::default()
             },
             _ => panic!("not support map type: {:?}", kind),
@@ -67,9 +71,9 @@ impl NeedleMapper {
             }
 
             if offset > 0 {
-                self.set(key, NeedleValue { offset, size });
+                self.set(key, NeedleValue { offset, size })?;
             } else {
-                self.delete(key);
+                self.delete(key)?;
             }
             Ok(())
         })?;
@@ -77,7 +81,7 @@ impl NeedleMapper {
         Ok(())
     }
 
-    pub fn set(&mut self, key: u64, index: NeedleValue) -> Option<NeedleValue> {
+    pub fn set(&mut self, key: u64, index: NeedleValue) -> Result<Option<NeedleValue>> {
         debug!("needle map set key: {}, {:?}", key, index);
         if key > self.metric.maximum_file_key {
             self.metric.maximum_file_key = key;
@@ -91,19 +95,22 @@ impl NeedleMapper {
             self.metric.deleted_bytes += n.size as u64;
         }
 
-        old
+        self.append_to_index_file(key, index)?;
+
+        Ok(old)
     }
 
-    pub fn delete(&mut self, key: u64) -> Option<NeedleValue> {
+    pub fn delete(&mut self, key: u64) -> Result<Option<NeedleValue>> {
         let deleted = self.needle_value_map.delete(key);
 
-        if let Some(n) = deleted {
+        if let Some(needle) = deleted {
             self.metric.deleted_count += 1;
-            self.metric.deleted_bytes += n.size as u64;
+            self.metric.deleted_bytes += needle.size as u64;
+            self.append_to_index_file(key, needle)?;
         }
 
         debug!("needle map delete key: {} {:?}", key, deleted);
-        deleted
+        Ok(deleted)
     }
 
     pub fn get(&self, key: u64) -> Option<NeedleValue> {
@@ -145,9 +152,14 @@ impl NeedleMapper {
             buf.put_u32(value.offset);
             buf.put_u32(value.size);
 
-            file.write_all(&buf)?;
+            if let Err(err) = file.write_all(&buf) {
+                error!(
+                    "failed to write index file, volume {}, error: {err}",
+                    self.volume_id
+                );
+                return Err(Error::Io(err));
+            }
         }
-
         Ok(())
     }
 }

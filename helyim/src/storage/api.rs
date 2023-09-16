@@ -60,9 +60,9 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
 
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in store.locations.iter() {
-        for (_, v) in location.volumes.iter() {
-            let vinfo = v.get_volume_info();
-            infos.push(vinfo);
+        for (_, volume) in location.volumes.iter() {
+            let volume_info = volume.volume_info().await?;
+            infos.push(volume_info);
         }
     }
 
@@ -77,9 +77,9 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
 pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<()> {
     let mut store = ctx.store.lock().await;
     for location in store.locations.iter_mut() {
-        for (vid, v) in location.volumes.iter_mut() {
+        for (vid, volume) in location.volumes.iter() {
             info!("start compacting volume {vid}.");
-            v.compact2(0)?;
+            volume.compact(0).await?;
             info!("compact volume {vid} success.");
         }
     }
@@ -90,9 +90,9 @@ pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<(
 pub async fn volume_commit_compact_handler(State(ctx): State<StorageContext>) -> Result<()> {
     let mut store = ctx.store.lock().await;
     for location in store.locations.iter_mut() {
-        for (vid, v) in location.volumes.iter_mut() {
+        for (vid, volume) in location.volumes.iter() {
             info!("start committing compacted volume {vid}.");
-            v.commit_compact()?;
+            volume.commit_compact().await?;
             info!("commit compacted volume {vid} success.");
         }
     }
@@ -175,7 +175,7 @@ pub async fn delete_handler(
 
     {
         let mut store = ctx.store.lock().await;
-        needle = store.read_volume_needle(vid, needle)?;
+        needle = store.read_volume_needle(vid, needle).await?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
@@ -205,8 +205,8 @@ async fn replicate_delete(
         return Ok(size);
     }
 
-    if let Some(volume) = store.find_volume_mut(vid) {
-        if !volume.need_to_replicate() {
+    if let Some(volume) = store.find_volume(vid) {
+        if !volume.need_to_replicate().await? {
             return Ok(size);
         }
     }
@@ -278,8 +278,8 @@ async fn replicate_write(
         return Ok(needle);
     }
 
-    if let Some(volume) = store.find_volume_mut(vid) {
-        if !volume.need_to_replicate() {
+    if let Some(volume) = store.find_volume(vid) {
+        if !volume.need_to_replicate().await? {
             return Ok(needle);
         }
     }
@@ -495,7 +495,7 @@ pub async fn get_or_head_handler(
     let mut response = Response::new(Body::empty());
 
     if !store.has_volume(vid) {
-        // TODO support read redirect
+        // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
             *response.status_mut() = StatusCode::NOT_FOUND;
@@ -503,7 +503,7 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = store.read_volume_needle(vid, needle)?;
+    needle = store.read_volume_needle(vid, needle).await?;
     if needle.cookie != cookie {
         return Err(Error::CookieNotMatch(needle.cookie, cookie));
     }

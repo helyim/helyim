@@ -256,8 +256,10 @@ async fn heartbeat_stream(
                     break;
                 }
                 _ = interval.tick() => {
-                    let heartbeat = store.lock().await.collect_heartbeat();
-                    yield heartbeat
+                    match store.lock().await.collect_heartbeat().await {
+                        Ok(heartbeat) => yield heartbeat,
+                        Err(err) => error!("collect heartbeat error: {err}")
+                    }
                 }
             }
         }
@@ -298,7 +300,7 @@ impl VolumeServer for StorageGrpcServer {
         let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = store.check_compact_volume(request.volume_id)?;
+        let garbage_ratio = store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -306,10 +308,12 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCompactRequest>,
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
-        let mut store = self.store.lock().await;
+        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} compact", request.volume_id);
-        store.compact_volume(request.volume_id, request.preallocate)?;
+        store
+            .compact_volume(request.volume_id, request.preallocate)
+            .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
 
@@ -317,10 +321,10 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
-        let mut store = self.store.lock().await;
+        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} commit compaction", request.volume_id);
-        store.commit_compact_volume(request.volume_id)?;
+        store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -331,10 +335,10 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
-        let mut store = self.store.lock().await;
+        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} cleanup", request.volume_id);
-        store.commit_cleanup_volume(request.volume_id)?;
+        store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 }
