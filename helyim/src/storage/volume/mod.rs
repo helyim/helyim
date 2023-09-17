@@ -23,8 +23,8 @@ use crate::{
     errors::{Error, Result},
     storage::{
         needle::{
-            read_needle_header, Needle, NeedleValue, NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE,
-            NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE,
+            read_needle_header, Needle, NeedleValue, NEEDLE_HEADER_SIZE, NEEDLE_INDEX_SIZE,
+            NEEDLE_PADDING_SIZE,
         },
         needle_map::{index_entry, NeedleMapType, NeedleMapper},
         replica_placement::ReplicaPlacement,
@@ -788,8 +788,8 @@ pub async fn volume_loop(
                     VolumeEvent::GarbageLevel { tx } => {
                         let _ = tx.send(volume.garbage_level());
                     }
-                    VolumeEvent::Compact { preallocate, tx } => {
-                        let _ = tx.send(volume.compact2(preallocate));
+                    VolumeEvent::Compact { preallocate: _, tx } => {
+                        let _ = tx.send(volume.compact2());
                     }
                     VolumeEvent::CommitCompact { tx } => {
                         let _ = tx.send(volume.commit_compact());
@@ -848,24 +848,13 @@ where
 
     loop {
         if read_needle_body {
-            needle.read_needle_body(
+            if let Err(err) = needle.read_needle_body(
                 volume.file_mut()?,
                 offset + NEEDLE_HEADER_SIZE,
                 rest,
                 version,
-            )?;
-            if needle.data_size >= needle.size {
-                // this should come from a bug reported on #87 and #93
-                // fixed in v0.69
-                // remove this whole "if" clause later, long after 0.69
-                let padding = NEEDLE_PADDING_SIZE
-                    - ((needle.size + NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE)
-                        % NEEDLE_PADDING_SIZE);
-                needle.size = 0;
-                rest = needle.size + NEEDLE_CHECKSUM_SIZE + padding;
-                if rest % NEEDLE_PADDING_SIZE != 0 {
-                    rest += NEEDLE_PADDING_SIZE - rest % NEEDLE_PADDING_SIZE;
-                }
+            ) {
+                error!("cannot read needle body when scanning volume file, {err}");
             }
         }
 

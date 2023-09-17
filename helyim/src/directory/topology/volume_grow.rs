@@ -366,10 +366,6 @@ impl VolumeGrowthEventTx {
         })?;
         rx.await?
     }
-
-    pub fn close(&self) {
-        self.0.close_channel();
-    }
 }
 
 #[derive(Debug, Default, Clone)]

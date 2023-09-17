@@ -45,7 +45,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn compact2(&mut self, _preallocate: i64) -> Result<()> {
+    pub fn compact2(&mut self) -> Result<()> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
@@ -259,8 +259,6 @@ impl Volume {
                 Ok(())
             },
         )?;
-
-        self.needle_mapper = nm;
         Ok(())
     }
 

@@ -123,8 +123,6 @@ impl DirectoryServer {
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
 
-        self.topology.close();
-        self.volume_grow.close();
         let mut interval = tokio::time::interval(STOP_INTERVAL);
 
         loop {
