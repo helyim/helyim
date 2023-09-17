@@ -10,8 +10,8 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Collection {
-    pub name: FastStr,
-    pub volume_size_limit: u64,
+    name: FastStr,
+    volume_size_limit: u64,
     pub volume_layouts: HashMap<FastStr, VolumeLayout>,
 }
 

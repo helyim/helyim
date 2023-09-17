@@ -27,14 +27,14 @@ use crate::{
 #[derive(Debug, Serialize)]
 pub struct Topology {
     #[serde(skip)]
-    pub sequence: MemorySequencer,
+    sequence: MemorySequencer,
     pub collections: HashMap<FastStr, Collection>,
-    pub pulse: u64,
-    pub volume_size_limit: u64,
+    pulse: u64,
+    volume_size_limit: u64,
     #[serde(skip)]
-    pub data_centers: HashMap<FastStr, DataCenterEventTx>,
+    data_centers: HashMap<FastStr, DataCenterEventTx>,
     #[serde(skip)]
-    pub handles: Vec<JoinHandle<()>>,
+    handles: Vec<JoinHandle<()>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }

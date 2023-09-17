@@ -58,7 +58,6 @@ pub struct Needle {
     pub cookie: u32,
     pub id: u64,
     pub size: u32,
-
     pub data_size: u32,
     pub data: Bytes,
     pub flags: u8,
@@ -69,9 +68,7 @@ pub struct Needle {
     pub pairs_size: u16,
     pub pairs: Bytes,
     pub last_modified: u64,
-
     pub ttl: Ttl,
-
     pub checksum: u32,
     pub padding: Vec<u8>,
 }

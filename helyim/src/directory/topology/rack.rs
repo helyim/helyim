@@ -24,14 +24,14 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct Rack {
-    pub id: FastStr,
+    id: FastStr,
     #[serde(skip)]
-    pub nodes: HashMap<FastStr, DataNodeEventTx>,
-    pub max_volume_id: VolumeId,
+    nodes: HashMap<FastStr, DataNodeEventTx>,
+    max_volume_id: VolumeId,
     #[serde(skip)]
-    pub data_center: Option<DataCenterEventTx>,
+    data_center: Option<DataCenterEventTx>,
     #[serde(skip)]
-    pub handles: Vec<JoinHandle<()>>,
+    handles: Vec<JoinHandle<()>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }

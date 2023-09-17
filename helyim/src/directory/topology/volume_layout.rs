@@ -10,13 +10,13 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize)]
 pub struct VolumeLayout {
-    pub rp: ReplicaPlacement,
-    pub ttl: Option<Ttl>,
-    pub volume_size_limit: u64,
+    rp: ReplicaPlacement,
+    ttl: Option<Ttl>,
+    volume_size_limit: u64,
 
-    pub writable_volumes: DashSet<VolumeId>,
+    writable_volumes: DashSet<VolumeId>,
     pub readonly_volumes: DashSet<VolumeId>,
-    pub oversize_volumes: DashSet<VolumeId>,
+    oversize_volumes: DashSet<VolumeId>,
     #[serde(skip)]
     pub locations: DashMap<VolumeId, Vec<DataNodeEventTx>>,
 }

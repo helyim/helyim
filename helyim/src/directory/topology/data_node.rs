@@ -26,16 +26,16 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct DataNode {
-    pub id: FastStr,
+    id: FastStr,
     ip: FastStr,
     port: u16,
-    pub public_url: FastStr,
-    pub last_seen: i64,
+    public_url: FastStr,
+    last_seen: i64,
     #[serde(skip)]
-    pub rack: Option<RackEventTx>,
-    pub volumes: HashMap<VolumeId, VolumeInfo>,
-    pub max_volumes: i64,
-    pub max_volume_id: VolumeId,
+    rack: Option<RackEventTx>,
+    volumes: HashMap<VolumeId, VolumeInfo>,
+    max_volumes: i64,
+    max_volume_id: VolumeId,
     #[serde(skip)]
     client: Option<VolumeServerClient<Channel>>,
     #[serde(skip)]

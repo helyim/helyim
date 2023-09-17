@@ -22,10 +22,10 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct DataCenter {
-    pub id: FastStr,
-    pub max_volume_id: VolumeId,
+    id: FastStr,
+    max_volume_id: VolumeId,
     #[serde(skip)]
-    pub racks: HashMap<FastStr, RackEventTx>,
+    racks: HashMap<FastStr, RackEventTx>,
     #[serde(skip)]
     handles: Vec<JoinHandle<()>>,
     #[serde(skip)]
