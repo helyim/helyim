@@ -204,30 +204,30 @@ impl Volume {
 
     pub fn copy_data_and_generate_index_file(
         &mut self,
-        dst_name: String,
-        idx_name: String,
+        compact_data_filename: String,
+        compact_index_filename: String,
     ) -> Result<()> {
-        let mut dst_file = fs::OpenOptions::new()
+        let mut compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .read(true)
             .mode(0o644)
-            .open(dst_name)?;
-        let idx_file = fs::OpenOptions::new()
+            .open(compact_data_filename)?;
+        let compact_index_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(idx_name)?;
+            .open(compact_index_filename)?;
 
-        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
-        nm.load_idx_file(idx_file)?;
+        let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
+        compact_nm.load_idx_file(compact_index_file)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
         let now = now().as_millis() as u64;
         let version = self.version();
 
-        let mut dst = dst_file.try_clone()?;
+        let mut dst = compact_data_file.try_clone()?;
         scan_volume_file(
             self.dir.clone(),
             self.collection.clone(),
@@ -236,7 +236,7 @@ impl Volume {
             true,
             |super_block| -> Result<()> {
                 super_block.compact_revision += 1;
-                dst_file.write_all(&super_block.as_bytes())?;
+                compact_data_file.write_all(&super_block.as_bytes())?;
                 Ok(())
             },
             |needle, offset| -> Result<()> {
@@ -251,7 +251,7 @@ impl Volume {
                             offset: new_offset / NEEDLE_PADDING_SIZE,
                             size: needle.size,
                         };
-                        nm.set(needle.id, nv)?;
+                        compact_nm.set(needle.id, nv)?;
                         needle.append(&mut dst, version)?;
                         new_offset += needle.disk_size();
                     }
@@ -264,34 +264,34 @@ impl Volume {
 
     pub fn copy_data_based_on_index_file(
         &mut self,
-        dst_name: String,
-        idx_name: String,
+        compact_data_filename: String,
+        compact_index_filename: String,
     ) -> Result<()> {
-        let mut dst_file = fs::OpenOptions::new()
+        let mut compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(dst_name)?;
-        let idx_file = fs::OpenOptions::new()
+            .open(compact_data_filename)?;
+        let compact_index_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(idx_name)?;
+            .open(compact_index_filename)?;
 
         let old_idx_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
-        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
-        nm.load_idx_file(idx_file)?;
+        let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
+        compact_nm.load_idx_file(compact_index_file)?;
 
         let now = now().as_millis() as u64;
 
         self.super_block.compact_revision += 1;
-        dst_file.write_all(&self.super_block.as_bytes())?;
+        compact_data_file.write_all(&self.super_block.as_bytes())?;
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
 
         walk_index_file(&old_idx_file, |key, offset, size| -> Result<()> {
@@ -320,8 +320,8 @@ impl Volume {
                     offset: new_offset / NEEDLE_PADDING_SIZE,
                     size: needle.size,
                 };
-                nm.set(needle.id, nv)?;
-                needle.append(&mut dst_file, version)?;
+                compact_nm.set(needle.id, nv)?;
+                needle.append(&mut compact_data_file, version)?;
                 new_offset += needle.disk_size();
             }
 
