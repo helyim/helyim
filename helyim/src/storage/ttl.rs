@@ -1,6 +1,12 @@
 use std::fmt::{Display, Formatter};
 
 use bytes::Buf;
+use nom::{
+    bytes::complete::take_while1,
+    character::{complete::alpha0, is_digit},
+    combinator::opt,
+    sequence::pair,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{Error, Result};
@@ -65,14 +71,6 @@ pub struct Ttl {
     pub count: u8,
     pub unit: Unit,
 }
-
-// default: m
-// 3m
-// 4h
-// 5d
-// 6w
-// 7M
-// 8y
 
 impl Ttl {
     pub fn new(s: &str) -> Result<Ttl> {
@@ -154,5 +152,52 @@ impl From<&[u8]> for Ttl {
             count: u[0],
             unit: Unit::from_u8(u[1]).unwrap(),
         }
+    }
+}
+
+fn parse_ttl(input: &[u8]) -> Result<(&[u8], Option<&[u8]>)> {
+    let (_, ttl) = pair(take_while1(is_digit), opt(alpha0))(input)?;
+    Ok(ttl)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::Ttl;
+
+    #[test]
+    pub fn test_ttl() {
+        let ttl = Ttl::new("").unwrap();
+        assert_eq!(ttl.minutes(), 0);
+
+        let ttl = Ttl::new("9").unwrap();
+        assert_eq!(ttl.minutes(), 9);
+
+        let ttl = Ttl::new("8m").unwrap();
+        assert_eq!(ttl.minutes(), 8);
+
+        let ttl = Ttl::new("5h").unwrap();
+        assert_eq!(ttl.minutes(), 300);
+
+        let ttl = Ttl::new("5d").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 24 * 60);
+
+        let ttl = Ttl::new("50d").unwrap();
+        assert_eq!(ttl.minutes(), 50 * 24 * 60);
+
+        let ttl = Ttl::new("5w").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 7 * 24 * 60);
+
+        let ttl = Ttl::new("5M").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 30 * 24 * 60);
+
+        let ttl = Ttl::new("5y").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 365 * 24 * 60);
+
+        let ttl_bytes = ttl.as_bytes();
+        let ttl2 = Ttl::from(&ttl_bytes[..]);
+        assert_eq!(ttl.minutes(), ttl2.minutes());
+
+        let ttl3 = Ttl::from(Into::<u32>::into(ttl));
+        assert_eq!(ttl.minutes(), ttl3.minutes());
     }
 }

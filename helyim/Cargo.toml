@@ -36,6 +36,7 @@ libflate.workspace = true
 lru.workspace = true
 mime_guess.workspace = true
 multer.workspace = true
+nom.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
 rand.workspace = true

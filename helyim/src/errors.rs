@@ -60,6 +60,8 @@ pub enum Error {
     Crc(u32, u32),
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(u8),
+    #[error("Nom error: {0}")]
+    Nom(String),
 
     #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
@@ -127,5 +129,11 @@ impl<T> From<TrySendError<T>> for Error {
 impl From<Error> for Status {
     fn from(value: Error) -> Self {
         Status::internal(value.to_string())
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&[u8]>>> for Error {
+    fn from(value: nom::Err<nom::error::Error<&[u8]>>) -> Self {
+        Self::Nom(value.to_string())
     }
 }
