@@ -656,6 +656,10 @@ mod tests {
         let (input, filename) = parse_filename("/my_preferred_name").unwrap();
         assert_eq!(filename, "my_preferred_name");
         assert_eq!(input, "");
+
+        let (input, filename) = parse_filename("/").unwrap();
+        assert_eq!(filename, "");
+        assert_eq!(input, "");
     }
 
     #[test]
@@ -672,6 +676,12 @@ mod tests {
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
         assert_eq!(ext, Some("jpg"));
+
+        let (vid, fid, filename, ext) = parse_path("/3/01637037d6/my_preferred_name").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(ext, None);
 
         let (vid, fid, filename, ext) = parse_path("/3/01637037d6.jpg").unwrap();
         assert_eq!(vid, 3);
