@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add, path::Path,
+    collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add,
     result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
 };
 
@@ -25,9 +25,17 @@ use hyper::{
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
+use nom::{
+    branch::alt,
+    bytes::complete::take_till,
+    character::complete::{alphanumeric1, char as nom_char, digit1},
+    combinator::opt,
+    sequence::{pair, tuple},
+    IResult,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     anyhow,
@@ -165,11 +173,11 @@ pub async fn delete_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, _, _, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, fid, _, _) = parse_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = Needle::default();
-    needle.parse_path(&fid)?;
+    needle.parse_path(fid)?;
 
     let cookie = needle.cookie;
 
@@ -242,7 +250,7 @@ pub async fn post_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, _, _, _, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, _, _, _) = parse_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = if !is_replicate {
@@ -486,9 +494,9 @@ pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, mut _filename, _ext, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, fid, _filename, _ext) = parse_path(extractor.uri.path())?;
     let mut needle = Needle::default();
-    needle.parse_path(&fid)?;
+    needle.parse_path(fid)?;
     let cookie = needle.cookie;
 
     let mut store = ctx.store.lock().await;
@@ -549,10 +557,6 @@ pub async fn get_or_head_handler(
         }
     }
 
-    if !needle.name.is_empty() && _filename.is_empty() {
-        _filename = String::from_utf8(needle.name.to_vec())?;
-    }
-
     let mut _mtype = String::new();
     if !needle.mime.is_empty() && !needle.mime.starts_with(b"application/octet-stream") {
         _mtype = String::from_utf8(needle.mime.to_vec())?;
@@ -590,72 +594,107 @@ pub async fn get_or_head_handler(
     Ok(FallbackResponse::GetOrHead(response))
 }
 
-// support following format
-// http://localhost:8080/3/01637037d6/my_preferred_name.jpg
-// http://localhost:8080/3/01637037d6.jpg
-// http://localhost:8080/3,01637037d6.jpg
-// http://localhost:8080/3/01637037d6
-// http://localhost:8080/3,01637037d6
-// @return vid, fid, filename, ext, is_volume_id_only
-// /3/01637037d6/my_preferred_name.jpg -> (3,01637037d6,my_preferred_name.jpg,jpg,false)
-fn parse_url_path(path: &str) -> Result<(VolumeId, String, String, String, bool)> {
-    let vid: String;
-    let mut fid;
-    let filename;
-    let mut ext = String::default();
-    let mut is_volume_id_only = false;
+fn parse_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, Option<&str>)> {
+    let (_, ((vid, fid), filename, ext)) =
+        tuple((parse_vid_fid, opt(parse_filename), opt(parse_ext)))(input)?;
+    Ok((vid.parse()?, fid, filename, ext))
+}
 
-    let parts: Vec<&str> = path.split('/').collect();
-    debug!("parse url path: {}", path);
-    match parts.len() {
-        4 => {
-            vid = parts[1].to_string();
-            fid = parts[2].to_string();
-            filename = parts[3].to_string();
+fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
+    let (input, (_, vid, _, fid)) = tuple((
+        nom_char('/'),
+        digit1,
+        alt((nom_char('/'), nom_char(','))),
+        alphanumeric1,
+    ))(input)?;
+    Ok((input, (vid, fid)))
+}
 
-            // must be valid utf8
-            ext = Path::new(&filename)
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-        }
-        3 => {
-            filename = String::default();
+fn parse_filename(input: &str) -> IResult<&str, &str> {
+    let (ext, (_, filename)) = pair(nom_char('/'), take_till(|c| c == '.'))(input)?;
+    Ok((ext, filename))
+}
 
-            vid = parts[1].to_string();
-            fid = parts[2].to_string();
-            if let Some(idx) = parts[2].rfind('.') {
-                let (fid_str, ext_str) = parts[2].split_at(idx);
-                fid = fid_str.to_string();
-                ext = ext_str.to_string();
-            }
-        }
-        _ => {
-            filename = String::default();
-            let mut end = path.len();
+fn parse_ext(input: &str) -> IResult<&str, &str> {
+    let (ext, _) = nom_char('.')(input)?;
+    Ok((ext, ext))
+}
 
-            if let Some(dot) = path.rfind('.') {
-                let start = dot + 1;
-                ext = path[start..].to_string();
-                end = start - 1;
-            }
+#[cfg(test)]
+mod tests {
+    use crate::storage::api::{parse_ext, parse_filename, parse_path, parse_vid_fid};
 
-            match path.rfind(',') {
-                Some(sep) => {
-                    let start = sep + 1;
-                    fid = path[start..end].to_string();
-                    end = start - 1;
-                }
-                None => {
-                    fid = String::default();
-                    is_volume_id_only = true;
-                }
-            }
+    #[test]
+    pub fn test_parse_vid_fid() {
+        let (input, (vid, fid)) = parse_vid_fid("/3/01637037d6").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "");
 
-            vid = path[1..end].to_string();
-        }
-    };
+        let (input, (vid, fid)) = parse_vid_fid("/3/01637037d6/").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "/");
 
-    Ok((vid.parse()?, fid, filename, ext, is_volume_id_only))
+        let (input, (vid, fid)) = parse_vid_fid("/3,01637037d6").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "");
+
+        let (input, (vid, fid)) = parse_vid_fid("/3,01637037d6/").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "/");
+    }
+
+    #[test]
+    pub fn test_parse_filename() {
+        let (input, filename) = parse_filename("/my_preferred_name.jpg").unwrap();
+        assert_eq!(filename, "my_preferred_name");
+        assert_eq!(input, ".jpg");
+
+        let (input, filename) = parse_filename("/my_preferred_name").unwrap();
+        assert_eq!(filename, "my_preferred_name");
+        assert_eq!(input, "");
+    }
+
+    #[test]
+    pub fn test_parse_ext() {
+        let (input, ext) = parse_ext(".jpg").unwrap();
+        assert_eq!(input, ext);
+        assert_eq!(ext, "jpg");
+    }
+
+    #[test]
+    pub fn test_parse_path() {
+        let (vid, fid, filename, ext) = parse_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(ext, Some("jpg"));
+
+        let (vid, fid, filename, ext) = parse_path("/3/01637037d6.jpg").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, Some("jpg"));
+
+        let (vid, fid, filename, ext) = parse_path("/3,01637037d6.jpg").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, Some("jpg"));
+
+        let (vid, fid, filename, ext) = parse_path("/3/01637037d6").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, None);
+
+        let (vid, fid, filename, ext) = parse_path("/3,01637037d6").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, None);
+    }
 }

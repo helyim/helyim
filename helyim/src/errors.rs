@@ -132,8 +132,8 @@ impl From<Error> for Status {
     }
 }
 
-impl From<nom::Err<nom::error::Error<&[u8]>>> for Error {
-    fn from(value: nom::Err<nom::error::Error<&[u8]>>) -> Self {
+impl From<nom::Err<nom::error::Error<&str>>> for Error {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
         Self::Nom(value.to_string())
     }
 }
