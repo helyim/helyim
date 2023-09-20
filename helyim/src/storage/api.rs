@@ -690,20 +690,20 @@ mod tests {
         assert_eq!(filename, None);
         assert_eq!(ext, Some("jpg"));
 
-        let (vid, fid, filename, ext) = parse_url_path("/3,01637037d6.jpg").unwrap();
-        assert_eq!(vid, 3);
+        let (vid, fid, filename, ext) = parse_url_path("/30,01637037d6.jpg").unwrap();
+        assert_eq!(vid, 30);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, Some("jpg"));
 
-        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6").unwrap();
-        assert_eq!(vid, 3);
+        let (vid, fid, filename, ext) = parse_url_path("/300/01637037d6").unwrap();
+        assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, None);
 
-        let (vid, fid, filename, ext) = parse_url_path("/3,01637037d6").unwrap();
-        assert_eq!(vid, 3);
+        let (vid, fid, filename, ext) = parse_url_path("/300,01637037d6").unwrap();
+        assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, None);
