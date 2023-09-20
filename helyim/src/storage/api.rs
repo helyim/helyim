@@ -173,7 +173,7 @@ pub async fn delete_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, _, _) = parse_path(extractor.uri.path())?;
+    let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = Needle::default();
@@ -250,7 +250,7 @@ pub async fn post_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, _, _, _) = parse_path(extractor.uri.path())?;
+    let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = if !is_replicate {
@@ -494,7 +494,7 @@ pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, _filename, _ext) = parse_path(extractor.uri.path())?;
+    let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
     let mut needle = Needle::default();
     needle.parse_path(fid)?;
     let cookie = needle.cookie;
@@ -594,7 +594,7 @@ pub async fn get_or_head_handler(
     Ok(FallbackResponse::GetOrHead(response))
 }
 
-fn parse_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, Option<&str>)> {
+fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, Option<&str>)> {
     let (_, ((vid, fid), filename, ext)) =
         tuple((parse_vid_fid, opt(parse_filename), opt(parse_ext)))(input)?;
     Ok((vid.parse()?, fid, filename, ext))
@@ -622,7 +622,7 @@ fn parse_ext(input: &str) -> IResult<&str, &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::api::{parse_ext, parse_filename, parse_path, parse_vid_fid};
+    use crate::storage::api::{parse_ext, parse_filename, parse_url_path, parse_vid_fid};
 
     #[test]
     pub fn test_parse_vid_fid() {
@@ -671,37 +671,37 @@ mod tests {
 
     #[test]
     pub fn test_parse_path() {
-        let (vid, fid, filename, ext) = parse_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
         assert_eq!(ext, Some("jpg"));
 
-        let (vid, fid, filename, ext) = parse_path("/3/01637037d6/my_preferred_name").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
         assert_eq!(ext, None);
 
-        let (vid, fid, filename, ext) = parse_path("/3/01637037d6.jpg").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, Some("jpg"));
 
-        let (vid, fid, filename, ext) = parse_path("/3,01637037d6.jpg").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3,01637037d6.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, Some("jpg"));
 
-        let (vid, fid, filename, ext) = parse_path("/3/01637037d6").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, None);
 
-        let (vid, fid, filename, ext) = parse_path("/3,01637037d6").unwrap();
+        let (vid, fid, filename, ext) = parse_url_path("/3,01637037d6").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
