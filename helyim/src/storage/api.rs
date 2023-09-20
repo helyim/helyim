@@ -671,7 +671,8 @@ mod tests {
 
     #[test]
     pub fn test_parse_path() {
-        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
+        let (vid, fid, filename, ext) =
+            parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
