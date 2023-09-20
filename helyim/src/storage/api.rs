@@ -611,8 +611,8 @@ fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
 }
 
 fn parse_filename(input: &str) -> IResult<&str, &str> {
-    let (ext, (_, filename)) = pair(nom_char('/'), take_till(|c| c == '.'))(input)?;
-    Ok((ext, filename))
+    let (input, (_, filename)) = pair(nom_char('/'), take_till(|c| c == '.'))(input)?;
+    Ok((input, filename))
 }
 
 fn parse_ext(input: &str) -> IResult<&str, &str> {
