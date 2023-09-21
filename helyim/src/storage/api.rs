@@ -28,7 +28,7 @@ use multer::Multipart;
 use nom::{
     branch::alt,
     bytes::complete::take_till,
-    character::complete::{alphanumeric1, char as nom_char, digit1},
+    character::complete::{alphanumeric1, char, digit1},
     combinator::opt,
     sequence::{pair, tuple},
     IResult,
@@ -602,21 +602,21 @@ fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, Option<&
 
 fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
     let (input, (_, vid, _, fid)) = tuple((
-        nom_char('/'),
+        char('/'),
         digit1,
-        alt((nom_char('/'), nom_char(','))),
+        alt((char('/'), char(','))),
         alphanumeric1,
     ))(input)?;
     Ok((input, (vid, fid)))
 }
 
 fn parse_filename(input: &str) -> IResult<&str, &str> {
-    let (input, (_, filename)) = pair(nom_char('/'), take_till(|c| c == '.'))(input)?;
+    let (input, (_, filename)) = pair(char('/'), take_till(|c| c == '.'))(input)?;
     Ok((input, filename))
 }
 
 fn parse_ext(input: &str) -> IResult<&str, &str> {
-    let (ext, _) = nom_char('.')(input)?;
+    let (ext, _) = char('.')(input)?;
     Ok((ext, ext))
 }
 

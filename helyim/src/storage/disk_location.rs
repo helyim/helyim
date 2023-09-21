@@ -1,7 +1,12 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{hash_map, HashMap},
+    fs,
+    path::Path,
+};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
+use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
 use tracing::info;
 
 use crate::{
@@ -41,23 +46,6 @@ impl DiskLocation {
         }
     }
 
-    pub fn parse_volume_id(&self, p: &Path) -> Result<(VolumeId, FastStr)> {
-        if p.is_dir() || p.extension().unwrap_or_default() != DATA_FILE_SUFFIX {
-            return Err(anyhow!("not valid file: {}", p.to_str().unwrap()));
-        }
-
-        let name = p.file_name().unwrap().to_str().unwrap();
-
-        let (collection, id) = match name.find('_') {
-            Some(idx) => (&name[0..idx], &name[idx + 1..name.len() - 4]),
-            None => (&name[0..0], &name[0..name.len() - 4]),
-        };
-
-        let vid = id.parse()?;
-
-        Ok((vid, FastStr::new(collection)))
-    }
-
     pub fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
         // TODO concurrent load volumes
         let dir = self.directory.to_string();
@@ -65,27 +53,26 @@ impl DiskLocation {
         info!("load existing volumes dir: {}", self.directory);
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
-            let fpath = file.as_path();
+            let path = file.as_path();
 
-            if fpath.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
-                info!("load volume for data file {:?}", fpath);
-                let (vid, collection) = self.parse_volume_id(fpath)?;
-                if self.volumes.get(&vid).is_some() {
-                    continue;
+            if path.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
+                let (vid, collection) = parse_volume_id(path)?;
+                info!("load volume {}'s data file {:?}", vid, path);
+                if let hash_map::Entry::Vacant(entry) = self.volumes.entry(vid) {
+                    let volume = Volume::new(
+                        self.directory.clone(),
+                        FastStr::new(collection),
+                        vid,
+                        needle_map_type,
+                        ReplicaPlacement::default(),
+                        Ttl::default(),
+                        0,
+                    )?;
+                    let (tx, rx) = unbounded();
+                    let volume_tx = VolumeEventTx::new(tx);
+                    rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
+                    entry.insert(volume_tx);
                 }
-                let volume = Volume::new(
-                    self.directory.clone(),
-                    collection,
-                    vid,
-                    needle_map_type,
-                    ReplicaPlacement::default(),
-                    Ttl::default(),
-                    0,
-                )?;
-                let (tx, rx) = unbounded();
-                let volume_tx = VolumeEventTx::new(tx);
-                rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
-                self.volumes.insert(vid, volume_tx);
             }
         }
 
@@ -102,4 +89,23 @@ impl DiskLocation {
         }
         Ok(())
     }
+}
+
+fn parse_volume_id(path: &Path) -> Result<(VolumeId, &str)> {
+    if path.is_dir() {
+        return Err(anyhow!("invalid data file: {}", path.to_str().unwrap()));
+    }
+
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let name = &name[..name.len() - 4];
+
+    let (collection, id) =
+        pair(take_till(|c| c == '_'), opt(char('_')))(name).map(|(input, (left, opt_char))| {
+            match opt_char {
+                Some(_) => (left, input),
+                None => (input, left),
+            }
+        })?;
+    let vid = id.parse()?;
+    Ok((vid, collection))
 }
