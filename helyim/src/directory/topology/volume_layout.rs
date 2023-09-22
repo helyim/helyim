@@ -4,8 +4,8 @@ use serde::Serialize;
 
 use crate::{
     directory::topology::{volume_grow::VolumeGrowOption, DataNodeEventTx},
-    errors::{Error, Result},
-    storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+    errors::Result,
+    storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -61,7 +61,7 @@ impl VolumeLayout {
         option: &VolumeGrowOption,
     ) -> Result<(VolumeId, Vec<DataNodeEventTx>)> {
         if self.writable_volumes.is_empty() {
-            return Err(Error::NoWritableVolumes);
+            return Err(VolumeError::NoWritableVolumes.into());
         }
 
         let mut counter = 0;
@@ -90,7 +90,7 @@ impl VolumeLayout {
             return Ok(ret);
         }
 
-        Err(Error::NoWritableVolumes)
+        Err(VolumeError::NoWritableVolumes.into())
     }
 
     async fn set_node(locations: &mut Vec<DataNodeEventTx>, dn: DataNodeEventTx) -> Result<()> {

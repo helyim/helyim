@@ -12,7 +12,7 @@ use crate::{
         needle::Needle,
         needle_map::NeedleMapType,
         volume::{volume_loop, Volume, VolumeEventTx},
-        ReplicaPlacement, Ttl, VolumeId,
+        ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
 };
 
@@ -89,7 +89,7 @@ impl Store {
     pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid) {
             Some(volume) => volume.read_needle(needle).await,
-            None => Err(Error::MissingVolume(vid)),
+            None => Err(VolumeError::Missing(vid).into()),
         }
     }
 
@@ -102,7 +102,7 @@ impl Store {
 
                 volume.write_needle(needle).await
             }
-            None => Err(Error::MissingVolume(vid)),
+            None => Err(VolumeError::Missing(vid).into()),
         }
     }
 
@@ -116,7 +116,7 @@ impl Store {
             // TODO: update master
             Ok(())
         } else {
-            Err(Error::MissingVolume(vid))
+            Err(VolumeError::Missing(vid).into())
         }
     }
 
@@ -264,7 +264,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during check compact");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::Missing(vid).into())
             }
         }
     }
@@ -279,7 +279,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during compacting.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::Missing(vid).into())
             }
         }
     }
@@ -294,7 +294,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during committing compaction.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::Missing(vid).into())
             }
         }
     }
@@ -308,7 +308,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during cleaning up.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::Missing(vid).into())
             }
         }
     }

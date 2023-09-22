@@ -31,7 +31,7 @@ use crate::{
         ttl::Ttl,
         version::{Version, CURRENT_VERSION},
         volume_info::VolumeInfo,
-        VolumeId,
+        NeedleError, VolumeError, VolumeId,
     },
     util::time::{get_time, now},
 };
@@ -229,8 +229,9 @@ impl Volume {
     }
 
     pub async fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+        let volume_id = self.id;
         if self.readonly {
-            return Err(anyhow!("data file {} is read only", self.data_filename()));
+            return Err(anyhow!("volume {volume_id} is read only"));
         }
 
         let version = self.version();
@@ -244,7 +245,10 @@ impl Volume {
         offset /= NEEDLE_PADDING_SIZE as u64;
 
         if let Err(err) = needle.append(file, version) {
-            error!("write needle {} error: {err}, will do ftruncate.", needle);
+            error!(
+                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                needle.id
+            );
             ftruncate(file, offset)?;
             return Err(err);
         }
@@ -264,7 +268,7 @@ impl Volume {
 
     pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<u32> {
         if self.readonly {
-            return Err(anyhow!("{} is read only", self.data_filename()));
+            return Err(anyhow!("volume {} is read only", self.id));
         }
 
         let mut nv = match self.needle_mapper.get(needle.id) {
@@ -287,7 +291,7 @@ impl Volume {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 {
-                    return Err(anyhow!("needle {} already deleted", needle.id));
+                    return Err(NeedleError::Deleted(self.id, needle.id).into());
                 }
 
                 let version = self.version();
@@ -299,12 +303,12 @@ impl Volume {
                     if minutes > 0
                         && now().as_secs() >= (needle.last_modified + minutes as u64 * 60)
                     {
-                        return Err(anyhow!("needle {} has expired", needle.id));
+                        return Err(NeedleError::Expired(self.id, needle.id).into());
                     }
                 }
                 Ok(needle)
             }
-            None => Err(anyhow!("needle {} not found", needle.id)),
+            None => Err(NeedleError::NotFound(self.id, needle.id).into()),
         }
     }
 
@@ -363,7 +367,7 @@ impl Volume {
 
     pub fn destroy(self) -> Result<()> {
         if self.readonly {
-            return Err(anyhow!("{} is read only", self.data_filename()));
+            return Err(anyhow!("volume {} is read only", self.id));
         }
 
         fs::remove_file(Path::new(&self.data_filename()))?;
@@ -885,9 +889,10 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64> {
     let meta = index_file.metadata()?;
     let size = meta.len();
     if size % NEEDLE_PADDING_SIZE as u64 != 0 {
-        return Err(Error::DataIntegrity(format!(
+        return Err(VolumeError::DataIntegrity(format!(
             "index file's size is {size} bytes, maybe corrupted"
-        )));
+        ))
+        .into());
     }
     Ok(size)
 }
@@ -923,10 +928,11 @@ pub fn verify_needle_integrity(
     let mut needle = Needle::default();
     needle.read_data(data_file, offset, size, version)?;
     if needle.id != key {
-        return Err(Error::DataIntegrity(format!(
+        return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
             needle.id
-        )));
+        ))
+        .into());
     }
     Ok(())
 }

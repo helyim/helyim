@@ -10,24 +10,21 @@ use hyper::{
     StatusCode,
 };
 use serde_json::json;
-use tonic::Status;
 use tracing::error;
 
-use crate::storage::VolumeId;
+use crate::storage::{NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// directory errors
     #[error("No free space: {0}")]
     NoFreeSpace(String),
-    #[error("No writable volumes")]
-    NoWritableVolumes,
-    #[error("Volume {0} is not found")]
-    MissingVolume(VolumeId),
-    #[error("Data integrity error: {0}")]
-    DataIntegrity(String),
-    #[error("Cookie not match, needle cookie is {0} but got {1}")]
-    CookieNotMatch(u32, u32),
+    // volume error
+    #[error("Volume error: {0}")]
+    Volume(#[from] VolumeError),
+    // needle error
+    #[error("Needle error: {0}")]
+    Needle(#[from] NeedleError),
 
     /// storage errors
     #[error("Invalid replica placement: {0}")]
@@ -126,9 +123,9 @@ impl<T> From<TrySendError<T>> for Error {
     }
 }
 
-impl From<Error> for Status {
+impl From<Error> for tonic::Status {
     fn from(value: Error) -> Self {
-        Status::internal(value.to_string())
+        tonic::Status::internal(value.to_string())
     }
 }
 

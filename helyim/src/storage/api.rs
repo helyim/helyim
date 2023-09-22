@@ -39,7 +39,7 @@ use tracing::info;
 
 use crate::{
     anyhow,
-    errors::{Error, Result},
+    errors::Result,
     images::FAVICON_ICO,
     operation::{LookerEventTx, Upload},
     storage::{
@@ -47,7 +47,7 @@ use crate::{
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
         store::Store,
-        Ttl, VolumeId, VolumeInfo,
+        NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::time::now,
@@ -189,7 +189,7 @@ pub async fn delete_handler(
                 "cookie not match from {:?} recv: {}, file is {}",
                 extractor.host, cookie, needle.cookie
             );
-            return Err(Error::CookieNotMatch(needle.cookie, cookie));
+            return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
         }
     }
 
@@ -513,7 +513,7 @@ pub async fn get_or_head_handler(
 
     needle = store.read_volume_needle(vid, needle).await?;
     if needle.cookie != cookie {
-        return Err(Error::CookieNotMatch(needle.cookie, cookie));
+        return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
     if needle.last_modified != 0 {
@@ -594,54 +594,51 @@ pub async fn get_or_head_handler(
     Ok(FallbackResponse::GetOrHead(response))
 }
 
-fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, Option<&str>)> {
-    let (_, ((vid, fid), filename, ext)) =
-        tuple((parse_vid_fid, opt(parse_filename), opt(parse_ext)))(input)?;
+fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str)> {
+    let (vid, fid, filename, ext) = tuple((
+        char('/'),
+        parse_vid_fid,
+        opt(pair(char('/'), parse_filename)),
+    ))(input)
+    .map(|(input, (_, (vid, fid), filename))| {
+        (vid, fid, filename.map(|(_, filename)| filename), input)
+    })?;
     Ok((vid.parse()?, fid, filename, ext))
 }
 
 fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
-    let (input, (_, vid, _, fid)) = tuple((
-        char('/'),
-        digit1,
-        alt((char('/'), char(','))),
-        alphanumeric1,
-    ))(input)?;
+    let (input, (vid, _, fid)) =
+        tuple((digit1, alt((char('/'), char(','))), alphanumeric1))(input)?;
     Ok((input, (vid, fid)))
 }
 
 fn parse_filename(input: &str) -> IResult<&str, &str> {
-    let (input, (_, filename)) = pair(char('/'), take_till(|c| c == '.'))(input)?;
+    let (input, filename) = take_till(|c| c == '.')(input)?;
     Ok((input, filename))
-}
-
-fn parse_ext(input: &str) -> IResult<&str, &str> {
-    let (ext, _) = char('.')(input)?;
-    Ok((ext, ext))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::api::{parse_ext, parse_filename, parse_url_path, parse_vid_fid};
+    use crate::storage::api::{parse_filename, parse_url_path, parse_vid_fid};
 
     #[test]
     pub fn test_parse_vid_fid() {
-        let (input, (vid, fid)) = parse_vid_fid("/3/01637037d6").unwrap();
+        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6").unwrap();
         assert_eq!(vid, "3");
         assert_eq!(fid, "01637037d6");
         assert_eq!(input, "");
 
-        let (input, (vid, fid)) = parse_vid_fid("/3/01637037d6/").unwrap();
+        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6/").unwrap();
         assert_eq!(vid, "3");
         assert_eq!(fid, "01637037d6");
         assert_eq!(input, "/");
 
-        let (input, (vid, fid)) = parse_vid_fid("/3,01637037d6").unwrap();
+        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6").unwrap();
         assert_eq!(vid, "3");
         assert_eq!(fid, "01637037d6");
         assert_eq!(input, "");
 
-        let (input, (vid, fid)) = parse_vid_fid("/3,01637037d6/").unwrap();
+        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6/").unwrap();
         assert_eq!(vid, "3");
         assert_eq!(fid, "01637037d6");
         assert_eq!(input, "/");
@@ -649,24 +646,17 @@ mod tests {
 
     #[test]
     pub fn test_parse_filename() {
-        let (input, filename) = parse_filename("/my_preferred_name.jpg").unwrap();
+        let (input, filename) = parse_filename("my_preferred_name.jpg").unwrap();
         assert_eq!(filename, "my_preferred_name");
         assert_eq!(input, ".jpg");
 
-        let (input, filename) = parse_filename("/my_preferred_name").unwrap();
+        let (input, filename) = parse_filename("my_preferred_name").unwrap();
         assert_eq!(filename, "my_preferred_name");
         assert_eq!(input, "");
 
-        let (input, filename) = parse_filename("/").unwrap();
+        let (input, filename) = parse_filename("").unwrap();
         assert_eq!(filename, "");
         assert_eq!(input, "");
-    }
-
-    #[test]
-    pub fn test_parse_ext() {
-        let (input, ext) = parse_ext(".jpg").unwrap();
-        assert_eq!(input, ext);
-        assert_eq!(ext, "jpg");
     }
 
     #[test]
@@ -676,36 +666,36 @@ mod tests {
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
-        assert_eq!(ext, Some("jpg"));
+        assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, Some("my_preferred_name"));
-        assert_eq!(ext, None);
+        assert_eq!(ext, "");
 
         let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
-        assert_eq!(ext, Some("jpg"));
+        assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/30,01637037d6.jpg").unwrap();
         assert_eq!(vid, 30);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
-        assert_eq!(ext, Some("jpg"));
+        assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/300/01637037d6").unwrap();
         assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
-        assert_eq!(ext, None);
+        assert_eq!(ext, "");
 
         let (vid, fid, filename, ext) = parse_url_path("/300,01637037d6").unwrap();
         assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
-        assert_eq!(ext, None);
+        assert_eq!(ext, "");
     }
 }

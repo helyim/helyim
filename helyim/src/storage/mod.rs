@@ -11,6 +11,9 @@ mod api;
 mod crc;
 mod disk_location;
 
+mod errors;
+pub use errors::{NeedleError, VolumeError};
+
 mod needle;
 pub use needle::{Needle, NeedleValue};
 

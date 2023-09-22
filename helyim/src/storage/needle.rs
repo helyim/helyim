@@ -135,9 +135,9 @@ impl Needle {
             None => (&fid[0..fid.len()], &fid[0..0]),
         };
 
-        let ret = parse_key_hash(id)?;
-        self.id = ret.0;
-        self.cookie = ret.1;
+        let (key, cookie) = parse_key_hash(id)?;
+        self.id = key;
+        self.cookie = cookie;
         if !delta.is_empty() {
             let id_delta: u64 = delta.parse()?;
             self.id += id_delta;
@@ -416,4 +416,35 @@ pub fn read_needle_header(file: &File, version: Version, offset: u32) -> Result<
     }
 
     Ok((needle, body_len))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::needle::parse_key_hash;
+
+    #[test]
+    pub fn test_parse_key_hash() {
+        let (key, cookie) = parse_key_hash("4ed4c8116e41").unwrap();
+        assert_eq!(key, 0x4ed4);
+        assert_eq!(cookie, 0xc8116e41);
+
+        let (key, cookie) = parse_key_hash("4ed401116e41").unwrap();
+        assert_eq!(key, 0x4ed4);
+        assert_eq!(cookie, 0x01116e41);
+
+        let (key, cookie) = parse_key_hash("ed400116e41").unwrap();
+        assert_eq!(key, 0xed4);
+        assert_eq!(cookie, 0x00116e41);
+
+        let (key, cookie) = parse_key_hash("fed4c8114ed4c811f0116e41").unwrap();
+        assert_eq!(key, 0xfed4c8114ed4c811);
+        assert_eq!(cookie, 0xf0116e41);
+
+        // invalid character
+        assert!(parse_key_hash("helloworld").is_err());
+        // too long
+        assert!(parse_key_hash("4ed4c8114ed4c8114ed4c8111").is_err());
+        // too short
+        assert!(parse_key_hash("4ed4c811").is_err());
+    }
 }
