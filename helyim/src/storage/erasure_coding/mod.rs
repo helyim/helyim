@@ -30,11 +30,7 @@ pub struct EcVolume {
 }
 
 impl EcVolume {
-    pub fn new(
-        dir: FastStr,
-        collection: FastStr,
-        vid: VolumeId,
-    ) -> Result<EcVolume> {
+    pub fn new(dir: FastStr, collection: FastStr, vid: VolumeId) -> Result<EcVolume> {
         let base_filename = ec_shard_filename(&collection, &dir, vid);
         let ecx_file = fs::OpenOptions::new()
             .read(true)
