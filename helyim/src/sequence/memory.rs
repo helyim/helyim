@@ -40,7 +40,6 @@ impl Sequence for MemorySequencer {
 
     fn peek(&self) -> Result<u64> {
         let counter = self.counter.lock();
-
         Ok(*counter)
     }
 }

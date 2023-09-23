@@ -14,12 +14,10 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
-    directory::topology::{
-        data_center::DataCenterEventTx, data_node_loop, DataNode, DataNodeEventTx,
-    },
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
+    topology::{data_node_loop, DataCenterEventTx, DataNode, DataNodeEventTx},
 };
 
 #[derive(Debug, Serialize)]

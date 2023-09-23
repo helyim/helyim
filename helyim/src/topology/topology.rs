@@ -14,14 +14,14 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::{
-    directory::topology::{
-        collection::Collection, data_center::DataCenterEventTx, data_center_loop,
-        volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataCenter, DataNodeEventTx,
-    },
     errors::Result,
     rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{FileId, ReplicaPlacement, Ttl, VolumeId, VolumeInfo},
+    topology::{
+        collection::Collection, data_center_loop, volume_grow::VolumeGrowOption,
+        volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNodeEventTx,
+    },
 };
 
 #[derive(Serialize)]

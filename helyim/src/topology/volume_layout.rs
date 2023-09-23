@@ -3,9 +3,9 @@ use rand;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_grow::VolumeGrowOption, DataNodeEventTx},
     errors::Result,
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
+    topology::{volume_grow::VolumeGrowOption, DataNodeEventTx},
 };
 
 #[derive(Clone, Debug, Serialize)]

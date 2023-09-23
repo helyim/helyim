@@ -19,9 +19,9 @@ use tonic::transport::Channel;
 use tracing::info;
 
 use crate::{
-    directory::topology::RackEventTx,
     errors::Result,
     storage::{VolumeId, VolumeInfo},
+    topology::RackEventTx,
 };
 
 #[derive(Debug, Serialize)]

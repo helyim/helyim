@@ -5,9 +5,9 @@ use helyim_proto::{
 use tracing::{error, info, warn};
 
 use crate::{
-    directory::{topology::DataNodeEventTx, Topology, VolumeLayout},
     errors::Result,
     storage::VolumeId,
+    topology::{volume_layout::VolumeLayout, DataNodeEventTx, Topology},
 };
 
 impl Topology {

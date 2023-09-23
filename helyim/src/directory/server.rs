@@ -14,18 +14,18 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status, Streami
 use tracing::{debug, error, info};
 
 use crate::{
-    directory::{
-        api::{assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext},
-        topology::{
-            topology::{topology_loop, topology_vacuum_loop, TopologyEventTx},
-            volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
-        },
-        Topology, VolumeGrowth,
+    directory::api::{
+        assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext,
     },
     errors::Result,
     rt_spawn,
     sequence::Sequencer,
     storage::{ReplicaPlacement, VolumeInfo},
+    topology::{
+        topology_loop, topology_vacuum_loop,
+        volume_grow::{volume_growth_loop, VolumeGrowth, VolumeGrowthEventTx},
+        Topology, TopologyEventTx,
+    },
     util::get_or_default,
     PHRASE, STOP_INTERVAL,
 };

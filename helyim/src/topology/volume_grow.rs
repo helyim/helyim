@@ -11,11 +11,9 @@ use rand::{prelude::SliceRandom, random};
 use tracing::info;
 
 use crate::{
-    directory::topology::{
-        data_center::DataCenterEventTx, topology::TopologyEventTx, DataNodeEventTx, RackEventTx,
-    },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+    topology::{DataCenterEventTx, DataNodeEventTx, RackEventTx, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
