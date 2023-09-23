@@ -66,6 +66,9 @@ pub enum Error {
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
 
+    #[error("Snowflake error: {0}")]
+    Snowflake(#[from] sonyflake::Error),
+
     // http
     #[error("Invalid header value: {0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),

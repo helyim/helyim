@@ -24,7 +24,7 @@ use crate::{
     },
     errors::Result,
     rt_spawn,
-    sequence::MemorySequencer,
+    sequence::Sequencer,
     storage::{ReplicaPlacement, VolumeInfo},
     util::get_or_default,
     PHRASE, STOP_INTERVAL,
@@ -37,8 +37,7 @@ pub struct DirectoryServer {
     pub meta_folder: FastStr,
     pub default_replica_placement: ReplicaPlacement,
     pub volume_size_limit_mb: u64,
-    // pub preallocate: i64,
-    // pub pulse_seconds: i64,
+    pub pulse_seconds: u64,
     pub garbage_threshold: f64,
     pub topology: TopologyEventTx,
     pub volume_grow: VolumeGrowthEventTx,
@@ -57,13 +56,13 @@ impl DirectoryServer {
         pulse_seconds: u64,
         default_replica_placement: ReplicaPlacement,
         garbage_threshold: f64,
-        seq: MemorySequencer,
+        sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         // topology event loop
         let topology = Topology::new(
-            seq,
+            sequencer,
             volume_size_limit_mb * 1024 * 1024,
             pulse_seconds,
             shutdown_rx.clone(),
@@ -71,11 +70,10 @@ impl DirectoryServer {
         let (tx, rx) = unbounded();
         let topology_handle = rt_spawn(topology_loop(topology, rx));
         let topology = TopologyEventTx::new(tx);
-        let preallocate = (volume_size_limit_mb * (1 << 20)) as i64;
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
-            preallocate,
+            volume_size_limit_mb * (1 << 20),
             shutdown_rx.clone(),
         ));
 
@@ -91,6 +89,7 @@ impl DirectoryServer {
             volume_size_limit_mb,
             port,
             garbage_threshold,
+            pulse_seconds,
             default_replica_placement,
             meta_folder: FastStr::new(meta_folder),
             volume_grow,

@@ -8,7 +8,7 @@ pub use topology::{
 
 mod api;
 
-pub use crate::sequence::{MemorySequencer, Sequencer};
+pub use crate::sequence::{Sequence, Sequencer};
 
 mod server;
 pub use server::DirectoryServer;

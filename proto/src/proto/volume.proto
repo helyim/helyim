@@ -34,7 +34,7 @@ message VacuumVolumeCheckResponse {
 
 message VacuumVolumeCompactRequest {
   uint32 volume_id = 1;
-  int64 preallocate = 2;
+  uint64 preallocate = 2;
 }
 message VacuumVolumeCompactResponse {
 }

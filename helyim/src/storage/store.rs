@@ -269,7 +269,7 @@ impl Store {
         }
     }
 
-    pub async fn compact_volume(&self, vid: VolumeId, preallocate: i64) -> Result<()> {
+    pub async fn compact_volume(&self, vid: VolumeId, preallocate: u64) -> Result<()> {
         match self.find_volume(vid) {
             Some(volume) => {
                 // TODO: check disk status

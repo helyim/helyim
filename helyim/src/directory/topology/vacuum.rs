@@ -11,7 +11,7 @@ use crate::{
 };
 
 impl Topology {
-    pub async fn vacuum(&self, garbage_ratio: f64, preallocate: i64) -> Result<()> {
+    pub async fn vacuum(&self, garbage_ratio: f64, preallocate: u64) -> Result<()> {
         for (_name, collection) in self.collections.iter() {
             for (_key, volume_layout) in collection.volume_layouts.iter() {
                 let location = volume_layout.locations.clone();
@@ -61,7 +61,7 @@ async fn batch_vacuum_volume_compact(
     volume_layout: &VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
-    preallocate: i64,
+    preallocate: u64,
 ) -> Result<bool> {
     volume_layout.remove_from_writable(volume_id);
     let mut compact_success = true;

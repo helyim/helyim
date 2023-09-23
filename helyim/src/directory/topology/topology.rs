@@ -20,14 +20,14 @@ use crate::{
     },
     errors::Result,
     rt_spawn,
-    sequence::{MemorySequencer, Sequencer},
+    sequence::{Sequence, Sequencer},
     storage::{FileId, ReplicaPlacement, Ttl, VolumeId, VolumeInfo},
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct Topology {
     #[serde(skip)]
-    sequence: MemorySequencer,
+    sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
     pulse: u64,
     volume_size_limit: u64,
@@ -44,7 +44,7 @@ unsafe impl Send for Topology {}
 impl Clone for Topology {
     fn clone(&self) -> Self {
         Self {
-            sequence: self.sequence.clone(),
+            sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
@@ -57,13 +57,13 @@ impl Clone for Topology {
 
 impl Topology {
     pub fn new(
-        sequence: MemorySequencer,
+        sequencer: Sequencer,
         volume_size_limit: u64,
         pulse: u64,
         shutdown: async_broadcast::Receiver<()>,
     ) -> Topology {
         Topology {
-            sequence,
+            sequencer,
             collections: HashMap::new(),
             pulse,
             volume_size_limit,
@@ -150,7 +150,7 @@ impl Topology {
             layout.pick_for_write(option).await?
         };
 
-        let (file_id, count) = self.sequence.next_file_id(count);
+        let file_id = self.sequencer.next_file_id(count)?;
 
         let file_id = FileId {
             volume_id,
@@ -220,7 +220,7 @@ pub enum TopologyEvent {
     Topology(oneshot::Sender<Topology>),
     Vacuum {
         garbage_threshold: f64,
-        preallocate: i64,
+        preallocate: u64,
         tx: oneshot::Sender<Result<()>>,
     },
 }
@@ -274,7 +274,7 @@ pub async fn topology_loop(
                         let _ = tx.send(topology.data_centers.clone());
                     }
                     TopologyEvent::SetMaxSequence(seq) => {
-                        topology.sequence.set_max(seq);
+                        topology.sequencer.set_max(seq);
                     }
                     TopologyEvent::Topology(tx) => {
                         let _ = tx.send(topology.clone());
@@ -299,7 +299,7 @@ pub async fn topology_loop(
 pub async fn topology_vacuum_loop(
     topology: TopologyEventTx,
     garbage_threshold: f64,
-    preallocate: i64,
+    preallocate: u64,
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     info!("topology vacuum loop starting");
@@ -420,7 +420,7 @@ impl TopologyEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: i64) -> Result<()> {
+    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(TopologyEvent::Vacuum {
             garbage_threshold,

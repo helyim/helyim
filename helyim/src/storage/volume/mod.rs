@@ -613,7 +613,7 @@ impl VolumeEventTx {
         Ok(rx.await?)
     }
 
-    pub async fn compact(&self, preallocate: i64) -> Result<()> {
+    pub async fn compact(&self, preallocate: u64) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(VolumeEvent::Compact { preallocate, tx })?;
@@ -699,7 +699,7 @@ pub enum VolumeEvent {
         tx: oneshot::Sender<f64>,
     },
     Compact {
-        preallocate: i64,
+        preallocate: u64,
         tx: oneshot::Sender<Result<()>>,
     },
     CommitCompact {
