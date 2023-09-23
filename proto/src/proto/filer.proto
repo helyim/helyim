@@ -1,0 +1,264 @@
+syntax = "proto3";
+
+package filer;
+
+//////////////////////////////////////////////////
+
+service HelyimFiler {
+  rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
+  }
+
+  rpc ListEntries (ListEntriesRequest) returns (stream ListEntriesResponse) {
+  }
+
+  rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
+  }
+
+  rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
+  }
+
+  rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+  }
+
+  rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+  }
+
+  rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
+  }
+
+  rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
+  }
+
+  rpc CollectionList (CollectionListRequest) returns (CollectionListResponse) {
+  }
+
+  rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+  }
+
+  rpc Ping (PingRequest) returns (PingResponse) {
+  }
+
+  rpc KvGet (KvGetRequest) returns (KvGetResponse) {
+  }
+
+  rpc KvPut (KvPutRequest) returns (KvPutResponse) {
+  }
+}
+
+//////////////////////////////////////////////////
+
+message LookupDirectoryEntryRequest {
+  string directory = 1;
+  string name = 2;
+}
+
+message LookupDirectoryEntryResponse {
+  Entry entry = 1;
+}
+
+message ListEntriesRequest {
+  string directory = 1;
+  string prefix = 2;
+  string startFromFileName = 3;
+  bool inclusiveStartFrom = 4;
+  uint32 limit = 5;
+}
+
+message ListEntriesResponse {
+  Entry entry = 1;
+}
+
+message RemoteEntry {
+  string storage_name = 1;
+  int64 last_local_sync_ts_ns = 2;
+  string remote_e_tag = 3;
+  int64 remote_mtime = 4;
+  int64 remote_size = 5;
+}
+message Entry {
+  string name = 1;
+  bool is_directory = 2;
+  repeated FileChunk chunks = 3;
+  FuseAttributes attributes = 4;
+  map<string, bytes> extended = 5;
+  bytes hard_link_id = 7;
+  int32 hard_link_counter = 8; // only exists in hard link meta data
+  bytes content = 9; // if not empty, the file content
+  RemoteEntry remote_entry = 10;
+  int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
+}
+
+message FileChunk {
+  // to be deprecated
+  string file_id = 1;
+  int64 offset = 2;
+  uint64 size = 3;
+  int64 modified_ts_ns = 4;
+  string e_tag = 5;
+  // to be deprecated
+  string source_file_id = 6;
+  FileId fid = 7;
+  FileId source_fid = 8;
+  bytes cipher_key = 9;
+  bool is_compressed = 10;
+  // content is a list of FileChunks
+  bool is_chunk_manifest = 11;
+}
+
+message FileId {
+  uint32 volume_id = 1;
+  uint64 file_key = 2;
+  fixed32 cookie = 3;
+}
+
+message FuseAttributes {
+  uint64 file_size = 1;
+  // unix time in seconds
+  int64 mtime = 2;
+  uint32 file_mode = 3;
+  uint32 uid = 4;
+  uint32 gid = 5;
+  // unix time in seconds
+  int64 crtime = 6;
+  string mime = 7;
+  int32 ttl_sec = 10;
+  // for hdfs
+  string user_name = 11;
+  // for hdfs
+  repeated string group_name = 12;
+  string symlink_target = 13;
+  bytes md5 = 14;
+  uint32 rdev = 16;
+  uint64 inode = 17;
+}
+
+message CreateEntryRequest {
+  string directory = 1;
+  Entry entry = 2;
+  bool o_excl = 3;
+  bool is_from_other_cluster = 4;
+  repeated int32 signatures = 5;
+  bool skip_check_parent_directory = 6;
+}
+
+message CreateEntryResponse {
+  string error = 1;
+}
+
+message UpdateEntryRequest {
+  string directory = 1;
+  Entry entry = 2;
+  bool is_from_other_cluster = 3;
+  repeated int32 signatures = 4;
+}
+message UpdateEntryResponse {
+}
+
+message AppendToEntryRequest {
+  string directory = 1;
+  string entry_name = 2;
+  repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
+}
+
+message DeleteEntryRequest {
+  string directory = 1;
+  string name = 2;
+  // bool is_directory = 3;
+  bool is_delete_data = 4;
+  bool is_recursive = 5;
+  bool ignore_recursive_error = 6;
+  bool is_from_other_cluster = 7;
+  repeated int32 signatures = 8;
+}
+
+message DeleteEntryResponse {
+  string error = 1;
+}
+
+message AssignVolumeRequest {
+  int32 count = 1;
+  string collection = 2;
+  string replication = 3;
+  int32 ttl_sec = 4;
+  string data_center = 5;
+  string path = 6;
+  string rack = 7;
+  string data_node = 9;
+  string disk_type = 8;
+}
+
+message AssignVolumeResponse {
+  string file_id = 1;
+  int32 count = 4;
+  string auth = 5;
+  string collection = 6;
+  string replication = 7;
+  string error = 8;
+  Location location = 9;
+}
+
+message LookupVolumeRequest {
+  repeated string volume_ids = 1;
+}
+
+message Locations {
+  repeated Location locations = 1;
+}
+
+message Location {
+  string url = 1;
+  string public_url = 2;
+  uint32 grpc_port = 3;
+  string data_center = 4;
+}
+message LookupVolumeResponse {
+  map<string, Locations> locations_map = 1;
+}
+
+message Collection {
+  string name = 1;
+}
+message CollectionListRequest {
+  bool include_normal_volumes = 1;
+  bool include_ec_volumes = 2;
+}
+message CollectionListResponse {
+  repeated Collection collections = 1;
+}
+message DeleteCollectionRequest {
+  string collection = 1;
+}
+
+message DeleteCollectionResponse {
+}
+
+message PingRequest {
+  // default to ping itself
+  string target = 1;
+  string target_type = 2;
+}
+message PingResponse {
+  int64 start_time_ns = 1;
+  int64 remote_time_ns = 2;
+  int64 stop_time_ns = 3;
+}
+
+/////////////////////////
+// Key-Value operations
+/////////////////////////
+message KvGetRequest {
+  bytes key = 1;
+}
+message KvGetResponse {
+  bytes value = 1;
+  string error = 2;
+}
+message KvPutRequest {
+  bytes key = 1;
+  bytes value = 2;
+}
+message KvPutResponse {
+  string error = 1;
+}

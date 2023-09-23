@@ -8,7 +8,6 @@ use futures::{
     },
     StreamExt,
 };
-use rand;
 use serde::Serialize;
 use tokio::task::JoinHandle;
 use tracing::{error, info};

@@ -1,18 +1,14 @@
-mod ttl;
-pub use ttl::Ttl;
-
-mod version;
-pub use version::CURRENT_VERSION;
-
-mod replica_placement;
-pub use replica_placement::ReplicaPlacement;
-
+#![allow(dead_code)]
+#![allow(unused_variables)]
 mod api;
 mod crc;
 mod disk_location;
 
 mod errors;
 pub use errors::{NeedleError, VolumeError};
+
+mod file_id;
+pub use file_id::FileId;
 
 mod needle;
 pub use needle::{Needle, NeedleValue};
@@ -23,17 +19,26 @@ pub use needle_map::{NeedleMapType, NeedleMapper};
 mod needle_value_map;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
 
+mod erasure_coding;
+
+mod replica_placement;
+pub use replica_placement::ReplicaPlacement;
+
 mod server;
 pub use server::StorageServer;
 
 mod store;
 
-mod file_id;
-pub use file_id::FileId;
+mod types;
+pub use types::{NeedleId, VolumeId};
+
+mod ttl;
+pub use ttl::Ttl;
+
+mod version;
+pub use version::CURRENT_VERSION;
 
 mod volume;
 
 mod volume_info;
 pub use volume_info::VolumeInfo;
-
-pub type VolumeId = u32;
