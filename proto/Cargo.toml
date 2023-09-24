@@ -18,6 +18,7 @@ keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust", "protobuf", "
 
 [dependencies]
 prost.workspace = true
+serde = { workspace = true, features = ["derive"] }
 tonic.workspace = true
 
 [build-dependencies]

@@ -1,19 +1,29 @@
 use std::{collections::HashMap, fs, fs::File, os::unix::fs::OpenOptionsExt, time::SystemTime};
 
 use faststr::FastStr;
+use helyim_proto::VolumeInfo;
 
 use crate::{
     errors::Result,
+    proto::{maybe_load_volume_info, save_volume_info},
     storage::{
         version::{Version, VERSION3},
         VolumeId,
     },
 };
+use crate::storage::NeedleId;
 
 mod decoder;
 mod encoder;
+mod locate;
+mod volume_info;
 
 pub type ShardId = u8;
+pub const DATA_SHARDS_COUNT: u32 = 10;
+pub const PARITY_SHARDS_COUNT: u32 = 4;
+pub const TOTAL_SHARDS_COUNT: u32 = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
+pub const ERASURE_CODING_LARGE_BLOCK_SIZE: u64 = 1024 * 1024 * 1024;
+pub const ERASURE_CODING_SMALL_BLOCK_SIZE: u64 = 1024 * 1024;
 
 pub struct EcVolume {
     volume_id: VolumeId,
@@ -47,6 +57,18 @@ impl EcVolume {
             .mode(0o644)
             .open(format!("{}.ecj", base_filename))?;
 
+        let mut version = VERSION3;
+        let filename = format!("{}.vif", base_filename);
+        if let Some(volume_info) = maybe_load_volume_info(&filename)? {
+            version = volume_info.version as Version;
+        } else {
+            let volume_info = VolumeInfo {
+                version: version as u32,
+                ..Default::default()
+            };
+            save_volume_info(&filename, volume_info)?;
+        }
+
         Ok(EcVolume {
             volume_id: vid,
             dir,
@@ -58,10 +80,57 @@ impl EcVolume {
             shards: Vec::new(),
             shard_locations: HashMap::new(),
             shard_locations_refresh_time: SystemTime::now(),
-            version: VERSION3,
+            version,
         })
     }
+
+    pub fn add_shard(&mut self, shard: EcVolumeShard) -> bool {
+        for item in self.shards.iter() {
+            if shard.shard_id == item.shard_id {
+                return false;
+            }
+        }
+
+        self.shards.push(shard);
+        self.shards.sort_by(|left, right| {
+            left.volume_id
+                .cmp(&right.volume_id)
+                .then(left.shard_id.cmp(&right.shard_id))
+        });
+        true
+    }
+
+    pub fn delete_shard(&mut self, shard_id: ShardId) -> Option<EcVolumeShard> {
+        let mut idx = None;
+        for (i, shard) in self.shards.iter().enumerate() {
+            if shard.shard_id == shard_id {
+                idx = Some(i);
+            }
+        }
+        idx.map(|idx| self.shards.remove(idx))
+    }
+
+    pub fn find_shard(&self, shard_id: ShardId) -> Option<&EcVolumeShard> {
+        self.shards.iter().find(|shard| shard.shard_id == shard_id)
+    }
+
+    pub fn filename(&self) -> String {
+        ec_shard_filename(&self.collection, &self.dir, self.volume_id)
+    }
+
+    pub fn destroy(self) -> Result<()> {
+        let filename = self.filename();
+        for shard in self.shards {
+            shard.destroy()?;
+        }
+        fs::remove_file(format!("{}.ecx", filename))?;
+        fs::remove_file(format!("{}.ecj", filename))?;
+        fs::remove_file(format!("{}.vif", filename))?;
+        Ok(())
+    }
 }
+
+// fn search_needle_from_sorted_index(ecx_file: File, ecx_filesize: u64, needle_id: NeedleId, process_needle: Option<F>) -> Result<()>
 
 pub struct EcVolumeShard {
     shard_id: ShardId,

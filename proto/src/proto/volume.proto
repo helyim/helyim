@@ -51,3 +51,19 @@ message VacuumVolumeCleanupRequest {
 }
 message VacuumVolumeCleanupResponse {
 }
+
+// tired storage on volume servers
+message RemoteFile {
+  string backend_type = 1;
+  string backend_id = 2;
+  string key = 3;
+  uint64 offset = 4;
+  uint64 file_size = 5;
+  uint64 modified_time = 6;
+  string extension = 7;
+}
+message VolumeInfo {
+  repeated RemoteFile files = 1;
+  uint32 version = 2;
+  string replication = 3;
+}

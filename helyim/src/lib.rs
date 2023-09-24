@@ -7,6 +7,7 @@ mod errors;
 mod filer;
 mod images;
 mod operation;
+mod proto;
 
 pub mod storage;
 
