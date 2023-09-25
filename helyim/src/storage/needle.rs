@@ -23,6 +23,8 @@ use crate::{
 
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
 pub const NEEDLE_PADDING_SIZE: u32 = 8;
+pub const NEEDLE_ID_SIZE: u32 = 8;
+pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + 4 /* offset size */+ 4 /* size size*/;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
 pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;

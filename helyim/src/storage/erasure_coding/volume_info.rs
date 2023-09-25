@@ -1,6 +1,9 @@
 use faststr::FastStr;
-use crate::storage::erasure_coding::{ShardId, TOTAL_SHARDS_COUNT};
-use crate::storage::VolumeId;
+
+use crate::storage::{
+    erasure_coding::{ShardId, TOTAL_SHARDS_COUNT},
+    VolumeId,
+};
 
 pub struct ShardBits(u32);
 
@@ -21,7 +24,7 @@ impl ShardBits {
         let mut shards = Vec::new();
         for shard in 0..TOTAL_SHARDS_COUNT {
             let id = shard as ShardId;
-            if self.has_shard_id(id){
+            if self.has_shard_id(id) {
                 shards.push(id);
             }
         }
@@ -46,7 +49,6 @@ impl ShardBits {
     pub fn plus(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
-
 }
 pub struct EcVolumeInfo {
     volume_id: VolumeId,
@@ -55,12 +57,11 @@ pub struct EcVolumeInfo {
 }
 
 impl EcVolumeInfo {
-
     pub fn new(collection: FastStr, volume_id: VolumeId, shard_bits: ShardBits) -> Self {
         Self {
             volume_id,
             collection,
-            shard_bits
+            shard_bits,
         }
     }
 }

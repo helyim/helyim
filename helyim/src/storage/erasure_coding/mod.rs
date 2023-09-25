@@ -8,10 +8,9 @@ use crate::{
     proto::{maybe_load_volume_info, save_volume_info},
     storage::{
         version::{Version, VERSION3},
-        VolumeId,
+        NeedleId, VolumeId,
     },
 };
-use crate::storage::NeedleId;
 
 mod decoder;
 mod encoder;
@@ -19,6 +18,7 @@ mod locate;
 mod volume_info;
 
 pub type ShardId = u8;
+
 pub const DATA_SHARDS_COUNT: u32 = 10;
 pub const PARITY_SHARDS_COUNT: u32 = 4;
 pub const TOTAL_SHARDS_COUNT: u32 = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
@@ -130,7 +130,17 @@ impl EcVolume {
     }
 }
 
-// fn search_needle_from_sorted_index(ecx_file: File, ecx_filesize: u64, needle_id: NeedleId, process_needle: Option<F>) -> Result<()>
+fn search_needle_from_sorted_index<F>(
+    ecx_file: File,
+    ecx_filesize: u64,
+    needle_id: NeedleId,
+    process_needle: Option<F>,
+) -> Result<(u32, u32)>
+where
+    F: FnMut(&mut File, u64) -> Result<()>,
+{
+    todo!()
+}
 
 pub struct EcVolumeShard {
     shard_id: ShardId,
