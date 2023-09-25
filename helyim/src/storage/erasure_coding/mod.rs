@@ -1,15 +1,32 @@
-use std::{collections::HashMap, fs, fs::File, os::unix::fs::OpenOptionsExt, time::SystemTime};
+use std::{
+    collections::HashMap,
+    fs,
+    fs::File,
+    io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::{FileExt, OpenOptionsExt},
+    sync::Arc,
+    time::SystemTime,
+};
 
+use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use helyim_proto::VolumeInfo;
+use parking_lot::Mutex;
 
 use crate::{
     errors::Result,
     proto::{maybe_load_volume_info, save_volume_info},
     storage::{
+        erasure_coding::locate::{locate_data, Interval},
+        index_entry,
+        needle::{
+            actual_offset, actual_size, NEEDLE_HEADER_SIZE, NEEDLE_ID_SIZE, NEEDLE_MAP_ENTRY_SIZE,
+            OFFSET_SIZE, SIZE_SIZE, TOMBSTONE_FILE_SIZE,
+        },
         version::{Version, VERSION3},
-        NeedleId, VolumeId,
+        NeedleError, NeedleId, NeedleValue, VolumeId,
     },
+    util::file_exists,
 };
 
 mod decoder;
@@ -36,7 +53,7 @@ pub struct EcVolume {
     shard_locations: HashMap<ShardId, Vec<FastStr>>,
     shard_locations_refresh_time: SystemTime,
     version: Version,
-    ecj_file: File,
+    ecj_file: Arc<Mutex<File>>,
 }
 
 impl EcVolume {
@@ -76,7 +93,7 @@ impl EcVolume {
             ecx_file,
             ecx_filesize,
             ecx_created_at,
-            ecj_file,
+            ecj_file: Arc::new(Mutex::new(ecj_file)),
             shards: Vec::new(),
             shard_locations: HashMap::new(),
             shard_locations_refresh_time: SystemTime::now(),
@@ -114,6 +131,96 @@ impl EcVolume {
         self.shards.iter().find(|shard| shard.shard_id == shard_id)
     }
 
+    pub fn locate_ec_shard_needle<F>(
+        &self,
+        needle_id: NeedleId,
+        version: Version,
+    ) -> Result<(NeedleValue, Vec<Interval>)>
+    where
+        F: FnMut(&File, u64) -> Result<()>,
+    {
+        let needle_value = self.find_needle_from_ecx::<F>(needle_id)?;
+        let shard = &self.shards[0];
+        let intervals = locate_data(
+            ERASURE_CODING_LARGE_BLOCK_SIZE,
+            ERASURE_CODING_SMALL_BLOCK_SIZE,
+            shard.ecd_filesize * DATA_SHARDS_COUNT as u64,
+            actual_offset(needle_value.offset),
+            actual_size(needle_value.size),
+        );
+        Ok((needle_value, intervals))
+    }
+
+    pub fn find_needle_from_ecx<F>(&self, needle_id: NeedleId) -> Result<NeedleValue>
+    where
+        F: FnMut(&File, u64) -> Result<()>,
+    {
+        search_needle_from_sorted_index::<F>(
+            self.volume_id,
+            &self.ecx_file,
+            self.ecx_filesize,
+            needle_id,
+            None,
+        )
+    }
+
+    pub fn delete_needle_from_ecx(&mut self, needle_id: NeedleId) -> Result<()> {
+        search_needle_from_sorted_index(
+            self.volume_id,
+            &self.ecx_file,
+            self.ecx_filesize,
+            needle_id,
+            Some(mark_needle_deleted),
+        )?;
+
+        let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
+        buf.put_u64(needle_id);
+
+        let mut ecj_file = self.ecj_file.lock();
+        ecj_file.seek(SeekFrom::End(0))?;
+        ecj_file.write_all(&buf)?;
+        Ok(())
+    }
+
+    fn rebuild_ecx_file(vid: VolumeId, base_filename: &str) -> Result<()> {
+        let ecj_filename = format!("{}.ecj", base_filename);
+        if !file_exists(&ecj_filename)? {
+            return Ok(());
+        }
+        let ecx_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .mode(0o644)
+            .open(format!("{}.ecx", base_filename))?;
+        let metadata = ecx_file.metadata()?;
+        let ecx_filesize = metadata.len();
+
+        let mut ecj_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .mode(0o644)
+            .open(&ecj_filename)?;
+        let mut buf = [0u8; NEEDLE_ID_SIZE as usize];
+
+        loop {
+            let n = ecj_file.read(&mut buf)?;
+            if n != NEEDLE_ID_SIZE as usize {
+                break;
+            }
+            let needle_id = (&buf[..]).get_u64();
+            search_needle_from_sorted_index(
+                vid,
+                &ecx_file,
+                ecx_filesize,
+                needle_id,
+                Some(mark_needle_deleted),
+            )?;
+        }
+
+        fs::remove_file(&ecj_filename)?;
+        Ok(())
+    }
+
     pub fn filename(&self) -> String {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
     }
@@ -131,15 +238,34 @@ impl EcVolume {
 }
 
 fn search_needle_from_sorted_index<F>(
-    ecx_file: File,
+    vid: VolumeId,
+    ecx_file: &File,
     ecx_filesize: u64,
     needle_id: NeedleId,
     process_needle: Option<F>,
-) -> Result<(u32, u32)>
+) -> Result<NeedleValue>
 where
-    F: FnMut(&mut File, u64) -> Result<()>,
+    F: FnMut(&File, u64) -> Result<()>,
 {
-    todo!()
+    let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE as usize];
+    let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_MAP_ENTRY_SIZE as u64);
+    while low < high {
+        let middle = (low + high) / 2;
+        ecx_file.read_at(&mut buf, middle * NEEDLE_MAP_ENTRY_SIZE as u64)?;
+        let (key, offset, size) = index_entry(&buf);
+        if key == needle_id {
+            if let Some(mut process_needle) = process_needle {
+                process_needle(ecx_file, middle * NEEDLE_HEADER_SIZE as u64)?;
+            }
+            return Ok(NeedleValue { offset, size });
+        }
+        if key < needle_id {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Err(NeedleError::NotFound(vid, needle_id).into())
 }
 
 pub struct EcVolumeShard {
@@ -203,4 +329,11 @@ fn ec_shard_base_filename(collection: &str, volume_id: VolumeId) -> String {
 
 fn to_ext(ec_idx: ShardId) -> String {
     format!(".ec{:02}", ec_idx)
+}
+
+fn mark_needle_deleted(file: &File, offset: u64) -> Result<()> {
+    let mut buf = vec![0u8; SIZE_SIZE as usize];
+    buf.put_u32(TOMBSTONE_FILE_SIZE.wrapping_neg() as u32);
+    file.write_all_at(&buf, offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64)?;
+    Ok(())
 }

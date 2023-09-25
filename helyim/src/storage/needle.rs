@@ -21,10 +21,13 @@ use crate::{
     },
 };
 
+pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
 pub const NEEDLE_PADDING_SIZE: u32 = 8;
 pub const NEEDLE_ID_SIZE: u32 = 8;
-pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + 4 /* offset size */+ 4 /* size size*/;
+pub const OFFSET_SIZE: u32 = 4;
+pub const SIZE_SIZE: u32 = 4;
+pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
 pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
@@ -90,7 +93,7 @@ impl Display for Needle {
     }
 }
 
-pub fn actual_size(size: u32) -> u32 {
+pub fn actual_size(size: u32) -> u64 {
     let left = (NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE;
     let padding = if left > 0 {
         NEEDLE_PADDING_SIZE - left
@@ -98,7 +101,7 @@ pub fn actual_size(size: u32) -> u32 {
         0
     };
 
-    NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE + padding
+    (NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE + padding) as u64
 }
 
 pub fn actual_offset(offset: u32) -> u64 {
@@ -215,7 +218,7 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> Result<(u32, u32)> {
+    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> Result<()> {
         if version != CURRENT_VERSION {
             return Err(anyhow!("no supported version"));
         }
@@ -274,7 +277,7 @@ impl Needle {
         buf.put_slice(&vec![0; padding as usize]);
         w.write_all(&buf)?;
 
-        Ok((self.data_size, actual_size(self.size)))
+        Ok(())
     }
 
     pub fn read_data(
@@ -382,7 +385,7 @@ impl Needle {
         format!("{}{}{}{}", buf[0], buf[1], buf[2], buf[3])
     }
 
-    pub fn disk_size(&self) -> u32 {
+    pub fn disk_size(&self) -> u64 {
         actual_size(self.size)
     }
 

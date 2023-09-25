@@ -22,6 +22,19 @@ pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)
     }
 }
 
+pub fn file_exists(filename: &str) -> Result<bool> {
+    match metadata(filename) {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            if err.kind() == ErrorKind::NotFound {
+                Ok(false)
+            } else {
+                Err(err.into())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

@@ -253,7 +253,7 @@ impl Volume {
                         };
                         compact_nm.set(needle.id, nv)?;
                         needle.append(&mut dst, version)?;
-                        new_offset += needle.disk_size();
+                        new_offset += needle.disk_size() as u32;
                     }
                 }
                 Ok(())
@@ -322,7 +322,7 @@ impl Volume {
                 };
                 compact_nm.set(needle.id, nv)?;
                 needle.append(&mut compact_data_file, version)?;
-                new_offset += needle.disk_size();
+                new_offset += needle.disk_size() as u32;
             }
 
             Ok(())

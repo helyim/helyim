@@ -5,7 +5,7 @@ use faststr::FastStr;
 pub mod macros;
 
 mod file;
-pub use file::check_file;
+pub use file::{check_file, file_exists};
 
 mod http;
 
