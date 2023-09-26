@@ -1,7 +1,10 @@
 use std::fmt::{Display, Formatter};
 
+use crate::storage::needle::TOMBSTONE_FILE_SIZE;
+
 pub type VolumeId = u32;
 pub type NeedleId = u64;
+pub type Cookie = u32;
 
 #[derive(Copy, Clone)]
 pub enum DiskType {
@@ -18,4 +21,8 @@ impl Display for DiskType {
             DiskType::Ssd => write!(f, "solid state drive"),
         }
     }
+}
+
+pub fn needle_is_deleted(size: u32) -> bool {
+    size == TOMBSTONE_FILE_SIZE.wrapping_neg() as u32
 }

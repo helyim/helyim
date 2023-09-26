@@ -18,6 +18,7 @@ use crate::{
         crc,
         ttl::Ttl,
         version::{Version, CURRENT_VERSION, VERSION2},
+        NeedleId,
     },
 };
 
@@ -56,6 +57,22 @@ pub struct NeedleValue {
     pub offset: u32,
     /// needle data size
     pub size: u32,
+}
+
+impl NeedleValue {
+    pub fn deleted() -> Self {
+        Self {
+            offset: 0,
+            size: TOMBSTONE_FILE_SIZE.wrapping_neg() as u32,
+        }
+    }
+    pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
+        let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
+        (&mut buf[..]).put_u64(needle_id);
+        (&mut buf[..]).put_u32(self.offset);
+        (&mut buf[..]).put_u32(self.size);
+        buf
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

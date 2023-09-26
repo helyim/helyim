@@ -40,7 +40,7 @@ mod tests {
     use std::{
         fs,
         fs::{metadata, read, write},
-        io::{ErrorKind, Write},
+        io::{ErrorKind, Read, Write},
     };
 
     #[test]
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     pub fn test_file_override() {
-        let path = "/tmp/tmp_file";
+        let path = "/tmp/tmp_file_override";
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -61,5 +61,19 @@ mod tests {
         file.write_all(b"hello world").unwrap();
         write(path, b"hello helyim").unwrap();
         assert_eq!(read(path).unwrap(), b"hello helyim");
+    }
+
+    #[test]
+    pub fn test_eof() {
+        let path = "/tmp/tmp_file_eof";
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .read(true)
+            .open(path)
+            .unwrap();
+        let mut buf = [0u8; 8];
+        let n = file.read(&mut buf).unwrap();
+        assert_eq!(n, 0);
     }
 }

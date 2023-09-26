@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     fs::File,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::{FileExt, OpenOptionsExt},
     sync::Arc,
     time::SystemTime,
@@ -203,9 +203,10 @@ impl EcVolume {
         let mut buf = [0u8; NEEDLE_ID_SIZE as usize];
 
         loop {
-            let n = ecj_file.read(&mut buf)?;
-            if n != NEEDLE_ID_SIZE as usize {
-                break;
+            if let Err(err) = ecj_file.read_exact(&mut buf) {
+                if err.kind() == ErrorKind::UnexpectedEof {
+                    break;
+                }
             }
             let needle_id = (&buf[..]).get_u64();
             search_needle_from_sorted_index(

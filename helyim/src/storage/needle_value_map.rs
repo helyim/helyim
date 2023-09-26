@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
-use crate::storage::needle::NeedleValue;
+use crate::{errors::Result, storage::needle::NeedleValue};
 
 pub trait NeedleValueMap: Send {
     fn set(&mut self, key: u64, value: NeedleValue) -> Option<NeedleValue>;
     fn delete(&mut self, key: u64) -> Option<NeedleValue>;
     fn get(&self, key: u64) -> Option<NeedleValue>;
+
+    fn ascending_visit<F>(&self, visit: F) -> Result<()>
+    where
+        F: Fn(NeedleValue) -> Result<()>;
 }
 
 #[derive(Default)]
@@ -30,5 +34,9 @@ impl NeedleValueMap for MemoryNeedleValueMap {
 
     fn get(&self, key: u64) -> Option<NeedleValue> {
         self.hm.get(&key).copied()
+    }
+
+    fn ascending_visit<F>(&self, visit: F) -> Result<()> where F: Fn(NeedleValue) -> Result<()> {
+        todo!()
     }
 }
