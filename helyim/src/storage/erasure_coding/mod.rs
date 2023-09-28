@@ -334,7 +334,7 @@ fn to_ext(ec_idx: ShardId) -> String {
 
 fn mark_needle_deleted(file: &File, offset: u64) -> Result<()> {
     let mut buf = vec![0u8; SIZE_SIZE as usize];
-    buf.put_u32(TOMBSTONE_FILE_SIZE.wrapping_neg() as u32);
+    buf.put_i32(TOMBSTONE_FILE_SIZE);
     file.write_all_at(&buf, offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64)?;
     Ok(())
 }

@@ -29,9 +29,10 @@ use crate::{
         needle_map::{index_entry, NeedleMapType, NeedleMapper},
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
+        types::{Offset, Size},
         version::{Version, CURRENT_VERSION},
         volume_info::VolumeInfo,
-        NeedleError, VolumeError, VolumeId,
+        NeedleError, NeedleId, VolumeError, VolumeId,
     },
     util::time::{get_time, now},
 };
@@ -266,14 +267,14 @@ impl Volume {
         Ok(needle)
     }
 
-    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<u32> {
+    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
         if self.readonly {
             return Err(anyhow!("volume {} is read only", self.id));
         }
 
         let mut nv = match self.needle_mapper.get(needle.id) {
             Some(nv) => nv,
-            None => return Ok(0),
+            None => return Ok(Size(0)),
         };
         nv.offset = 0;
 
@@ -502,7 +503,7 @@ impl VolumeEventTx {
         rx.await?
     }
 
-    pub async fn delete_needle(&self, needle: Needle) -> Result<u32> {
+    pub async fn delete_needle(&self, needle: Needle) -> Result<Size> {
         let (tx, rx) = oneshot::channel();
         self.0
             .unbounded_send(VolumeEvent::DeleteNeedle { needle, tx })?;
@@ -645,7 +646,7 @@ pub enum VolumeEvent {
     },
     DeleteNeedle {
         needle: Needle,
-        tx: oneshot::Sender<Result<u32>>,
+        tx: oneshot::Sender<Result<Size>>,
     },
     ReadNeedle {
         needle: Needle,
@@ -921,9 +922,9 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
 pub fn verify_needle_integrity(
     data_file: &mut File,
     version: Version,
-    key: u64,
-    offset: u32,
-    size: u32,
+    key: NeedleId,
+    offset: Offset,
+    size: Size,
 ) -> Result<()> {
     let mut needle = Needle::default();
     needle.read_data(data_file, offset, size, version)?;

@@ -11,6 +11,7 @@ use crate::{
         disk_location::DiskLocation,
         needle::Needle,
         needle_map::NeedleMapType,
+        types::Size,
         volume::{volume_loop, Volume, VolumeEventTx},
         ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
@@ -79,10 +80,10 @@ impl Store {
         None
     }
 
-    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<u32> {
+    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume(vid) {
             Some(volume) => volume.delete_needle(needle).await,
-            None => Ok(0),
+            None => Ok(Size(0)),
         }
     }
 

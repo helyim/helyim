@@ -47,6 +47,7 @@ use crate::{
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
         store::Store,
+        types::Size,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
@@ -194,7 +195,7 @@ pub async fn delete_handler(
     }
 
     let size = replicate_delete(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
-    let size = json!({ "size": size });
+    let size = json!({ "size": size.0 });
 
     Ok(FallbackResponse::Delete(Json(size)))
 }
@@ -205,7 +206,7 @@ async fn replicate_delete(
     vid: VolumeId,
     needle: Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<Size> {
     let mut store = ctx.store.lock().await;
     let local_url = format!("{}:{}", store.ip, store.port);
     let size = store.delete_volume_needle(vid, needle).await?;

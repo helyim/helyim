@@ -16,7 +16,7 @@ use crate::{
         },
         index_entry,
         needle::{actual_offset, actual_size, NEEDLE_ID_SIZE, NEEDLE_MAP_ENTRY_SIZE},
-        types::needle_is_deleted,
+        types::{Offset, Size},
         version::Version,
         volume::{SuperBlock, DATA_FILE_SUFFIX, SUPER_BLOCK_SIZE},
         NeedleId, NeedleValue,
@@ -53,8 +53,8 @@ fn find_data_filesize(base_filename: &str) -> Result<u64> {
     let mut data_filesize = 0;
     iterate_ecx_file(
         base_filename,
-        Some(|needle_id, offset, size| -> Result<()> {
-            if needle_is_deleted(size) {
+        Some(|needle_id, offset, size: Size| -> Result<()> {
+            if size.is_deleted() {
                 return Ok(());
             }
             let entry_stop_offset = actual_offset(offset) + actual_size(size);
@@ -66,6 +66,7 @@ fn find_data_filesize(base_filename: &str) -> Result<u64> {
     )?;
     Ok(data_filesize)
 }
+
 fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
     let mut data_file = fs::OpenOptions::new()
         .read(true)
@@ -79,7 +80,7 @@ fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
 
 fn iterate_ecx_file<F>(base_filename: &str, mut process_needle: Option<F>) -> Result<()>
 where
-    F: FnMut(NeedleId, u32, u32) -> Result<()>,
+    F: FnMut(NeedleId, Offset, Size) -> Result<()>,
 {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)

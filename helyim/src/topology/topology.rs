@@ -154,7 +154,7 @@ impl Topology {
         let file_id = FileId {
             volume_id,
             key: file_id,
-            hash_code: rand::random::<u32>(),
+            hash: rand::random::<u32>(),
         };
         Ok((file_id, count, nodes[0].clone()))
     }

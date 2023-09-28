@@ -169,7 +169,7 @@ impl Volume {
                 );
                 (&mut index_entry_buf[0..8]).put_u64(key);
                 (&mut index_entry_buf[8..12]).put_u32(value.offset);
-                (&mut index_entry_buf[12..16]).put_u32(value.size);
+                (&mut index_entry_buf[12..16]).put_u32(value.size.0 as u32);
 
                 let mut offset = new_data_file.seek(SeekFrom::End(0))?;
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
