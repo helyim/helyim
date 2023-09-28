@@ -906,7 +906,7 @@ pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Re
     let last_index_entry =
         read_index_entry_at_offset(index_file, index_size - NEEDLE_INDEX_SIZE as u64)?;
     let (key, offset, size) = index_entry(&last_index_entry);
-    if offset == 0 {
+    if offset == 0 || size.is_deleted() {
         return Ok(());
     }
     let version = volume.version();
@@ -942,8 +942,6 @@ pub fn verify_needle_integrity(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use bytes::Bytes;
     use faststr::FastStr;
 
@@ -955,10 +953,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
-        let path = Path::new("/tmp/helyim");
-        if path.exists() {
-            std::fs::remove_dir_all("/tmp/helyim").unwrap();
-        }
+        std::fs::remove_dir_all("/tmp/helyim").unwrap();
         std::fs::create_dir("/tmp/helyim").unwrap();
 
         let mut volume = Volume::new(
@@ -973,7 +968,7 @@ mod tests {
         .unwrap();
 
         let fid = "1b1f52120";
-        let data = Bytes::from_static(b"Hello world");
+        let data = Bytes::from_static(b"Hello World");
         let checksum = crc::checksum(&data);
         let mut needle = Needle {
             data,

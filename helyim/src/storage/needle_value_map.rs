@@ -27,19 +27,21 @@ impl MemoryNeedleValueMap {
         Self::default()
     }
 
-    pub fn load_from_index(&mut self, index_filename: &str) -> Result<()> {
+    pub fn load_from_index(index_filename: &str) -> Result<Self> {
+        let mut nm = Self::new();
         let index_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
             .open(index_filename)?;
         walk_index_file(&index_file, |needle_id, offset, size| -> Result<()> {
             if offset == 0 || size.is_deleted() {
-                self.delete(needle_id);
+                nm.delete(needle_id);
             } else {
-                self.set(needle_id, NeedleValue { offset, size });
+                nm.set(needle_id, NeedleValue { offset, size });
             }
             Ok(())
-        })
+        })?;
+        Ok(nm)
     }
 }
 

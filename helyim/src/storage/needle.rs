@@ -19,7 +19,7 @@ use crate::{
         ttl::Ttl,
         types::{Cookie, Offset, Size},
         version::{Version, CURRENT_VERSION, VERSION2},
-        NeedleId,
+        NeedleError, NeedleId,
     },
 };
 
@@ -72,7 +72,7 @@ impl NeedleValue {
         let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
         (&mut buf[..]).put_u64(needle_id);
         (&mut buf[..]).put_u32(self.offset);
-        (&mut buf[..]).put_u32(self.size.0 as u32);
+        (&mut buf[..]).put_i32(self.size.0);
         buf
     }
 }
@@ -141,7 +141,7 @@ impl Needle {
     pub fn parse_needle_header(&mut self, mut bytes: &[u8]) {
         self.cookie = bytes.get_u32();
         self.id = bytes.get_u64();
-        let size = Size(bytes.get_u32() as i32);
+        self.size = Size(bytes.get_i32());
         debug!(
             "parse needle header success, cookie: {}, id: {}, size: {}",
             self.cookie, self.id, self.size
@@ -250,7 +250,7 @@ impl Needle {
         let mut buf = vec![];
         buf.put_u32(self.cookie);
         buf.put_u64(self.id);
-        buf.put_u32(self.size.0 as u32);
+        buf.put_i32(self.size.0);
 
         if self.data_size > 0 {
             buf.put_u32(self.data_size);
@@ -305,11 +305,7 @@ impl Needle {
         self.parse_needle_header(&bytes);
 
         if self.size != size {
-            return Err(anyhow!(
-                "file entry not found. needle {} memory {}",
-                self.size,
-                size
-            ));
+            return Err(NeedleError::NotFound(0, self.id).into());
         }
 
         if version == VERSION2 {

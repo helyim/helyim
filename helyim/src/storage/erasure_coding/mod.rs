@@ -155,18 +155,11 @@ impl EcVolume {
     where
         F: FnMut(&File, u64) -> Result<()>,
     {
-        search_needle_from_sorted_index::<F>(
-            self.volume_id,
-            &self.ecx_file,
-            self.ecx_filesize,
-            needle_id,
-            None,
-        )
+        search_needle_from_sorted_index::<F>(&self.ecx_file, self.ecx_filesize, needle_id, None)
     }
 
     pub fn delete_needle_from_ecx(&mut self, needle_id: NeedleId) -> Result<()> {
         search_needle_from_sorted_index(
-            self.volume_id,
             &self.ecx_file,
             self.ecx_filesize,
             needle_id,
@@ -182,7 +175,7 @@ impl EcVolume {
         Ok(())
     }
 
-    fn rebuild_ecx_file(vid: VolumeId, base_filename: &str) -> Result<()> {
+    fn rebuild_ecx_file(base_filename: &str) -> Result<()> {
         let ecj_filename = format!("{}.ecj", base_filename);
         if !file_exists(&ecj_filename)? {
             return Ok(());
@@ -210,7 +203,6 @@ impl EcVolume {
             }
             let needle_id = (&buf[..]).get_u64();
             search_needle_from_sorted_index(
-                vid,
                 &ecx_file,
                 ecx_filesize,
                 needle_id,
@@ -239,7 +231,6 @@ impl EcVolume {
 }
 
 fn search_needle_from_sorted_index<F>(
-    vid: VolumeId,
     ecx_file: &File,
     ecx_filesize: u64,
     needle_id: NeedleId,
@@ -266,7 +257,7 @@ where
             high = middle;
         }
     }
-    Err(NeedleError::NotFound(vid, needle_id).into())
+    Err(NeedleError::NotFound(0, needle_id).into())
 }
 
 pub struct EcVolumeShard {
