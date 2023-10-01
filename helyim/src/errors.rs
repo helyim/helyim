@@ -26,6 +26,9 @@ pub enum Error {
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
 
+    #[error("Erasure coding error: {0}")]
+    ErasureCoding(#[from] reed_solomon_erasure::Error),
+
     /// storage errors
     #[error("Invalid replica placement: {0}")]
     ParseReplicaPlacement(String),
@@ -59,7 +62,6 @@ pub enum Error {
     UnsupportedVersion(u8),
     #[error("Nom error: {0}")]
     Nom(String),
-
     #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
 

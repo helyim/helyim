@@ -12,6 +12,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use helyim_proto::VolumeInfo;
 use parking_lot::Mutex;
+use futures::channel::mpsc::UnboundedSender;
 
 use crate::{
     errors::Result,
@@ -30,7 +31,13 @@ use crate::{
 };
 
 mod decoder;
+pub use decoder::{find_data_filesize, write_data_file, write_idx_file_from_ec_index};
+
 mod encoder;
+pub use encoder::{rebuild_ec_files, write_ec_files, write_sorted_file_from_idx};
+
+use crate::errors::Error;
+
 mod locate;
 mod volume_info;
 
@@ -303,7 +310,7 @@ impl EcVolumeShard {
     }
 }
 
-fn ec_shard_filename(collection: &str, dir: &str, volume_id: VolumeId) -> String {
+pub fn ec_shard_filename(collection: &str, dir: &str, volume_id: VolumeId) -> String {
     if collection.is_empty() {
         format!("{}{}", dir, volume_id)
     } else {
@@ -311,7 +318,7 @@ fn ec_shard_filename(collection: &str, dir: &str, volume_id: VolumeId) -> String
     }
 }
 
-fn ec_shard_base_filename(collection: &str, volume_id: VolumeId) -> String {
+pub fn ec_shard_base_filename(collection: &str, volume_id: VolumeId) -> String {
     if collection.is_empty() {
         format!("{}", volume_id)
     } else {
@@ -319,7 +326,7 @@ fn ec_shard_base_filename(collection: &str, volume_id: VolumeId) -> String {
     }
 }
 
-fn to_ext(ec_idx: ShardId) -> String {
+pub fn to_ext(ec_idx: ShardId) -> String {
     format!(".ec{:02}", ec_idx)
 }
 
@@ -328,4 +335,64 @@ fn mark_needle_deleted(file: &File, offset: u64) -> Result<()> {
     buf.put_i32(TOMBSTONE_FILE_SIZE);
     file.write_all_at(&buf, offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64)?;
     Ok(())
+}
+
+pub fn rebuild_ecx_file(base_filename: &str) -> Result<()> {
+    let ecj_filename = format!("{}.ecj", base_filename);
+    if !file_exists(&ecj_filename)? {
+        return Ok(());
+    }
+    let ecx_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .mode(0o644)
+        .open(format!("{}.ecx", base_filename))?;
+    let ecx_filesize = ecx_file.metadata()?.len();
+
+    let mut ecj_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .mode(0o644)
+        .open(format!("{}.ecj", base_filename))?;
+    let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
+
+    loop {
+        if ecj_file.read_exact(&mut buf).is_err() {
+            break;
+        }
+        let needle_id = (&buf[..]).get_u64();
+        if let Err(err) = search_needle_from_sorted_index(
+            &ecx_file,
+            ecx_filesize,
+            needle_id,
+            Some(mark_needle_deleted),
+        ) {
+            if !matches!(err, Error::Needle(NeedleError::NotFound(_, _))) {
+                return Err(err);
+            }
+        }
+    }
+
+    fs::remove_file(ecj_filename)?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct EcVolumeEventTx(UnboundedSender<EcVolumeEvent>);
+
+impl EcVolumeEventTx {
+    pub fn new(tx: UnboundedSender<EcVolumeEvent>) -> Self {
+        Self(tx)
+    }
+
+    pub fn destroy(&self) -> Result<()>{
+        self.0
+            .unbounded_send(EcVolumeEvent::Destroy)?;
+        Ok(())
+    }
+}
+
+pub enum EcVolumeEvent {
+    Destroy
 }

@@ -14,6 +14,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{
+        erasure_coding::EcVolumeEventTx,
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
@@ -26,6 +27,7 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, VolumeEventTx>,
+    pub ec_volumes: HashMap<VolumeId, EcVolumeEventTx>,
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
@@ -42,6 +44,7 @@ impl DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
+            ec_volumes: HashMap::new(),
             shutdown: shutdown_rx,
         }
     }
@@ -89,11 +92,26 @@ impl DiskLocation {
         }
         Ok(())
     }
+
+    // erasure coding
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<&EcVolumeEventTx> {
+        self.ec_volumes.get(&vid)
+    }
+
+    pub fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
+        if let Some(volume) = self.ec_volumes.remove(&vid) {
+            volume.destroy()?;
+        }
+        Ok(())
+    }
 }
 
 fn parse_volume_id(path: &Path) -> Result<(VolumeId, &str)> {
     if path.is_dir() {
-        return Err(anyhow!("invalid data file: {}", path.to_str().unwrap()));
+        return Err(anyhow!(
+            "invalid data file: {}",
+            path.to_str().unwrap_or_default()
+        ));
     }
 
     let name = path.file_name().unwrap().to_str().unwrap();

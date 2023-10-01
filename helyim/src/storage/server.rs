@@ -1,4 +1,6 @@
-use std::{result::Result as StdResult, sync::Arc, time::Duration};
+use std::{
+    ffi::OsString, fs, path::Path, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration,
+};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
@@ -10,9 +12,16 @@ use helyim_proto::{
     AllocateVolumeRequest, AllocateVolumeResponse, HeartbeatResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse,
+    VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
+    VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
+    VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
+    VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
+    VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
+    VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
+    VolumeEcShardsUnmountResponse, VolumeInfo,
 };
 use tokio::task::JoinHandle;
+use tokio_stream::Stream;
 use tonic::{
     transport::{Channel, Server as TonicServer},
     Request, Response, Status, Streaming,
@@ -22,15 +31,21 @@ use tracing::{error, info};
 use crate::{
     errors::Result,
     operation::{looker_loop, Looker, LookerEventTx},
+    proto::save_volume_info,
     rt_spawn,
     storage::{
         api::{
             fallback_handler, status_handler, volume_clean_handler, volume_commit_compact_handler,
             StorageContext,
         },
+        erasure_coding::{
+            ec_shard_base_filename, rebuild_ec_files, rebuild_ecx_file, to_ext, write_ec_files,
+            write_sorted_file_from_idx, ShardId,
+        },
         needle_map::NeedleMapType,
         store::Store,
     },
+    util::file_exists,
     STOP_INTERVAL,
 };
 
@@ -340,5 +355,181 @@ impl VolumeServer for StorageGrpcServer {
         info!("vacuum volume {} cleanup", request.volume_id);
         store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
+    }
+
+    async fn volume_ec_shards_generate(
+        &self,
+        request: Request<VolumeEcShardsGenerateRequest>,
+    ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+        match store.find_volume(request.volume_id) {
+            Some(volume) => {
+                let base_filename = volume.filename().await?;
+                let collection = volume.collection().await?;
+                if collection != request.collection {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid collection, expect: {collection}"
+                    )));
+                }
+                write_ec_files(&base_filename)?;
+                write_sorted_file_from_idx(&base_filename, ".ecx")?;
+                let volume_info = VolumeInfo {
+                    version: volume.version().await? as u32,
+                    ..Default::default()
+                };
+                save_volume_info(&format!("{}.vif", base_filename), volume_info)?;
+                Ok(Response::new(VolumeEcShardsGenerateResponse::default()))
+            }
+            None => Err(Status::not_found(format!(
+                "volume {} is not found.",
+                request.volume_id
+            ))),
+        }
+    }
+
+    async fn volume_ec_shards_rebuild(
+        &self,
+        request: Request<VolumeEcShardsRebuildRequest>,
+    ) -> StdResult<Response<VolumeEcShardsRebuildResponse>, Status> {
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+        let base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
+
+        let mut rebuilt_shard_ids = Vec::new();
+        for location in store.locations.iter() {
+            let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
+            if file_exists(&ecx_filename)? {
+                let base_filename = format!("{}{}", location.directory, base_filename);
+                rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
+                rebuild_ecx_file(&base_filename)?;
+                break;
+            }
+        }
+
+        Ok(Response::new(VolumeEcShardsRebuildResponse {
+            rebuilt_shard_ids,
+        }))
+    }
+
+    async fn volume_ec_shards_copy(
+        &self,
+        request: Request<VolumeEcShardsCopyRequest>,
+    ) -> StdResult<Response<VolumeEcShardsCopyResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_delete(
+        &self,
+        request: Request<VolumeEcShardsDeleteRequest>,
+    ) -> StdResult<Response<VolumeEcShardsDeleteResponse>, Status> {
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+        let mut base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
+        let mut found = false;
+
+        for location in store.locations.iter() {
+            let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
+            if file_exists(&ecx_filename)? {
+                found = true;
+                base_filename = format!("{}{}", location.directory, base_filename);
+                for shard in request.shard_ids {
+                    fs::remove_file(format!("{}{}", base_filename, to_ext(shard as ShardId)))?;
+                }
+                break;
+            }
+        }
+
+        if !found {
+            return Ok(Response::new(VolumeEcShardsDeleteResponse {}));
+        }
+
+        let mut has_ecx_file = false;
+        let mut has_idx_file = false;
+        let mut existing_shard_count = 0;
+
+        let filename = Path::new(&base_filename)
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or(OsString::from("."));
+        let filename = filename.to_string_lossy().to_string();
+
+        let ecx_filename = format!("{}.ecx", filename);
+        let ecj_filename = format!("{}.ecj", filename);
+        let idx_filename = format!("{}.idx", filename);
+        let ec_prefix = format!("{}.ec", filename);
+
+        for location in store.locations.iter() {
+            let read_dir = fs::read_dir(location.directory.to_string())?;
+            for entry in read_dir {
+                match entry?.file_name().into_string() {
+                    Ok(entry_name) => {
+                        if entry_name == ecx_filename || entry_name == ecj_filename {
+                            has_ecx_file = true;
+                            continue;
+                        }
+                        if entry_name == idx_filename {
+                            has_idx_file = true;
+                            continue;
+                        }
+                        if entry_name.starts_with(&ec_prefix) {
+                            existing_shard_count += 1;
+                        }
+                    }
+                    Err(err) => {
+                        return Err(Status::internal(err.to_string_lossy().to_string()));
+                    }
+                }
+            }
+        }
+
+        if has_ecx_file && existing_shard_count == 0 {
+            fs::remove_file(format!("{}.ecx", base_filename))?;
+            fs::remove_file(format!("{}.ecj", base_filename))?;
+        }
+
+        if !has_idx_file {
+            fs::remove_file(format!("{}.vif", base_filename))?;
+        }
+
+        return Ok(Response::new(VolumeEcShardsDeleteResponse {}));
+    }
+
+    async fn volume_ec_shards_mount(
+        &self,
+        request: Request<VolumeEcShardsMountRequest>,
+    ) -> StdResult<Response<VolumeEcShardsMountResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_unmount(
+        &self,
+        request: Request<VolumeEcShardsUnmountRequest>,
+    ) -> StdResult<Response<VolumeEcShardsUnmountResponse>, Status> {
+        todo!()
+    }
+
+    type VolumeEcShardReadStream =
+        Pin<Box<dyn Stream<Item = StdResult<VolumeEcShardReadResponse, Status>> + Send>>;
+
+    async fn volume_ec_shard_read(
+        &self,
+        request: Request<VolumeEcShardReadRequest>,
+    ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_blob_delete(
+        &self,
+        request: Request<VolumeEcBlobDeleteRequest>,
+    ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_to_volume(
+        &self,
+        request: Request<VolumeEcShardsToVolumeRequest>,
+    ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
+        todo!()
     }
 }

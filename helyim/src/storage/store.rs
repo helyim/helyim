@@ -90,7 +90,7 @@ impl Store {
     pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid) {
             Some(volume) => volume.read_needle(needle).await,
-            None => Err(VolumeError::Missing(vid).into()),
+            None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
@@ -103,7 +103,7 @@ impl Store {
 
                 volume.write_needle(needle).await
             }
-            None => Err(VolumeError::Missing(vid).into()),
+            None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
@@ -117,7 +117,7 @@ impl Store {
             // TODO: update master
             Ok(())
         } else {
-            Err(VolumeError::Missing(vid).into())
+            Err(VolumeError::NotFound(vid).into())
         }
     }
 
@@ -265,7 +265,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during check compact");
-                Err(VolumeError::Missing(vid).into())
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
@@ -280,7 +280,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during compacting.");
-                Err(VolumeError::Missing(vid).into())
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
@@ -295,7 +295,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during committing compaction.");
-                Err(VolumeError::Missing(vid).into())
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
@@ -309,7 +309,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during cleaning up.");
-                Err(VolumeError::Missing(vid).into())
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }

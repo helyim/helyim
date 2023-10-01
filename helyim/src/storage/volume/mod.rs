@@ -535,6 +535,12 @@ impl VolumeEventTx {
         Ok(rx.await?)
     }
 
+    pub async fn filename(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.0.unbounded_send(VolumeEvent::Filename { tx })?;
+        Ok(rx.await?)
+    }
+
     pub async fn volume_info(&self) -> Result<VolumeInfo> {
         let (tx, rx) = oneshot::channel();
         self.0.unbounded_send(VolumeEvent::VolumeInfo { tx })?;
@@ -661,6 +667,9 @@ pub enum VolumeEvent {
     Version {
         tx: oneshot::Sender<Version>,
     },
+    Filename {
+        tx: oneshot::Sender<String>,
+    },
     VolumeInfo {
         tx: oneshot::Sender<VolumeInfo>,
     },
@@ -747,6 +756,9 @@ pub async fn volume_loop(
                     }
                     VolumeEvent::Version { tx } => {
                         let _ = tx.send(volume.version());
+                    }
+                    VolumeEvent::Filename {tx} => {
+                        let _ = tx.send(volume.filename());
                     }
                     VolumeEvent::VolumeInfo { tx } => {
                         let _ = tx.send(volume.get_volume_info());

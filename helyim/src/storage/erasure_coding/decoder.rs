@@ -24,7 +24,7 @@ use crate::{
     util::file_exists,
 };
 
-fn write_idx_file_from_ec_index(base_filename: &str) -> Result<()> {
+pub fn write_idx_file_from_ec_index(base_filename: &str) -> Result<()> {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)
         .mode(0o644)
@@ -48,7 +48,7 @@ fn write_idx_file_from_ec_index(base_filename: &str) -> Result<()> {
     )
 }
 
-fn find_data_filesize(base_filename: &str) -> Result<u64> {
+pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
     let version = read_ec_volume_version(base_filename)?;
     let mut data_filesize = 0;
     iterate_ecx_file(
@@ -131,7 +131,7 @@ where
 }
 
 /// generates .dat from from .ec00 ~ .ec09 files
-fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()> {
+pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()> {
     let mut data_file = fs::OpenOptions::new()
         .write(true)
         .create(true)

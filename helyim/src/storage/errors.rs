@@ -16,8 +16,8 @@ pub enum NeedleError {
 pub enum VolumeError {
     #[error("No writable volumes.")]
     NoWritableVolumes,
-    #[error("Volume {0} is missing.")]
-    Missing(VolumeId),
+    #[error("Volume {0} is not found.")]
+    NotFound(VolumeId),
     #[error("Data integrity error: {0}")]
     DataIntegrity(String),
 }
