@@ -808,11 +808,8 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
-        std::fs::remove_dir_all("/tmp/helyim").unwrap();
-        std::fs::create_dir("/tmp/helyim").unwrap();
-
         let mut volume = Volume::new(
-            FastStr::from_static_str("/tmp/helyim/"),
+            FastStr::from_static_str("/tmp/"),
             FastStr::empty(),
             1,
             NeedleMapType::NeedleMapInMemory,

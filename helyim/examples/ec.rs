@@ -27,7 +27,7 @@ fn main() {
     r.reconstruct(&mut shards).unwrap();
 
     // Convert back to normal shard arrangement
-    let result: Vec<_> = shards.into_iter().filter_map(|x| x).collect();
+    let result: Vec<_> = shards.into_iter().flatten().collect();
 
     assert!(r.verify(&result).unwrap());
     assert_eq!(master_copy, result);

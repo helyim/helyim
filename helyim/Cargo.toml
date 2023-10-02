@@ -39,7 +39,6 @@ mime_guess.workspace = true
 multer.workspace = true
 nom.workspace = true
 parking_lot.workspace = true
-pin-project-lite.workspace = true
 rand.workspace = true
 reed-solomon-erasure = { workspace = true, features = [ "simd-accel" ] }
 rustix = { workspace = true, features = ["fs"] }
