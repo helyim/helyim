@@ -10,9 +10,9 @@ use std::{
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
+use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::VolumeInfo;
 use parking_lot::Mutex;
-use futures::channel::mpsc::UnboundedSender;
 
 use crate::{
     errors::Result,
@@ -386,13 +386,12 @@ impl EcVolumeEventTx {
         Self(tx)
     }
 
-    pub fn destroy(&self) -> Result<()>{
-        self.0
-            .unbounded_send(EcVolumeEvent::Destroy)?;
+    pub fn destroy(&self) -> Result<()> {
+        self.0.unbounded_send(EcVolumeEvent::Destroy)?;
         Ok(())
     }
 }
 
 pub enum EcVolumeEvent {
-    Destroy
+    Destroy,
 }

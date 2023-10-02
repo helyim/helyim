@@ -70,7 +70,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in store.locations.iter() {
         for (_, volume) in location.volumes.iter() {
-            let volume_info = volume.volume_info().await?;
+            let volume_info = volume.get_volume_info().await?;
             infos.push(volume_info);
         }
     }
@@ -88,7 +88,7 @@ pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<(
     for location in store.locations.iter_mut() {
         for (vid, volume) in location.volumes.iter() {
             info!("start compacting volume {vid}.");
-            volume.compact(0).await?;
+            volume.compact().await?;
             info!("compact volume {vid} success.");
         }
     }

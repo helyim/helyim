@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "helyim",
-    "proto"
+    "macros",
+    "proto",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ crc = "3"
 dashmap = "5"
 faststr = "0.2"
 futures = "0.3"
+heck = "0.4"
 hyper = "0.14"
 libflate = "2"
 lru = "0.11"
@@ -51,3 +53,9 @@ tonic-build = "0.10"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
+
+# for macro
+syn = "2"
+prettyplease = "0.2"
+proc-macro2 = "1"
+quote = "1"

@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::mutable_key_type)]
 use std::time::Duration;
 
 pub mod directory;
@@ -6,7 +7,7 @@ pub mod directory;
 mod errors;
 mod filer;
 mod images;
-mod operation;
+pub mod operation;
 mod proto;
 
 pub mod storage;

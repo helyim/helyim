@@ -270,11 +270,11 @@ impl Store {
         }
     }
 
-    pub async fn compact_volume(&self, vid: VolumeId, preallocate: u64) -> Result<()> {
+    pub async fn compact_volume(&self, vid: VolumeId, _preallocate: u64) -> Result<()> {
         match self.find_volume(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact(preallocate).await?;
+                volume.compact().await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }

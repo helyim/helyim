@@ -2,15 +2,17 @@ use std::{collections::HashMap, time::Duration};
 
 use faststr::FastStr;
 use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{unbounded, UnboundedReceiver},
     StreamExt,
+};
+use helyim_macros::event_fn;
+use helyim_proto::{
+    VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
+    VacuumVolumeCompactRequest,
 };
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     errors::Result,
@@ -55,6 +57,33 @@ impl Clone for Topology {
 }
 
 impl Topology {
+    fn get_volume_layout(
+        &mut self,
+        collection: FastStr,
+        rp: ReplicaPlacement,
+        ttl: Ttl,
+    ) -> &mut VolumeLayout {
+        self.collections
+            .entry(collection.clone())
+            .or_insert(Collection::new(collection, self.volume_size_limit))
+            .get_or_create_volume_layout(rp, Some(ttl))
+    }
+
+    async fn get_max_volume_id(&self) -> Result<VolumeId> {
+        let mut vid = 0;
+        for (_, dc_tx) in self.data_centers.iter() {
+            let other = dc_tx.max_volume_id().await?;
+            if other > vid {
+                vid = other;
+            }
+        }
+
+        Ok(vid)
+    }
+}
+
+#[event_fn]
+impl Topology {
     pub fn new(
         sequencer: Sequencer,
         volume_size_limit: u64,
@@ -87,16 +116,20 @@ impl Topology {
             .clone()
     }
 
-    pub fn lookup(&mut self, collection: FastStr, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
+    pub fn lookup(
+        &mut self,
+        collection: FastStr,
+        volume_id: VolumeId,
+    ) -> Option<Vec<DataNodeEventTx>> {
         if collection.is_empty() {
             for c in self.collections.values() {
-                let data_node = c.lookup(vid);
+                let data_node = c.lookup(volume_id);
                 if data_node.is_some() {
                     return data_node;
                 }
             }
         } else if let Some(c) = self.collections.get(&collection) {
-            let data_node = c.lookup(vid);
+            let data_node = c.lookup(volume_id);
             if data_node.is_some() {
                 return data_node;
             }
@@ -105,19 +138,7 @@ impl Topology {
         None
     }
 
-    fn get_volume_layout(
-        &mut self,
-        collection: FastStr,
-        rp: ReplicaPlacement,
-        ttl: Ttl,
-    ) -> &mut VolumeLayout {
-        self.collections
-            .entry(collection.clone())
-            .or_insert(Collection::new(collection, self.volume_size_limit))
-            .get_or_create_volume_layout(rp, Some(ttl))
-    }
-
-    pub async fn has_writable_volume(&mut self, option: &VolumeGrowOption) -> Result<bool> {
+    pub async fn has_writable_volume(&mut self, option: VolumeGrowOption) -> Result<bool> {
         let vl = self.get_volume_layout(
             option.collection.clone(),
             option.replica_placement,
@@ -138,7 +159,7 @@ impl Topology {
     pub async fn pick_for_write(
         &mut self,
         count: u64,
-        option: &VolumeGrowOption,
+        option: VolumeGrowOption,
     ) -> Result<(FileId, u64, DataNodeEventTx)> {
         let (volume_id, nodes) = {
             let layout = self.get_volume_layout(
@@ -146,7 +167,7 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            layout.pick_for_write(option).await?
+            layout.pick_for_write(&option).await?
         };
 
         let file_id = self.sequencer.next_file_id(count)?;
@@ -161,29 +182,25 @@ impl Topology {
 
     pub async fn register_volume_layout(
         &mut self,
-        vi: VolumeInfo,
-        dn: DataNodeEventTx,
+        volume: VolumeInfo,
+        data_node: DataNodeEventTx,
     ) -> Result<()> {
-        self.get_volume_layout(vi.collection.clone(), vi.replica_placement, vi.ttl)
-            .register_volume(&vi, dn)
-            .await
+        self.get_volume_layout(
+            volume.collection.clone(),
+            volume.replica_placement,
+            volume.ttl,
+        )
+        .register_volume(&volume, data_node)
+        .await
     }
 
-    pub async fn unregister_volume_layout(&mut self, vi: VolumeInfo) {
-        self.get_volume_layout(vi.collection.clone(), vi.replica_placement, vi.ttl)
-            .unregister_volume(&vi);
-    }
-
-    async fn get_max_volume_id(&self) -> Result<VolumeId> {
-        let mut vid = 0;
-        for (_, dc_tx) in self.data_centers.iter() {
-            let other = dc_tx.max_volume_id().await?;
-            if other > vid {
-                vid = other;
-            }
-        }
-
-        Ok(vid)
+    pub async fn unregister_volume_layout(&mut self, volume: VolumeInfo) {
+        self.get_volume_layout(
+            volume.collection.clone(),
+            volume.replica_placement,
+            volume.ttl,
+        )
+        .unregister_volume(&volume);
     }
 
     pub async fn next_volume_id(&mut self) -> Result<VolumeId> {
@@ -191,37 +208,41 @@ impl Topology {
 
         Ok(vid + 1)
     }
-}
 
-pub enum TopologyEvent {
-    GetOrCreateDataCenter(FastStr, oneshot::Sender<DataCenterEventTx>),
-    Lookup {
-        collection: FastStr,
-        volume_id: VolumeId,
-        tx: oneshot::Sender<Option<Vec<DataNodeEventTx>>>,
-    },
-    HasWritableVolume(VolumeGrowOption, oneshot::Sender<Result<bool>>),
-    FreeVolumes(oneshot::Sender<Result<i64>>),
-    PickForWrite {
-        count: u64,
-        option: VolumeGrowOption,
-        tx: oneshot::Sender<Result<(FileId, u64, DataNodeEventTx)>>,
-    },
-    RegisterVolumeLayout {
-        volume_info: VolumeInfo,
-        data_node: DataNodeEventTx,
-        tx: oneshot::Sender<Result<()>>,
-    },
-    UnregisterVolumeLayout(VolumeInfo),
-    NextVolumeId(oneshot::Sender<Result<VolumeId>>),
-    DataCenters(oneshot::Sender<HashMap<FastStr, DataCenterEventTx>>),
-    SetMaxSequence(u64),
-    Topology(oneshot::Sender<Topology>),
-    Vacuum {
-        garbage_threshold: f64,
-        preallocate: u64,
-        tx: oneshot::Sender<Result<()>>,
-    },
+    pub fn set_max_sequence(&mut self, seq: u64) {
+        self.sequencer.set_max(seq);
+    }
+
+    pub fn data_centers(&self) -> HashMap<FastStr, DataCenterEventTx> {
+        self.data_centers.clone()
+    }
+
+    pub fn topology(&self) -> Topology {
+        self.clone()
+    }
+
+    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
+        for (_name, collection) in self.collections.iter() {
+            for (_key, volume_layout) in collection.volume_layouts.iter() {
+                let location = volume_layout.locations.clone();
+                for (vid, data_nodes) in location {
+                    if volume_layout.readonly_volumes.contains(&vid) {
+                        continue;
+                    }
+
+                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
+                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
+                            .await?
+                    {
+                        batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
+                        // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub async fn topology_loop(
@@ -233,8 +254,8 @@ pub async fn topology_loop(
         tokio::select! {
             Some(event) = topology_rx.next() => {
                 match event {
-                    TopologyEvent::GetOrCreateDataCenter(data_center, tx) => {
-                        let _ = tx.send(topology.get_or_create_data_center(data_center));
+                    TopologyEvent::GetOrCreateDataCenter{name, tx} => {
+                        let _ = tx.send(topology.get_or_create_data_center(name));
                     }
                     TopologyEvent::Lookup {
                         collection,
@@ -243,40 +264,40 @@ pub async fn topology_loop(
                     } => {
                         let _ = tx.send(topology.lookup(collection, volume_id));
                     }
-                    TopologyEvent::HasWritableVolume(option, tx) => {
-                        let _ = tx.send(topology.has_writable_volume(&option).await);
+                    TopologyEvent::HasWritableVolume{option, tx} => {
+                        let _ = tx.send(topology.has_writable_volume(option).await);
                     }
-                    TopologyEvent::FreeVolumes(tx) => {
+                    TopologyEvent::FreeVolumes{tx} => {
                         let _ = tx.send(topology.free_volumes().await);
                     }
                     TopologyEvent::PickForWrite { count, option, tx } => {
-                        let _ = tx.send(topology.pick_for_write(count, &option).await);
+                        let _ = tx.send(topology.pick_for_write(count, option).await);
                     }
                     TopologyEvent::RegisterVolumeLayout {
-                        volume_info,
+                        volume,
                         data_node,
                         tx,
                     } => {
                         let _ = tx.send(
                             topology
-                                .register_volume_layout(volume_info, data_node)
+                                .register_volume_layout(volume, data_node)
                                 .await,
                         );
                     }
-                    TopologyEvent::UnregisterVolumeLayout(volume) => {
+                    TopologyEvent::UnregisterVolumeLayout{volume} => {
                         topology.unregister_volume_layout(volume).await;
                     }
-                    TopologyEvent::NextVolumeId(tx) => {
+                    TopologyEvent::NextVolumeId{tx} => {
                         let _ = tx.send(topology.next_volume_id().await);
                     }
-                    TopologyEvent::DataCenters(tx) => {
-                        let _ = tx.send(topology.data_centers.clone());
+                    TopologyEvent::DataCenters{tx} => {
+                        let _ = tx.send(topology.data_centers());
                     }
-                    TopologyEvent::SetMaxSequence(seq) => {
-                        topology.sequencer.set_max(seq);
+                    TopologyEvent::SetMaxSequence{seq} => {
+                        topology.set_max_sequence(seq);
                     }
-                    TopologyEvent::Topology(tx) => {
-                        let _ = tx.send(topology.clone());
+                    TopologyEvent::Topology{tx} => {
+                        let _ = tx.send(topology.topology());
                     }
                     TopologyEvent::Vacuum {
                         garbage_threshold,
@@ -320,112 +341,102 @@ pub async fn topology_vacuum_loop(
     info!("topology vacuum loop stopped")
 }
 
-#[derive(Debug, Clone)]
-pub struct TopologyEventTx(UnboundedSender<TopologyEvent>);
-
-impl TopologyEventTx {
-    pub fn new(tx: UnboundedSender<TopologyEvent>) -> Self {
-        Self(tx)
+async fn batch_vacuum_volume_check(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    garbage_ratio: f64,
+) -> Result<bool> {
+    let mut check_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCheckRequest { volume_id };
+        match data_node_tx.vacuum_volume_check(request).await {
+            Ok(response) => {
+                info!("check volume {volume_id} success.");
+                check_success = response.garbage_ratio > garbage_ratio;
+            }
+            Err(err) => {
+                error!("check volume {volume_id} failed, {err}");
+                check_success = false;
+            }
+        }
     }
+    Ok(check_success)
+}
 
-    pub async fn get_or_create_data_center(
-        &self,
-        data_center: FastStr,
-    ) -> Result<DataCenterEventTx> {
-        let (tx, rx) = oneshot::channel();
-        self.0
-            .unbounded_send(TopologyEvent::GetOrCreateDataCenter(data_center, tx))?;
-        Ok(rx.await?)
-    }
-
-    pub async fn lookup(
-        &self,
-        collection: FastStr,
-        volume_id: VolumeId,
-    ) -> Result<Option<Vec<DataNodeEventTx>>> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::Lookup {
-            collection,
+async fn batch_vacuum_volume_compact(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    preallocate: u64,
+) -> Result<bool> {
+    volume_layout.remove_from_writable(volume_id);
+    let mut compact_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCompactRequest {
             volume_id,
-            tx,
-        })?;
-        Ok(rx.await?)
-    }
-
-    pub async fn has_writable_volume(&self, option: VolumeGrowOption) -> Result<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.0
-            .unbounded_send(TopologyEvent::HasWritableVolume(option, tx))?;
-        rx.await?
-    }
-
-    pub async fn free_volumes(&self) -> Result<i64> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::FreeVolumes(tx))?;
-        rx.await?
-    }
-
-    pub async fn pick_for_write(
-        &self,
-        count: u64,
-        option: VolumeGrowOption,
-    ) -> Result<(FileId, u64, DataNodeEventTx)> {
-        let (tx, rx) = oneshot::channel();
-        self.0
-            .unbounded_send(TopologyEvent::PickForWrite { count, option, tx })?;
-        rx.await?
-    }
-
-    pub async fn register_volume_layout(
-        &self,
-        volume_info: VolumeInfo,
-        data_node: DataNodeEventTx,
-    ) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::RegisterVolumeLayout {
-            volume_info,
-            data_node,
-            tx,
-        })?;
-        rx.await?
-    }
-
-    pub fn unregister_volume_layout(&self, volume_info: VolumeInfo) -> Result<()> {
-        self.0
-            .unbounded_send(TopologyEvent::UnregisterVolumeLayout(volume_info))?;
-        Ok(())
-    }
-
-    pub async fn next_volume_id(&self) -> Result<VolumeId> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::NextVolumeId(tx))?;
-        rx.await?
-    }
-
-    pub async fn data_centers(&self) -> Result<HashMap<FastStr, DataCenterEventTx>> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::DataCenters(tx))?;
-        Ok(rx.await?)
-    }
-
-    pub fn set_max_sequence(&self, seq: u64) -> Result<()> {
-        self.0.unbounded_send(TopologyEvent::SetMaxSequence(seq))?;
-        Ok(())
-    }
-
-    pub async fn topology(&self) -> Result<Topology> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::Topology(tx))?;
-        Ok(rx.await?)
-    }
-
-    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(TopologyEvent::Vacuum {
-            garbage_threshold,
             preallocate,
-            tx,
-        })?;
-        rx.await?
+        };
+        match data_node_tx.vacuum_volume_compact(request).await {
+            Ok(_) => {
+                info!("compact volume {volume_id} success.");
+                compact_success = true;
+            }
+            Err(err) => {
+                error!("compact volume {volume_id} failed, {err}");
+                compact_success = false;
+            }
+        }
     }
+    Ok(compact_success)
+}
+
+async fn batch_vacuum_volume_commit(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut commit_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCommitRequest { volume_id };
+        match data_node_tx.vacuum_volume_commit(request).await {
+            Ok(response) => {
+                if response.is_read_only {
+                    warn!("volume {volume_id} is read only, will not commit it.");
+                    commit_success = false;
+                } else {
+                    info!("commit volume {volume_id} success.");
+                    commit_success = true;
+                    volume_layout
+                        .set_volume_available(volume_id, data_node_tx)
+                        .await?;
+                }
+            }
+            Err(err) => {
+                error!("commit volume {volume_id} failed, {err}");
+                commit_success = false;
+            }
+        }
+    }
+    Ok(commit_success)
+}
+
+#[allow(dead_code)]
+async fn batch_vacuum_volume_cleanup(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut cleanup_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCleanupRequest { volume_id };
+        match data_node_tx.vacuum_volume_cleanup(request).await {
+            Ok(_) => {
+                info!("cleanup volume {volume_id} success.");
+                cleanup_success = true;
+            }
+            Err(_err) => {
+                cleanup_success = false;
+            }
+        }
+    }
+    Ok(cleanup_success)
 }

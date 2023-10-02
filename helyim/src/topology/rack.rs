@@ -2,12 +2,10 @@ use std::collections::HashMap;
 
 use faststr::FastStr;
 use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{unbounded, UnboundedReceiver},
     StreamExt,
 };
+use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 use tokio::task::JoinHandle;
@@ -34,6 +32,7 @@ pub struct Rack {
     shutdown: async_broadcast::Receiver<()>,
 }
 
+#[event_fn]
 impl Rack {
     pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
         Rack {
@@ -46,13 +45,25 @@ impl Rack {
         }
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+    pub fn id(&self) -> FastStr {
+        self.id.clone()
+    }
+
+    pub fn set_data_center(&mut self, data_center: DataCenterEventTx) {
+        self.data_center = Some(data_center)
+    }
+
+    pub fn data_nodes(&self) -> HashMap<FastStr, DataNodeEventTx> {
+        self.nodes.clone()
+    }
+
+    pub fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
 
         if let Some(dc) = self.data_center.as_ref() {
-            dc.adjust_max_volume_id(self.max_volume_id).await?;
+            dc.adjust_max_volume_id(self.max_volume_id)?;
         }
 
         Ok(())
@@ -133,54 +144,34 @@ impl Rack {
     }
 }
 
-pub enum RackEvent {
-    HasVolumes(oneshot::Sender<Result<i64>>),
-    MaxVolumes(oneshot::Sender<Result<i64>>),
-    FreeVolumes(oneshot::Sender<Result<i64>>),
-    SetDataCenter(DataCenterEventTx),
-    ReserveOneVolume(oneshot::Sender<Result<DataNodeEventTx>>),
-    DataNodes(oneshot::Sender<HashMap<FastStr, DataNodeEventTx>>),
-    Id(oneshot::Sender<FastStr>),
-    DataCenterId(oneshot::Sender<Result<FastStr>>),
-    GetOrCreateDataNode {
-        id: FastStr,
-        ip: FastStr,
-        port: u16,
-        public_url: FastStr,
-        max_volumes: i64,
-        tx: oneshot::Sender<DataNodeEventTx>,
-    },
-    AdjustMaxVolumeId(VolumeId, oneshot::Sender<Result<()>>),
-}
-
 pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
     info!("rack [{}] event loop starting.", rack.id);
     loop {
         tokio::select! {
             Some(event) = rack_rx.next() => {
                 match event {
-                    RackEvent::HasVolumes(tx) => {
+                    RackEvent::HasVolumes{tx} => {
                         let _ = tx.send(rack.has_volumes().await);
                     }
-                    RackEvent::MaxVolumes(tx) => {
+                    RackEvent::MaxVolumes{tx} => {
                         let _ = tx.send(rack.max_volumes().await);
                     }
-                    RackEvent::FreeVolumes(tx) => {
+                    RackEvent::FreeVolumes{tx} => {
                         let _ = tx.send(rack.free_volumes().await);
                     }
-                    RackEvent::SetDataCenter(tx) => {
-                        rack.data_center = Some(tx);
+                    RackEvent::SetDataCenter{data_center} => {
+                        rack.set_data_center(data_center)
                     }
-                    RackEvent::ReserveOneVolume(tx) => {
+                    RackEvent::ReserveOneVolume{tx} => {
                         let _ = tx.send(rack.reserve_one_volume().await);
                     }
-                    RackEvent::DataNodes(tx) => {
-                        let _ = tx.send(rack.nodes.clone());
+                    RackEvent::DataNodes{tx} => {
+                        let _ = tx.send(rack.data_nodes());
                     }
-                    RackEvent::Id(tx) => {
-                        let _ = tx.send(rack.id.clone());
+                    RackEvent::Id{tx} => {
+                        let _ = tx.send(rack.id());
                     }
-                    RackEvent::DataCenterId(tx) => {
+                    RackEvent::DataCenterId{tx} => {
                         let _ = tx.send(rack.data_center_id().await);
                     }
                     RackEvent::GetOrCreateDataNode {
@@ -194,8 +185,8 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
                         let _ =
                             tx.send(rack.get_or_create_data_node(id, ip, port, public_url, max_volumes));
                     }
-                    RackEvent::AdjustMaxVolumeId(vid, tx) => {
-                        let _ = tx.send(rack.adjust_max_volume_id(vid).await);
+                    RackEvent::AdjustMaxVolumeId {vid, tx} => {
+                        let _ = tx.send(rack.adjust_max_volume_id(vid));
                     }
                 }
             }
@@ -205,88 +196,4 @@ pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>
         }
     }
     info!("rack [{}] event loop stopped.", rack.id);
-}
-
-#[derive(Debug, Clone)]
-pub struct RackEventTx(UnboundedSender<RackEvent>);
-
-impl RackEventTx {
-    pub fn new(tx: UnboundedSender<RackEvent>) -> Self {
-        RackEventTx(tx)
-    }
-
-    pub async fn has_volumes(&self) -> Result<i64> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::HasVolumes(tx))?;
-        rx.await?
-    }
-
-    pub async fn max_volumes(&self) -> Result<i64> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::MaxVolumes(tx))?;
-        rx.await?
-    }
-
-    pub async fn free_volumes(&self) -> Result<i64> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::FreeVolumes(tx))?;
-        rx.await?
-    }
-
-    pub fn set_data_center(&self, data_center: DataCenterEventTx) -> Result<()> {
-        self.0
-            .unbounded_send(RackEvent::SetDataCenter(data_center))?;
-        Ok(())
-    }
-
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::ReserveOneVolume(tx))?;
-        rx.await?
-    }
-
-    pub async fn data_nodes(&self) -> Result<HashMap<FastStr, DataNodeEventTx>> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::DataNodes(tx))?;
-        Ok(rx.await?)
-    }
-
-    pub async fn id(&self) -> Result<FastStr> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::Id(tx))?;
-        Ok(rx.await?)
-    }
-
-    pub async fn data_center_id(&self) -> Result<FastStr> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::DataCenterId(tx))?;
-        rx.await?
-    }
-
-    pub async fn get_or_create_data_node(
-        &self,
-        id: FastStr,
-        ip: FastStr,
-        port: u16,
-        public_url: FastStr,
-        max_volumes: i64,
-    ) -> Result<DataNodeEventTx> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(RackEvent::GetOrCreateDataNode {
-            id,
-            ip,
-            port,
-            public_url,
-            max_volumes,
-            tx,
-        })?;
-        Ok(rx.await?)
-    }
-
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        self.0
-            .unbounded_send(RackEvent::AdjustMaxVolumeId(vid, tx))?;
-        rx.await?
-    }
 }
