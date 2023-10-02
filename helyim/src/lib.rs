@@ -7,7 +7,7 @@ pub mod directory;
 mod errors;
 mod filer;
 mod images;
-pub mod operation;
+mod operation;
 mod proto;
 
 pub mod storage;
