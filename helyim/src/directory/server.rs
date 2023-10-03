@@ -68,7 +68,7 @@ impl DirectoryServer {
             shutdown_rx.clone(),
         );
         let (tx, rx) = unbounded();
-        let topology_handle = rt_spawn(topology_loop(topology, rx));
+        let topology_handle = rt_spawn(topology_loop(topology, rx, shutdown_rx.clone()));
         let topology = TopologyEventTx::new(tx);
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
@@ -78,9 +78,8 @@ impl DirectoryServer {
         ));
 
         // volume growth event loop
-        let volume_grow = VolumeGrowth::new(shutdown_rx.clone());
         let (tx, rx) = unbounded();
-        let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
+        let volume_grow_handle = rt_spawn(volume_growth_loop(VolumeGrowth, rx, shutdown_rx.clone()));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
         let dir = DirectoryServer {

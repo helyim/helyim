@@ -56,7 +56,7 @@ pub struct EcVolume {
     ecx_file: File,
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
-    shards: Vec<EcVolumeShard>,
+    shards: Vec<Arc<EcVolumeShard>>,
     shard_locations: HashMap<ShardId, Vec<FastStr>>,
     shard_locations_refresh_time: SystemTime,
     version: Version,
@@ -116,7 +116,7 @@ impl EcVolume {
             }
         }
 
-        self.shards.push(shard);
+        self.shards.push(Arc::new(shard));
         self.shards.sort_by(|left, right| {
             left.volume_id
                 .cmp(&right.volume_id)
@@ -125,7 +125,7 @@ impl EcVolume {
         true
     }
 
-    pub fn delete_shard(&mut self, shard_id: ShardId) -> Option<EcVolumeShard> {
+    pub fn delete_shard(&mut self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
         let mut idx = None;
         for (i, shard) in self.shards.iter().enumerate() {
             if shard.shard_id == shard_id {
@@ -135,11 +135,14 @@ impl EcVolume {
         idx.map(|idx| self.shards.remove(idx))
     }
 
-    #[ignore]
-    pub fn find_shard(&self, shard_id: ShardId) -> Option<&EcVolumeShard> {
-        self.shards.iter().find(|shard| shard.shard_id == shard_id)
+    pub fn find_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
+        self.shards
+            .iter()
+            .find(|shard| shard.shard_id == shard_id)
+            .cloned()
     }
 
+    #[ignore]
     pub fn locate_ec_shard_needle<F>(
         &self,
         needle_id: NeedleId,
@@ -160,6 +163,7 @@ impl EcVolume {
         Ok((needle_value, intervals))
     }
 
+    #[ignore]
     pub fn find_needle_from_ecx<F>(&self, needle_id: NeedleId) -> Result<NeedleValue>
     where
         F: FnMut(&File, u64) -> Result<()>,
@@ -227,9 +231,9 @@ impl EcVolume {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
     }
 
-    pub fn destroy(self) -> Result<()> {
+    pub fn destroy(&self) -> Result<()> {
         let filename = self.filename();
-        for shard in self.shards {
+        for shard in self.shards.iter() {
             shard.destroy()?;
         }
         fs::remove_file(format!("{}.ecx", filename))?;
@@ -306,7 +310,7 @@ impl EcVolumeShard {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
     }
 
-    pub fn destroy(self) -> Result<()> {
+    pub fn destroy(&self) -> Result<()> {
         fs::remove_file(format!("{}{}", self.filename(), to_ext(self.shard_id)))?;
         Ok(())
     }

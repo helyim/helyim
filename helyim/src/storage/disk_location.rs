@@ -2,6 +2,7 @@ use std::{
     collections::{hash_map, HashMap},
     fs,
     path::Path,
+    sync::Arc,
 };
 
 use faststr::FastStr;
@@ -14,7 +15,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{
-        erasure_coding::EcVolumeEventTx,
+        erasure_coding::{ec_volume_loop, EcVolume, EcVolumeEventTx, EcVolumeShard, ShardId},
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
@@ -94,14 +95,47 @@ impl DiskLocation {
     }
 
     // erasure coding
-    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<&EcVolumeEventTx> {
-        self.ec_volumes.get(&vid)
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeEventTx> {
+        self.ec_volumes.get(&vid).cloned()
     }
 
     pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(volume) = self.ec_volumes.remove(&vid) {
             volume.destroy().await?;
         }
+        Ok(())
+    }
+
+    pub async fn find_ec_shard(
+        &self,
+        vid: VolumeId,
+        shard_id: ShardId,
+    ) -> Result<Option<Arc<EcVolumeShard>>> {
+        if let Some(ec_volume) = self.ec_volumes.get(&vid) {
+            return ec_volume.find_shard(shard_id).await;
+        }
+        Ok(None)
+    }
+
+    pub async fn load_ec_shard(
+        &mut self,
+        collection: FastStr,
+        vid: VolumeId,
+        shard_id: ShardId,
+    ) -> Result<()> {
+        let shard = EcVolumeShard::new(self.directory.clone(), collection.clone(), vid, shard_id)?;
+        let volume = match self.ec_volumes.get(&vid) {
+            Some(volume) => volume,
+            None => {
+                let (tx, rx) = unbounded();
+                let volume = EcVolume::new(self.directory.clone(), collection, vid)?;
+                rt_spawn(ec_volume_loop(volume, rx, self.shutdown.clone()));
+                self.ec_volumes
+                    .entry(vid)
+                    .or_insert(EcVolumeEventTx::new(tx))
+            }
+        };
+        volume.add_shard(shard).await?;
         Ok(())
     }
 }

@@ -2,14 +2,12 @@ use std::collections::HashMap;
 
 use faststr::FastStr;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver},
-    StreamExt,
+    channel::mpsc::{unbounded},
 };
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::info;
 
 use crate::{
     errors::{Error, Result},
@@ -81,9 +79,9 @@ impl Rack {
             .entry(id.clone())
             .or_insert_with(|| {
                 let data_node =
-                    DataNode::new(id, ip, port, public_url, max_volumes, self.shutdown.clone());
+                    DataNode::new(id, ip, port, public_url, max_volumes);
                 let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(data_node_loop(data_node, rx)));
+                self.handles.push(rt_spawn(data_node_loop(data_node, rx, self.shutdown.clone())));
 
                 DataNodeEventTx::new(tx)
             })
@@ -142,58 +140,4 @@ impl Rack {
             self.id
         )))
     }
-}
-
-pub async fn rack_loop(mut rack: Rack, mut rack_rx: UnboundedReceiver<RackEvent>) {
-    info!("rack [{}] event loop starting.", rack.id);
-    loop {
-        tokio::select! {
-            Some(event) = rack_rx.next() => {
-                match event {
-                    RackEvent::HasVolumes{tx} => {
-                        let _ = tx.send(rack.has_volumes().await);
-                    }
-                    RackEvent::MaxVolumes{tx} => {
-                        let _ = tx.send(rack.max_volumes().await);
-                    }
-                    RackEvent::FreeVolumes{tx} => {
-                        let _ = tx.send(rack.free_volumes().await);
-                    }
-                    RackEvent::SetDataCenter{data_center} => {
-                        rack.set_data_center(data_center)
-                    }
-                    RackEvent::ReserveOneVolume{tx} => {
-                        let _ = tx.send(rack.reserve_one_volume().await);
-                    }
-                    RackEvent::DataNodes{tx} => {
-                        let _ = tx.send(rack.data_nodes());
-                    }
-                    RackEvent::Id{tx} => {
-                        let _ = tx.send(rack.id());
-                    }
-                    RackEvent::DataCenterId{tx} => {
-                        let _ = tx.send(rack.data_center_id().await);
-                    }
-                    RackEvent::GetOrCreateDataNode {
-                        id,
-                        ip,
-                        port,
-                        public_url,
-                        max_volumes,
-                        tx,
-                    } => {
-                        let _ =
-                            tx.send(rack.get_or_create_data_node(id, ip, port, public_url, max_volumes));
-                    }
-                    RackEvent::AdjustMaxVolumeId {vid, tx} => {
-                        let _ = tx.send(rack.adjust_max_volume_id(vid));
-                    }
-                }
-            }
-            _ = rack.shutdown.recv() => {
-                break;
-            }
-        }
-    }
-    info!("rack [{}] event loop stopped.", rack.id);
 }

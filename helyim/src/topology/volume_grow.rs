@@ -1,9 +1,7 @@
 use faststr::FastStr;
-use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
 use helyim_macros::event_fn;
 use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
-use tracing::info;
 
 use crate::{
     errors::{Error, Result},
@@ -12,15 +10,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct VolumeGrowth {
-    shutdown: async_broadcast::Receiver<()>,
-}
+pub struct VolumeGrowth;
 
 impl VolumeGrowth {
-    pub fn new(shutdown: async_broadcast::Receiver<()>) -> Self {
-        Self { shutdown }
-    }
-
     /// one replication type may need rp.get_copy_count() actual volumes
     /// given copy_count, how many logical volumes to create
     fn find_volume_count(&self, count: usize) -> usize {
@@ -305,32 +297,6 @@ impl VolumeGrowth {
         let count = self.find_volume_count(option.replica_placement.copy_count());
         self.grow_by_count_and_type(count, &option, topology).await
     }
-}
-
-pub async fn volume_growth_loop(
-    mut volume_grow: VolumeGrowth,
-    mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
-) {
-    info!("volume growth event loop starting.");
-    loop {
-        tokio::select! {
-            Some(event) = volume_grow_rx.next() => {
-                match event {
-                    VolumeGrowthEvent::GrowByType {
-                        option,
-                        topology,
-                        tx,
-                    } => {
-                        let _ = tx.send(volume_grow.grow_by_type(option, topology).await);
-                    }
-                }
-            }
-            _ = volume_grow.shutdown.recv() => {
-                break;
-            }
-        }
-    }
-    info!("volume growth event loop stopped.");
 }
 
 #[derive(Debug, Default, Clone)]

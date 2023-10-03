@@ -3,14 +3,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
 use helyim_macros::event_fn;
 use helyim_proto::{
     helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
     LookupVolumeResponse,
 };
 use tonic::transport::Channel;
-use tracing::info;
 
 use crate::{errors::Result, storage::VolumeId};
 
@@ -18,17 +16,15 @@ pub struct Looker {
     client: HelyimClient<Channel>,
     volumes: HashMap<VolumeId, (VolumeLocation, SystemTime)>,
     timeout: Duration,
-    shutdown: async_broadcast::Receiver<()>,
 }
 
 impl Looker {
-    pub fn new(client: HelyimClient<Channel>, shutdown: async_broadcast::Receiver<()>) -> Looker {
+    pub fn new(client: HelyimClient<Channel>) -> Looker {
         Looker {
             client,
             // should bigger than volume number
             volumes: HashMap::new(),
             timeout: Duration::from_secs(600),
-            shutdown,
         }
     }
 
@@ -74,23 +70,4 @@ impl Looker {
             Err(err) => Err(err),
         }
     }
-}
-
-pub async fn looker_loop(mut looker: Looker, mut looker_rx: UnboundedReceiver<LookerEvent>) {
-    info!("looker event loop starting.");
-    loop {
-        tokio::select! {
-            Some(event) = looker_rx.next() => {
-                match event {
-                    LookerEvent::Lookup{ vids, tx } => {
-                        let _ = tx.send(looker.lookup(vids).await);
-                    }
-                }
-            }
-            _ = looker.shutdown.recv() => {
-                break;
-            }
-        }
-    }
-    info!("looker event loop stopped.");
 }

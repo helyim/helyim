@@ -8,7 +8,6 @@ use std::{
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
 use helyim_macros::event_fn;
 use rustix::fs::ftruncate;
 use tracing::{debug, error, info};
@@ -352,7 +351,7 @@ impl Volume {
         self.readonly
     }
 
-    pub fn destroy(self) -> Result<()> {
+    pub fn destroy(&self) -> Result<()> {
         if self.readonly {
             return Err(anyhow!("volume {} is read only", self.id));
         }
@@ -563,111 +562,6 @@ impl Volume {
 
         Ok(())
     }
-}
-
-pub async fn volume_loop(
-    mut volume: Volume,
-    mut volume_rx: UnboundedReceiver<VolumeEvent>,
-    mut shutdown_rx: async_broadcast::Receiver<()>,
-) {
-    let volume_id = volume.id;
-    info!("volume {volume_id} event loop starting.");
-    loop {
-        tokio::select! {
-            Some(event) = volume_rx.next() => {
-                match event {
-                    VolumeEvent::Load {
-                        create_if_missing,
-                        load_index,
-                        tx,
-                    } => {
-                        let _ = tx.send(volume.load(create_if_missing, load_index));
-                    }
-                    VolumeEvent::WriteNeedle { needle, tx } => {
-                        let _ = tx.send(volume.write_needle(needle).await);
-                    }
-                    VolumeEvent::DeleteNeedle { needle, tx } => {
-                        let _ = tx.send(volume.delete_needle(needle).await);
-                    }
-                    VolumeEvent::ReadNeedle { needle, tx } => {
-                        let _ = tx.send(volume.read_needle(needle));
-                    }
-                    VolumeEvent::SuperBlock { tx } => {
-                        let _ = tx.send(volume.super_block());
-                    }
-                    VolumeEvent::Collection { tx } => {
-                        let _ = tx.send(volume.collection());
-                    }
-                    VolumeEvent::Version { tx } => {
-                        let _ = tx.send(volume.version());
-                    }
-                    VolumeEvent::Filename {tx} => {
-                        let _ = tx.send(volume.filename());
-                    }
-                    VolumeEvent::GetVolumeInfo { tx } => {
-                        let _ = tx.send(volume.get_volume_info());
-                    }
-                    VolumeEvent::Destroy { tx } => {
-                        let _ = tx.send(volume.destroy());
-                        info!("volume {volume_id} is destroyed");
-                        break;
-                    }
-                    VolumeEvent::IsReadonly { tx } => {
-                        let _ = tx.send(volume.is_readonly());
-                    }
-                    VolumeEvent::DeletedBytes { tx } => {
-                        let _ = tx.send(volume.deleted_bytes());
-                    }
-                    VolumeEvent::DeletedCount { tx } => {
-                        let _ = tx.send(volume.deleted_count());
-                    }
-                    VolumeEvent::MaxFileKey { tx } => {
-                        let _ = tx.send(volume.max_file_key());
-                    }
-                    VolumeEvent::FileCount { tx } => {
-                        let _ = tx.send(volume.file_count());
-                    }
-                    VolumeEvent::Size { tx } => {
-                        let _ = tx.send(volume.size());
-                    }
-                    VolumeEvent::Expired {
-                        volume_size_limit,
-                        tx,
-                    } => {
-                        let _ = tx.send(volume.expired(volume_size_limit));
-                    }
-                    VolumeEvent::ExpiredLongEnough {
-                        max_delay_minutes,
-                        tx,
-                    } => {
-                        let _ = tx.send(volume.expired_long_enough(max_delay_minutes));
-                    }
-                    VolumeEvent::NeedToReplicate { tx } => {
-                        let _ = tx.send(volume.need_to_replicate());
-                    }
-                    VolumeEvent::GarbageLevel { tx } => {
-                        let _ = tx.send(volume.garbage_level());
-                    }
-                    VolumeEvent::Compact { tx } => {
-                        let _ = tx.send(volume.compact());
-                    }
-                    VolumeEvent::Compact2 { tx } => {
-                        let _ = tx.send(volume.compact2());
-                    }
-                    VolumeEvent::CommitCompact { tx } => {
-                        let _ = tx.send(volume.commit_compact());
-                    }
-                    VolumeEvent::CleanupCompact { tx } => {
-                        let _ = tx.send(volume.cleanup_compact());
-                    }
-                }
-            },
-            _ = shutdown_rx.recv() => {
-                break;
-            }
-        }
-    }
-    info!("volume {volume_id} event loop stopped.");
 }
 
 fn load_volume_without_index(

@@ -2,14 +2,12 @@ use std::collections::HashMap;
 
 use faststr::FastStr;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver},
-    StreamExt,
+    channel::mpsc::{unbounded},
 };
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::info;
 
 use crate::{
     errors::{Error, Result},
@@ -67,6 +65,7 @@ impl DataCenter {
                 self.handles.push(rt_spawn(rack_loop(
                     Rack::new(id, self.shutdown.clone()),
                     rx,
+                    self.shutdown.clone()
                 )));
 
                 RackEventTx::new(tx)
@@ -119,50 +118,4 @@ impl DataCenter {
             self.id
         )))
     }
-}
-
-pub async fn data_center_loop(
-    mut data_center: DataCenter,
-    mut data_center_rx: UnboundedReceiver<DataCenterEvent>,
-) {
-    info!("data center [{}] event loop starting.", data_center.id);
-    loop {
-        tokio::select! {
-            Some(event) = data_center_rx.next() => {
-                match event {
-                    DataCenterEvent::HasVolumes {tx} => {
-                        let _ = tx.send(data_center.has_volumes().await);
-                    }
-                    DataCenterEvent::MaxVolumes {tx} => {
-                        let _ = tx.send(data_center.max_volumes().await);
-                    }
-                    DataCenterEvent::FreeVolumes{tx} => {
-                        let _ = tx.send(data_center.free_volumes().await);
-                    }
-                    DataCenterEvent::MaxVolumeId{tx} => {
-                        let _ = tx.send(data_center.max_volume_id());
-                    }
-                    DataCenterEvent::Id{tx} => {
-                        let _ = tx.send(data_center.id());
-                    }
-                    DataCenterEvent::Racks{tx} => {
-                        let _ = tx.send(data_center.racks());
-                    }
-                    DataCenterEvent::ReserveOneVolume{tx} => {
-                        let _ = tx.send(data_center.reserve_one_volume().await);
-                    }
-                    DataCenterEvent::GetOrCreateRack{id, tx} => {
-                        let _ = tx.send(data_center.get_or_create_rack(id));
-                    }
-                    DataCenterEvent::AdjustMaxVolumeId{vid} => {
-                        data_center.adjust_max_volume_id(vid);
-                    }
-                }
-            }
-            _ = data_center.shutdown.recv() => {
-                break;
-            }
-        }
-    }
-    info!("data center [{}] event loop stopped.", data_center.id);
 }

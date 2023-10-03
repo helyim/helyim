@@ -1,4 +1,4 @@
-use heck::ToUpperCamelCase;
+use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
@@ -33,11 +33,15 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
 
     let gen_enum = generate_event_enum(&event_name, &fn_list)?;
     let gen_fn = generate_event_tx(&event_name, &event_tx_name, &fn_list)?;
-
+    let gen_loop = generate_event_loop(&struct_name, &event_name, &fn_list)?;
     let token_stream = quote! {
         #item_impl
+
         #gen_enum
+
         #gen_fn
+
+        #gen_loop
     };
 
     #[cfg(feature = "pretty_print")]
@@ -173,9 +177,90 @@ fn generate_event_tx(
     })
 }
 
+fn generate_event_loop(
+    struct_name: &syn::Ident,
+    event_name: &syn::Ident,
+    fn_list: &[&ImplItemFn],
+) -> Result<TokenStream> {
+    let mut variants = Vec::new();
+    let instance_name = get_instance_ident(struct_name);
+    for func in fn_list {
+        if not_self_fn(&func.sig.inputs) {
+            continue;
+        }
+        if ignore_fn(&func.attrs) {
+            continue;
+        }
+        let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+
+        for input in func.sig.inputs.iter() {
+            if let FnArg::Typed(PatType { pat, .. }) = input {
+                if let Pat::Ident(ident) = pat.as_ref() {
+                    let ident = &ident.ident;
+                    args_without_type.push(quote!(#ident));
+                }
+            }
+        }
+
+        let variant = get_variant_ident(&func.sig.ident);
+        let args_without_type = parse_args(args_without_type, false);
+        let caller = generate_caller(
+            &instance_name,
+            &func.sig.ident,
+            &args_without_type,
+            &func.sig.output,
+            func.sig.asyncness.is_some(),
+        );
+        let variant = match &func.sig.output {
+            ReturnType::Default => {
+                quote! {
+                    #event_name::#variant { #args_without_type } => {
+                        #caller
+                    }
+                }
+            }
+            ReturnType::Type(..) => {
+                quote! {
+                    #event_name::#variant { #args_without_type tx } => {
+                        #caller
+                    }
+                }
+            }
+        };
+        variants.push(variant);
+    }
+    let (loop_name, rx_name) = get_loop_and_rx_name(&instance_name);
+    Ok(quote! {
+        pub async fn #loop_name(
+            mut #instance_name: #struct_name,
+            mut #rx_name: futures::channel::mpsc::UnboundedReceiver<#event_name>,
+            mut shutdown: async_broadcast::Receiver<()>,
+        ) {
+            use futures::StreamExt;
+            loop {
+                tokio::select! {
+                    Some(event) = #rx_name.next() => {
+                        match event {
+                            #(#variants),*
+                        }
+                    }
+                    _ = shutdown.recv() => {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
 fn get_variant_ident(name: &syn::Ident) -> syn::Ident {
     let variant = name.to_string().to_upper_camel_case();
     Ident::new(&variant, name.span())
+}
+
+fn get_instance_ident(name: &syn::Ident) -> syn::Ident {
+    let instance = name.to_string().to_snake_case();
+    Ident::new(&instance, name.span())
 }
 
 fn parse_args(args: Punctuated<TokenStream, Token![,]>, left_comma: bool) -> TokenStream {
@@ -199,10 +284,37 @@ fn parse_result(typ: &Type) -> (TokenStream, TokenStream) {
     }
 }
 
-fn not_self_fn(inputs: &Punctuated<FnArg, Token![,]>) -> bool {
-    !inputs.iter().any(|arg| matches!(arg, FnArg::Receiver(_)))
+fn not_self_fn(args: &Punctuated<FnArg, Token![,]>) -> bool {
+    !args.iter().any(|arg| matches!(arg, FnArg::Receiver(_)))
 }
 
 fn ignore_fn(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("ignore"))
+}
+
+fn generate_caller(
+    instance: &Ident,
+    fn_name: &Ident,
+    args: &TokenStream,
+    return_type: &ReturnType,
+    is_async: bool,
+) -> TokenStream {
+    let async_ident = if is_async { quote!(.await) } else { quote!() };
+    let mut caller = quote! {
+        #instance.#fn_name(#args)#async_ident
+    };
+    if let ReturnType::Type(..) = return_type {
+        caller = quote! {
+            let _ = tx.send(#caller);
+        };
+    }
+    caller
+}
+
+fn get_loop_and_rx_name(name: &Ident) -> (Ident, Ident) {
+    let loop_name = format!("{name}_loop");
+    let loop_name = Ident::new(&loop_name, name.span());
+    let rx_name = format!("{name}_rx");
+    let rx_name = Ident::new(&rx_name, name.span());
+    (loop_name, rx_name)
 }

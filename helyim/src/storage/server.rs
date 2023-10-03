@@ -162,8 +162,12 @@ impl StorageServer {
         let client = HelyimClient::connect(self.grpc_addr()?).await?;
 
         let (looker_tx, looker_rx) = unbounded();
-        let looker = Looker::new(client.clone(), self.shutdown.new_receiver());
-        self.handles.push(rt_spawn(looker_loop(looker, looker_rx)));
+        let looker = Looker::new(client.clone());
+        self.handles.push(rt_spawn(looker_loop(
+            looker,
+            looker_rx,
+            self.shutdown.new_receiver(),
+        )));
 
         let ctx = StorageContext {
             store,
