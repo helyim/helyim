@@ -67,15 +67,12 @@ fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> Result<To
             continue;
         }
         let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+
         for input in func.sig.inputs.iter() {
-            match input {
-                FnArg::Receiver(_) => {}
-                FnArg::Typed(pat_type) => {
-                    if let Pat::Ident(ident) = pat_type.pat.as_ref() {
-                        let ident = &ident.ident;
-                        let ty = &pat_type.ty;
-                        args.push(quote!(#ident : #ty));
-                    }
+            if let FnArg::Typed(PatType { pat, ty, .. }) = input {
+                if let Pat::Ident(ident) = pat.as_ref() {
+                    let ident = &ident.ident;
+                    args.push(quote!(#ident : #ty));
                 }
             }
         }
