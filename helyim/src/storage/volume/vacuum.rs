@@ -7,7 +7,11 @@ use std::{
 };
 
 use bytes::BufMut;
-use tracing::debug;
+use helyim_proto::{
+    VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
+    VacuumVolumeCompactRequest,
+};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     errors::{Error, Result},
@@ -18,8 +22,9 @@ use crate::{
             read_index_entry_at_offset, scan_volume_file, verify_index_file_integrity, SuperBlock,
             Volume, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
-        Needle, NeedleMapper, NeedleValue,
+        Needle, NeedleMapper, NeedleValue, VolumeId,
     },
+    topology::{volume_layout::VolumeLayout, DataNodeEventTx},
     util::time::now,
 };
 
@@ -264,4 +269,104 @@ fn fetch_compact_revision_from_data_file(file: &mut File) -> Result<u16> {
     file.read_exact(&mut buf)?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision)
+}
+
+pub async fn batch_vacuum_volume_check(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    garbage_ratio: f64,
+) -> Result<bool> {
+    let mut check_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCheckRequest { volume_id };
+        match data_node_tx.vacuum_volume_check(request).await {
+            Ok(response) => {
+                info!("check volume {volume_id} success.");
+                check_success = response.garbage_ratio > garbage_ratio;
+            }
+            Err(err) => {
+                error!("check volume {volume_id} failed, {err}");
+                check_success = false;
+            }
+        }
+    }
+    Ok(check_success)
+}
+
+pub async fn batch_vacuum_volume_compact(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    preallocate: u64,
+) -> Result<bool> {
+    volume_layout.remove_from_writable(volume_id);
+    let mut compact_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCompactRequest {
+            volume_id,
+            preallocate,
+        };
+        match data_node_tx.vacuum_volume_compact(request).await {
+            Ok(_) => {
+                info!("compact volume {volume_id} success.");
+                compact_success = true;
+            }
+            Err(err) => {
+                error!("compact volume {volume_id} failed, {err}");
+                compact_success = false;
+            }
+        }
+    }
+    Ok(compact_success)
+}
+
+pub async fn batch_vacuum_volume_commit(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut commit_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCommitRequest { volume_id };
+        match data_node_tx.vacuum_volume_commit(request).await {
+            Ok(response) => {
+                if response.is_read_only {
+                    warn!("volume {volume_id} is read only, will not commit it.");
+                    commit_success = false;
+                } else {
+                    info!("commit volume {volume_id} success.");
+                    commit_success = true;
+                    volume_layout
+                        .set_volume_available(volume_id, data_node_tx)
+                        .await?;
+                }
+            }
+            Err(err) => {
+                error!("commit volume {volume_id} failed, {err}");
+                commit_success = false;
+            }
+        }
+    }
+    Ok(commit_success)
+}
+
+#[allow(dead_code)]
+async fn batch_vacuum_volume_cleanup(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut cleanup_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCleanupRequest { volume_id };
+        match data_node_tx.vacuum_volume_cleanup(request).await {
+            Ok(_) => {
+                info!("cleanup volume {volume_id} success.");
+                cleanup_success = true;
+            }
+            Err(_err) => {
+                cleanup_success = false;
+            }
+        }
+    }
+    Ok(cleanup_success)
 }

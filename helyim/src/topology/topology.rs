@@ -6,19 +6,18 @@ use futures::{
     StreamExt,
 };
 use helyim_macros::event_fn;
-use helyim_proto::{
-    VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
-    VacuumVolumeCompactRequest,
-};
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::{
     errors::Result,
     rt_spawn,
     sequence::{Sequence, Sequencer},
-    storage::{FileId, ReplicaPlacement, Ttl, VolumeId, VolumeInfo},
+    storage::{
+        batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
+        ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
+    },
     topology::{
         collection::Collection, data_center_loop, volume_grow::VolumeGrowOption,
         volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNodeEventTx,
@@ -53,32 +52,6 @@ impl Clone for Topology {
             handles: Vec::new(),
             shutdown: self.shutdown.clone(),
         }
-    }
-}
-
-impl Topology {
-    fn get_volume_layout(
-        &mut self,
-        collection: FastStr,
-        rp: ReplicaPlacement,
-        ttl: Ttl,
-    ) -> &mut VolumeLayout {
-        self.collections
-            .entry(collection.clone())
-            .or_insert(Collection::new(collection, self.volume_size_limit))
-            .get_or_create_volume_layout(rp, Some(ttl))
-    }
-
-    async fn get_max_volume_id(&self) -> Result<VolumeId> {
-        let mut vid = 0;
-        for (_, dc_tx) in self.data_centers.iter() {
-            let other = dc_tx.max_volume_id().await?;
-            if other > vid {
-                vid = other;
-            }
-        }
-
-        Ok(vid)
     }
 }
 
@@ -245,6 +218,32 @@ impl Topology {
     }
 }
 
+impl Topology {
+    fn get_volume_layout(
+        &mut self,
+        collection: FastStr,
+        rp: ReplicaPlacement,
+        ttl: Ttl,
+    ) -> &mut VolumeLayout {
+        self.collections
+            .entry(collection.clone())
+            .or_insert(Collection::new(collection, self.volume_size_limit))
+            .get_or_create_volume_layout(rp, Some(ttl))
+    }
+
+    async fn get_max_volume_id(&self) -> Result<VolumeId> {
+        let mut vid = 0;
+        for (_, dc_tx) in self.data_centers.iter() {
+            let other = dc_tx.max_volume_id().await?;
+            if other > vid {
+                vid = other;
+            }
+        }
+
+        Ok(vid)
+    }
+}
+
 pub async fn topology_loop(
     mut topology: Topology,
     mut topology_rx: UnboundedReceiver<TopologyEvent>,
@@ -339,104 +338,4 @@ pub async fn topology_vacuum_loop(
         }
     }
     info!("topology vacuum loop stopped")
-}
-
-async fn batch_vacuum_volume_check(
-    volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
-    garbage_ratio: f64,
-) -> Result<bool> {
-    let mut check_success = true;
-    for data_node_tx in data_nodes {
-        let request = VacuumVolumeCheckRequest { volume_id };
-        match data_node_tx.vacuum_volume_check(request).await {
-            Ok(response) => {
-                info!("check volume {volume_id} success.");
-                check_success = response.garbage_ratio > garbage_ratio;
-            }
-            Err(err) => {
-                error!("check volume {volume_id} failed, {err}");
-                check_success = false;
-            }
-        }
-    }
-    Ok(check_success)
-}
-
-async fn batch_vacuum_volume_compact(
-    volume_layout: &VolumeLayout,
-    volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
-    preallocate: u64,
-) -> Result<bool> {
-    volume_layout.remove_from_writable(volume_id);
-    let mut compact_success = true;
-    for data_node_tx in data_nodes {
-        let request = VacuumVolumeCompactRequest {
-            volume_id,
-            preallocate,
-        };
-        match data_node_tx.vacuum_volume_compact(request).await {
-            Ok(_) => {
-                info!("compact volume {volume_id} success.");
-                compact_success = true;
-            }
-            Err(err) => {
-                error!("compact volume {volume_id} failed, {err}");
-                compact_success = false;
-            }
-        }
-    }
-    Ok(compact_success)
-}
-
-async fn batch_vacuum_volume_commit(
-    volume_layout: &VolumeLayout,
-    volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
-) -> Result<bool> {
-    let mut commit_success = true;
-    for data_node_tx in data_nodes {
-        let request = VacuumVolumeCommitRequest { volume_id };
-        match data_node_tx.vacuum_volume_commit(request).await {
-            Ok(response) => {
-                if response.is_read_only {
-                    warn!("volume {volume_id} is read only, will not commit it.");
-                    commit_success = false;
-                } else {
-                    info!("commit volume {volume_id} success.");
-                    commit_success = true;
-                    volume_layout
-                        .set_volume_available(volume_id, data_node_tx)
-                        .await?;
-                }
-            }
-            Err(err) => {
-                error!("commit volume {volume_id} failed, {err}");
-                commit_success = false;
-            }
-        }
-    }
-    Ok(commit_success)
-}
-
-#[allow(dead_code)]
-async fn batch_vacuum_volume_cleanup(
-    volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
-) -> Result<bool> {
-    let mut cleanup_success = true;
-    for data_node_tx in data_nodes {
-        let request = VacuumVolumeCleanupRequest { volume_id };
-        match data_node_tx.vacuum_volume_cleanup(request).await {
-            Ok(_) => {
-                info!("cleanup volume {volume_id} success.");
-                cleanup_success = true;
-            }
-            Err(_err) => {
-                cleanup_success = false;
-            }
-        }
-    }
-    Ok(cleanup_success)
 }

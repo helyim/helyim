@@ -33,7 +33,7 @@ use crate::{
 };
 
 #[allow(dead_code)]
-mod vacuum;
+pub mod vacuum;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -117,34 +117,6 @@ impl Display for Volume {
             self.super_block.ttl,
             self.readonly
         )
-    }
-}
-
-impl Volume {
-    pub fn file(&self) -> Result<&File> {
-        match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
-            None => Err(anyhow!("volume {} not load", self.id)),
-        }
-    }
-
-    pub fn file_mut(&mut self) -> Result<&mut File> {
-        match self.data_file.as_mut() {
-            Some(data_file) => Ok(data_file),
-            None => Err(anyhow!("volume {} not load", self.id)),
-        }
-    }
-
-    pub fn data_filename(&self) -> String {
-        format!("{}.{DATA_FILE_SUFFIX}", self.filename())
-    }
-
-    pub fn index_filename(&self) -> String {
-        format!("{}.{IDX_FILE_SUFFIX}", self.filename())
-    }
-
-    pub fn content_size(&self) -> u64 {
-        self.needle_mapper.content_size()
     }
 }
 
@@ -410,6 +382,37 @@ impl Volume {
     pub fn size(&self) -> Result<u64> {
         let file = self.file()?;
         Ok(file.metadata()?.len())
+    }
+
+    #[ignore]
+    pub fn file(&self) -> Result<&File> {
+        match self.data_file.as_ref() {
+            Some(data_file) => Ok(data_file),
+            None => Err(anyhow!("volume {} not load", self.id)),
+        }
+    }
+
+    #[ignore]
+    pub fn file_mut(&mut self) -> Result<&mut File> {
+        match self.data_file.as_mut() {
+            Some(data_file) => Ok(data_file),
+            None => Err(anyhow!("volume {} not load", self.id)),
+        }
+    }
+
+    #[ignore]
+    pub fn data_filename(&self) -> String {
+        format!("{}.{DATA_FILE_SUFFIX}", self.filename())
+    }
+
+    #[ignore]
+    pub fn index_filename(&self) -> String {
+        format!("{}.{IDX_FILE_SUFFIX}", self.filename())
+    }
+
+    #[ignore]
+    pub fn content_size(&self) -> u64 {
+        self.needle_mapper.content_size()
     }
 
     // volume is expired if modified time + volume ttl < now

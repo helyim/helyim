@@ -10,7 +10,6 @@ use std::{
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::VolumeInfo;
 use parking_lot::Mutex;
 
@@ -35,6 +34,7 @@ pub use decoder::{find_data_filesize, write_data_file, write_idx_file_from_ec_in
 
 mod encoder;
 pub use encoder::{rebuild_ec_files, write_ec_files, write_sorted_file_from_idx};
+use helyim_macros::event_fn;
 
 use crate::errors::Error;
 
@@ -63,6 +63,7 @@ pub struct EcVolume {
     ecj_file: Arc<Mutex<File>>,
 }
 
+#[event_fn]
 impl EcVolume {
     pub fn new(dir: FastStr, collection: FastStr, vid: VolumeId) -> Result<EcVolume> {
         let base_filename = ec_shard_filename(&collection, &dir, vid);
@@ -134,6 +135,7 @@ impl EcVolume {
         idx.map(|idx| self.shards.remove(idx))
     }
 
+    #[ignore]
     pub fn find_shard(&self, shard_id: ShardId) -> Option<&EcVolumeShard> {
         self.shards.iter().find(|shard| shard.shard_id == shard_id)
     }
@@ -376,22 +378,4 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<()> {
     fs::remove_file(ecj_filename)?;
 
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub struct EcVolumeEventTx(UnboundedSender<EcVolumeEvent>);
-
-impl EcVolumeEventTx {
-    pub fn new(tx: UnboundedSender<EcVolumeEvent>) -> Self {
-        Self(tx)
-    }
-
-    pub fn destroy(&self) -> Result<()> {
-        self.0.unbounded_send(EcVolumeEvent::Destroy)?;
-        Ok(())
-    }
-}
-
-pub enum EcVolumeEvent {
-    Destroy,
 }

@@ -2,8 +2,8 @@ use heck::ToUpperCamelCase;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    punctuated::Punctuated, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, Result,
-    ReturnType, Token, Type,
+    punctuated::Punctuated, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType,
+    Result, ReturnType, Token, Type,
 };
 
 #[proc_macro_attribute]
@@ -66,6 +66,9 @@ fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> Result<To
         if not_self_fn(&func.sig.inputs) {
             continue;
         }
+        if ignore_fn(&func.attrs) {
+            continue;
+        }
         let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
 
         for input in func.sig.inputs.iter() {
@@ -105,6 +108,9 @@ fn generate_event_tx(
     let mut func_token_streams = TokenStream::new();
     for func in fn_list {
         if not_self_fn(&func.sig.inputs) {
+            continue;
+        }
+        if ignore_fn(&func.attrs) {
             continue;
         }
         let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
@@ -195,4 +201,8 @@ fn parse_result(typ: &Type) -> (TokenStream, TokenStream) {
 
 fn not_self_fn(inputs: &Punctuated<FnArg, Token![,]>) -> bool {
     !inputs.iter().any(|arg| matches!(arg, FnArg::Receiver(_)))
+}
+
+fn ignore_fn(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("ignore"))
 }

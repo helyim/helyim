@@ -45,6 +45,7 @@ impl std::fmt::Display for DataNode {
     }
 }
 
+#[event_fn]
 impl DataNode {
     pub fn new(
         id: FastStr,
@@ -69,25 +70,6 @@ impl DataNode {
         }
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
-        if vid > self.max_volume_id {
-            self.max_volume_id = vid;
-        }
-
-        if let Some(rack) = self.rack.as_ref() {
-            rack.adjust_max_volume_id(self.max_volume_id).await?;
-        }
-
-        Ok(())
-    }
-
-    pub fn grpc_addr(&self) -> String {
-        format!("http://{}:{}", self.ip, self.port + 1)
-    }
-}
-
-#[event_fn]
-impl DataNode {
     pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
         self.adjust_max_volume_id(v.id).await?;
         self.volumes.insert(v.id, v);
@@ -173,6 +155,24 @@ impl DataNode {
         }
 
         Ok(deleted)
+    }
+
+    #[ignore]
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+        if vid > self.max_volume_id {
+            self.max_volume_id = vid;
+        }
+
+        if let Some(rack) = self.rack.as_ref() {
+            rack.adjust_max_volume_id(self.max_volume_id).await?;
+        }
+
+        Ok(())
+    }
+
+    #[ignore]
+    pub fn grpc_addr(&self) -> String {
+        format!("http://{}:{}", self.ip, self.port + 1)
     }
 
     pub async fn allocate_volume(

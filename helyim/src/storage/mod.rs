@@ -39,6 +39,9 @@ mod version;
 pub use version::CURRENT_VERSION;
 
 mod volume;
+pub use volume::vacuum::{
+    batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact,
+};
 
 mod volume_info;
 pub use volume_info::VolumeInfo;

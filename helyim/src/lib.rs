@@ -1,3 +1,4 @@
+#![allow(unused_attributes)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::mutable_key_type)]
 use std::time::Duration;

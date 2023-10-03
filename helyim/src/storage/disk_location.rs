@@ -98,9 +98,9 @@ impl DiskLocation {
         self.ec_volumes.get(&vid)
     }
 
-    pub fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(volume) = self.ec_volumes.remove(&vid) {
-            volume.destroy()?;
+            volume.destroy().await?;
         }
         Ok(())
     }
