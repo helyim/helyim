@@ -1,13 +1,16 @@
 use heck::ToUpperCamelCase;
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    punctuated::Punctuated, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, Result, ReturnType,
-    Token,
+    punctuated::Punctuated, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, Result,
+    ReturnType, Token, Type,
 };
 
 #[proc_macro_attribute]
-pub fn event_fn(_args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn event_fn(
+    _attr: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let item_impl = syn::parse_macro_input!(input as syn::ItemImpl);
     let struct_type = item_impl.self_ty.to_token_stream().into();
     let struct_name = syn::parse_macro_input!(struct_type as syn::Ident);
@@ -17,7 +20,7 @@ pub fn event_fn(_args: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
-fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<proc_macro2::TokenStream> {
+fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
     let event_name = Ident::new(&format!("{}Event", struct_name), struct_name.span());
     let event_tx_name = Ident::new(&format!("{}EventTx", struct_name), struct_name.span());
 
@@ -31,26 +34,42 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<proc_macro2::Tok
     let gen_enum = generate_event_enum(&event_name, &fn_list)?;
     let gen_fn = generate_event_tx(&event_name, &event_tx_name, &fn_list)?;
 
-    Ok(quote! {
+    let token_stream = quote! {
         #item_impl
         #gen_enum
         #gen_fn
-    })
+    };
+
+    #[cfg(feature = "pretty_print")]
+    {
+        let file = syn::parse_file(&token_stream.to_string())?;
+        let pretty = prettyplease::unparse(&file);
+
+        use std::{fs, io::Write};
+        let mut pretty_file = fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open("pretty.rs")
+            .expect("Unable to open file");
+        pretty_file
+            .write_all(pretty.as_bytes())
+            .expect("Unable to write file");
+    }
+
+    Ok(token_stream)
 }
 
-fn generate_event_enum(
-    event_name: &Ident,
-    fn_list: &[&ImplItemFn],
-) -> Result<proc_macro2::TokenStream> {
+fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> Result<TokenStream> {
     let mut variants = Vec::new();
     for func in fn_list {
-        let mut has_self = false;
-        let mut args: Punctuated<proc_macro2::TokenStream, Token![,]> = Punctuated::new();
+        if not_self_fn(&func.sig.inputs) {
+            continue;
+        }
+        let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
         for input in func.sig.inputs.iter() {
             match input {
-                FnArg::Receiver(_) => {
-                    has_self = true;
-                }
+                FnArg::Receiver(_) => {}
                 FnArg::Typed(pat_type) => {
                     if let Pat::Ident(ident) = pat_type.pat.as_ref() {
                         let ident = &ident.ident;
@@ -60,18 +79,9 @@ fn generate_event_enum(
                 }
             }
         }
-        if !has_self {
-            continue;
-        }
 
-        let variant = func.sig.ident.to_string().to_upper_camel_case();
-        let variant = Ident::new(&variant, func.sig.ident.span());
-
-        let args = if !args.is_empty() {
-            quote!(#args,)
-        } else {
-            quote!()
-        };
+        let variant = get_variant_ident(&func.sig.ident);
+        let args = parse_args(args, false);
 
         let variant = match &func.sig.output {
             ReturnType::Default => {
@@ -94,42 +104,28 @@ fn generate_event_tx(
     event_name: &syn::Ident,
     event_tx_name: &syn::Ident,
     fn_list: &[&ImplItemFn],
-) -> Result<proc_macro2::TokenStream> {
-    let mut func_token_streams = proc_macro2::TokenStream::new();
-
+) -> Result<TokenStream> {
+    let mut func_token_streams = TokenStream::new();
     for func in fn_list {
-        let mut has_self = false;
-        let mut args: Punctuated<proc_macro2::TokenStream, Token![,]> = Punctuated::new();
-        let mut args_without_type: Punctuated<proc_macro2::TokenStream, Token![,]> =
-            Punctuated::new();
+        if not_self_fn(&func.sig.inputs) {
+            continue;
+        }
+        let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+        let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
         for input in func.sig.inputs.iter() {
-            match input {
-                FnArg::Receiver(_) => {
-                    has_self = true;
-                }
-                FnArg::Typed(pat_type) => {
-                    if let Pat::Ident(ident) = pat_type.pat.as_ref() {
-                        let ident = &ident.ident;
-                        let ty = &pat_type.ty;
-                        args.push(quote!(#ident : #ty));
-                        args_without_type.push(quote!(#ident));
-                    }
+            if let FnArg::Typed(PatType { pat, ty, .. }) = input {
+                if let Pat::Ident(ident) = pat.as_ref() {
+                    let ident = &ident.ident;
+                    args.push(quote!(#ident : #ty));
+                    args_without_type.push(quote!(#ident));
                 }
             }
         }
-        if !has_self {
-            continue;
-        }
 
-        let variant = func.sig.ident.to_string().to_upper_camel_case();
-        let variant = Ident::new(&variant, func.sig.ident.span());
+        let variant = get_variant_ident(&func.sig.ident);
 
         let func_name = &func.sig.ident;
-        let args = if !args.is_empty() {
-            quote!(, #args)
-        } else {
-            quote!()
-        };
+        let args = parse_args(args, true);
 
         let func = match &func.sig.output {
             ReturnType::Default => {
@@ -143,17 +139,8 @@ fn generate_event_tx(
                 }
             }
             ReturnType::Type(_, typ) => {
-                let typ_str = typ.to_token_stream().to_string().replace(' ', "");
-                let (result, typ) = if typ_str.starts_with("Result<") {
-                    (quote!(rx.await?), quote!(#typ))
-                } else {
-                    (quote!(Ok(rx.await?)), quote!(Result<#typ>))
-                };
-                let args_without_type = if !args_without_type.is_empty() {
-                    quote!(#args_without_type,)
-                } else {
-                    quote!()
-                };
+                let (result, typ) = parse_result(typ);
+                let args_without_type = parse_args(args_without_type, false);
                 quote! {
                     pub async fn #func_name(&self #args) -> #typ  {
                         let (tx, rx) = futures::channel::oneshot::channel();
@@ -181,4 +168,34 @@ fn generate_event_tx(
             #func_token_streams
         }
     })
+}
+
+fn get_variant_ident(name: &syn::Ident) -> syn::Ident {
+    let variant = name.to_string().to_upper_camel_case();
+    Ident::new(&variant, name.span())
+}
+
+fn parse_args(args: Punctuated<TokenStream, Token![,]>, left_comma: bool) -> TokenStream {
+    if !args.is_empty() {
+        if left_comma {
+            quote!(,#args)
+        } else {
+            quote!(#args,)
+        }
+    } else {
+        quote!()
+    }
+}
+
+fn parse_result(typ: &Type) -> (TokenStream, TokenStream) {
+    let type_str = typ.to_token_stream().to_string().replace(' ', "");
+    if type_str.starts_with("Result<") {
+        (quote!(rx.await?), quote!(#typ))
+    } else {
+        (quote!(Ok(rx.await?)), quote!(Result<#typ>))
+    }
+}
+
+fn not_self_fn(inputs: &Punctuated<FnArg, Token![,]>) -> bool {
+    !inputs.iter().any(|arg| matches!(arg, FnArg::Receiver(_)))
 }
