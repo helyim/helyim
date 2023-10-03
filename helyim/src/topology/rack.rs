@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use faststr::FastStr;
-use futures::{
-    channel::mpsc::{unbounded},
-};
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
@@ -78,10 +76,13 @@ impl Rack {
         self.nodes
             .entry(id.clone())
             .or_insert_with(|| {
-                let data_node =
-                    DataNode::new(id, ip, port, public_url, max_volumes);
+                let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
                 let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(data_node_loop(data_node, rx, self.shutdown.clone())));
+                self.handles.push(rt_spawn(data_node_loop(
+                    data_node,
+                    rx,
+                    self.shutdown.clone(),
+                )));
 
                 DataNodeEventTx::new(tx)
             })

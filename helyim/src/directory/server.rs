@@ -79,7 +79,8 @@ impl DirectoryServer {
 
         // volume growth event loop
         let (tx, rx) = unbounded();
-        let volume_grow_handle = rt_spawn(volume_growth_loop(VolumeGrowth, rx, shutdown_rx.clone()));
+        let volume_grow_handle =
+            rt_spawn(volume_growth_loop(VolumeGrowth, rx, shutdown_rx.clone()));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
         let dir = DirectoryServer {

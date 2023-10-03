@@ -1,9 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use faststr::FastStr;
-use futures::{
-    channel::mpsc::{unbounded},
-};
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use serde::Serialize;
 use tokio::task::JoinHandle;
@@ -81,7 +79,7 @@ impl Topology {
                 self.handles.push(rt_spawn(data_center_loop(
                     DataCenter::new(name, self.shutdown.clone()),
                     rx,
-                    self.shutdown.clone()
+                    self.shutdown.clone(),
                 )));
 
                 DataCenterEventTx::new(tx)

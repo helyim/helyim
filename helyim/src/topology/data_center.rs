@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use faststr::FastStr;
-use futures::{
-    channel::mpsc::{unbounded},
-};
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
@@ -65,7 +63,7 @@ impl DataCenter {
                 self.handles.push(rt_spawn(rack_loop(
                     Rack::new(id, self.shutdown.clone()),
                     rx,
-                    self.shutdown.clone()
+                    self.shutdown.clone(),
                 )));
 
                 RackEventTx::new(tx)
