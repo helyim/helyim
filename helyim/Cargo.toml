@@ -38,9 +38,11 @@ lru.workspace = true
 mime_guess.workspace = true
 multer.workspace = true
 nom.workspace = true
+once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 reed-solomon-erasure = { workspace = true, features = [ "simd-accel" ] }
+regex.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

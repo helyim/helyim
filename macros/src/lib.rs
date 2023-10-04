@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     punctuated::Punctuated, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType,
-    Result, ReturnType, Token, Type,
+    Result, ReturnType, Token, Type, Visibility,
 };
 
 #[proc_macro_attribute]
@@ -67,10 +67,7 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
 fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> Result<TokenStream> {
     let mut variants = Vec::new();
     for func in fn_list {
-        if not_self_fn(&func.sig.inputs) {
-            continue;
-        }
-        if ignore_fn(&func.attrs) {
+        if skip_fn(func) {
             continue;
         }
         let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
@@ -111,10 +108,7 @@ fn generate_event_tx(
 ) -> Result<TokenStream> {
     let mut func_token_streams = TokenStream::new();
     for func in fn_list {
-        if not_self_fn(&func.sig.inputs) {
-            continue;
-        }
-        if ignore_fn(&func.attrs) {
+        if skip_fn(func) {
             continue;
         }
         let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
@@ -185,10 +179,7 @@ fn generate_event_loop(
     let mut variants = Vec::new();
     let instance_name = get_instance_ident(struct_name);
     for func in fn_list {
-        if not_self_fn(&func.sig.inputs) {
-            continue;
-        }
-        if ignore_fn(&func.attrs) {
+        if skip_fn(func) {
             continue;
         }
         let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
@@ -294,8 +285,16 @@ fn not_self_fn(args: &Punctuated<FnArg, Token![,]>) -> bool {
     !args.iter().any(|arg| matches!(arg, FnArg::Receiver(_)))
 }
 
+fn not_pub_fn(vis: &Visibility) -> bool {
+    !matches!(vis, Visibility::Public(_))
+}
+
 fn ignore_fn(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| attr.path().is_ident("ignore"))
+}
+
+fn skip_fn(func: &ImplItemFn) -> bool {
+    not_self_fn(&func.sig.inputs) || not_pub_fn(&func.vis) || ignore_fn(&func.attrs)
 }
 
 fn generate_caller(

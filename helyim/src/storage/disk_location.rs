@@ -8,6 +8,8 @@ use std::{
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use tracing::info;
 
 use crate::{
@@ -23,6 +25,8 @@ use crate::{
         VolumeId,
     },
 };
+
+static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\.ec[0-9][0-9]").unwrap());
 
 pub struct DiskLocation {
     pub directory: FastStr,
@@ -60,7 +64,7 @@ impl DiskLocation {
             let path = file.as_path();
 
             if path.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
-                let (vid, collection) = parse_volume_id(path)?;
+                let (vid, collection) = parse_volume_id_from_path(path)?;
                 info!("load volume {}'s data file {:?}", vid, path);
                 if let hash_map::Entry::Vacant(entry) = self.volumes.entry(vid) {
                     let volume = Volume::new(
@@ -119,10 +123,11 @@ impl DiskLocation {
 
     pub async fn load_ec_shard(
         &mut self,
-        collection: FastStr,
+        collection: &str,
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<()> {
+        let collection = FastStr::new(collection);
         let shard = EcVolumeShard::new(self.directory.clone(), collection.clone(), vid, shard_id)?;
         let volume = match self.ec_volumes.get(&vid) {
             Some(volume) => volume,
@@ -138,9 +143,90 @@ impl DiskLocation {
         volume.add_shard(shard).await?;
         Ok(())
     }
+
+    pub async fn unload_ec_shard(&mut self, vid: VolumeId, shard_id: ShardId) -> Result<bool> {
+        match self.ec_volumes.get(&vid) {
+            Some(volume) => {
+                if volume.delete_shard(shard_id).await?.is_some() && volume.shards_len().await? == 0
+                {
+                    self.ec_volumes.remove(&vid);
+                }
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub async fn load_ec_shards(
+        &mut self,
+        shards: &[String],
+        collection: &str,
+        vid: VolumeId,
+    ) -> Result<()> {
+        for shard in shards {
+            let shard_id = u64::from_str_radix(&shard[3..], 16)?;
+            self.load_ec_shard(collection, vid, shard_id as ShardId)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn load_all_shards(&mut self) -> Result<()> {
+        let dir = fs::read_dir(self.directory.to_string())?;
+        let mut entries = Vec::new();
+        for entry in dir {
+            entries.push(entry?);
+        }
+        entries.sort_by_key(|entry| entry.file_name());
+
+        let mut same_volume_shards = Vec::new();
+        let mut pre_volume_id = 0 as VolumeId;
+
+        for entry in entries.iter() {
+            if entry.path().is_dir() {
+                continue;
+            }
+            if let Some(filename) = entry.path().file_name() {
+                let file_path = Path::new(filename);
+                if let Some(ext) = file_path.extension() {
+                    let filename = filename.to_string_lossy().to_string();
+                    let base_name = &filename[..filename.len() - ext.len() - 1];
+                    match parse_volume_id(base_name) {
+                        Ok((vid, collection)) => {
+                            if let Some(m) = REGEX.find(&ext.to_string_lossy()) {
+                                if pre_volume_id == 0 || vid == pre_volume_id {
+                                    same_volume_shards.push(filename);
+                                } else {
+                                    same_volume_shards = vec![filename];
+                                }
+                                pre_volume_id = vid;
+                                continue;
+                            }
+
+                            if ext.eq_ignore_ascii_case("ecx") && vid == pre_volume_id {
+                                self.load_ec_shards(&same_volume_shards, collection, vid)
+                                    .await?;
+                                pre_volume_id = vid;
+                                continue;
+                            }
+                        }
+                        Err(err) => continue,
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
-fn parse_volume_id(path: &Path) -> Result<(VolumeId, &str)> {
+fn parse_volume_id(name: &str) -> Result<(VolumeId, &str)> {
+    let index = name.find('_').unwrap_or_default();
+    let (collection, vid) = (&name[0..index], &name[index + 1..]);
+    let vid = u32::from_str_radix(vid, 16)?;
+    Ok((vid, collection))
+}
+
+fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
     if path.is_dir() {
         return Err(anyhow!(
             "invalid data file: {}",

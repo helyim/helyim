@@ -142,6 +142,10 @@ impl EcVolume {
             .cloned()
     }
 
+    pub fn shards_len(&self) -> usize {
+        self.shards.len()
+    }
+
     #[ignore]
     pub fn locate_ec_shard_needle<F>(
         &self,

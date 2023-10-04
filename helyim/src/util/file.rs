@@ -38,9 +38,11 @@ pub fn file_exists(filename: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsStr,
         fs,
         fs::{metadata, read, write},
         io::{ErrorKind, Read, Write},
+        path::Path,
     };
 
     #[test]
@@ -75,5 +77,11 @@ mod tests {
         let mut buf = [0u8; 8];
         let n = file.read(&mut buf).unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    pub fn test_file_ext() {
+        let path = Path::new("/tmp/helyim.txt");
+        assert_eq!(path.extension(), Some(OsStr::new("txt")));
     }
 }
