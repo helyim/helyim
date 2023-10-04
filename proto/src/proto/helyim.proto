@@ -41,6 +41,12 @@ message VolumeInformationMessage {
   uint32 ttl = 10;
 }
 
+message VolumeEcShardInformationMessage {
+  uint32 id = 1;
+  string collection = 2;
+  uint32 ec_index_bits = 3;
+}
+
 message LookupVolumeRequest {
   repeated string volumes = 1;
   string collection = 2;
