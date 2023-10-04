@@ -192,12 +192,17 @@ fn generate_event_loop(
             continue;
         }
         let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
-
+        let mut is_self_ref = true;
         for input in func.sig.inputs.iter() {
-            if let FnArg::Typed(PatType { pat, .. }) = input {
-                if let Pat::Ident(ident) = pat.as_ref() {
-                    let ident = &ident.ident;
-                    args_without_type.push(quote!(#ident));
+            match input {
+                FnArg::Typed(PatType { pat, .. }) => {
+                    if let Pat::Ident(ident) = pat.as_ref() {
+                        let ident = &ident.ident;
+                        args_without_type.push(quote!(#ident));
+                    }
+                }
+                FnArg::Receiver(recv) => {
+                    is_self_ref = recv.reference.is_some();
                 }
             }
         }
@@ -207,6 +212,7 @@ fn generate_event_loop(
         let caller = generate_caller(
             &instance_name,
             &func.sig.ident,
+            is_self_ref,
             &args_without_type,
             &func.sig.output,
             func.sig.asyncness.is_some(),
@@ -295,18 +301,19 @@ fn ignore_fn(attrs: &[Attribute]) -> bool {
 fn generate_caller(
     instance: &Ident,
     fn_name: &Ident,
+    is_self_ref: bool,
     args: &TokenStream,
     return_type: &ReturnType,
     is_async: bool,
 ) -> TokenStream {
     let async_ident = if is_async { quote!(.await) } else { quote!() };
-    let mut caller = quote! {
-        #instance.#fn_name(#args)#async_ident
+    let mut caller = quote!(#instance.#fn_name(#args)#async_ident);
+    caller = match return_type {
+        ReturnType::Type(..) => quote! { let _ = tx.send(#caller); },
+        ReturnType::Default => quote!(#caller;),
     };
-    if let ReturnType::Type(..) = return_type {
-        caller = quote! {
-            let _ = tx.send(#caller);
-        };
+    if !is_self_ref {
+        caller = quote! { #caller break; }
     }
     caller
 }

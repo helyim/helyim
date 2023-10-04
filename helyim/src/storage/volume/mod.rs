@@ -351,7 +351,7 @@ impl Volume {
         self.readonly
     }
 
-    pub fn destroy(&self) -> Result<()> {
+    pub fn destroy(self) -> Result<()> {
         if self.readonly {
             return Err(anyhow!("volume {} is read only", self.id));
         }

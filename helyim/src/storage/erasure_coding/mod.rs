@@ -231,7 +231,7 @@ impl EcVolume {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
     }
 
-    pub fn destroy(&self) -> Result<()> {
+    pub fn destroy(self) -> Result<()> {
         let filename = self.filename();
         for shard in self.shards.iter() {
             shard.destroy()?;
