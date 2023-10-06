@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     punctuated::Punctuated, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType,
-    Result, ReturnType, Token, Type, Visibility,
+    Result, ReturnType, Signature, Token, Type, Visibility,
 };
 
 #[proc_macro_attribute]
@@ -31,16 +31,13 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
         }
     }
 
-    let gen_enum = generate_event_enum(&event_name, &fn_list)?;
-    let gen_fn = generate_event_tx(&event_name, &event_tx_name, &fn_list)?;
-    let gen_loop = generate_event_loop(&struct_name, &event_name, &fn_list)?;
+    let gen_enum = generate_event_enum(&event_name, &fn_list);
+    let gen_fn = generate_event_tx(&event_name, &event_tx_name, &fn_list);
+    let gen_loop = generate_event_loop(&struct_name, &event_name, &fn_list);
     let token_stream = quote! {
         #item_impl
-
         #gen_enum
-
         #gen_fn
-
         #gen_loop
     };
 
@@ -64,100 +61,36 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
     Ok(token_stream)
 }
 
-fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> Result<TokenStream> {
+fn generate_event_enum(event_name: &Ident, fn_list: &[&ImplItemFn]) -> TokenStream {
     let mut variants = Vec::new();
     for func in fn_list {
         if skip_fn(func) {
             continue;
         }
-        let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
 
-        for input in func.sig.inputs.iter() {
-            if let FnArg::Typed(PatType { pat, ty, .. }) = input {
-                if let Pat::Ident(ident) = pat.as_ref() {
-                    let ident = &ident.ident;
-                    args.push(quote!(#ident : #ty));
-                }
-            }
-        }
-
-        let variant = get_variant_ident(&func.sig.ident);
-        let args = parse_args(args, false);
-
-        let variant = match &func.sig.output {
-            ReturnType::Default => {
-                quote! { #variant { #args } }
-            }
-            ReturnType::Type(_, typ) => {
-                quote! { #variant { #args tx: futures::channel::oneshot::Sender<#typ> } }
-            }
-        };
-        variants.push(variant);
+        variants.push(generate_variant_for_enum(&func.sig));
     }
-    Ok(quote! {
+    quote! {
         pub enum #event_name {
             #(#variants),*
         }
-    })
+    }
 }
 
 fn generate_event_tx(
     event_name: &syn::Ident,
     event_tx_name: &syn::Ident,
     fn_list: &[&ImplItemFn],
-) -> Result<TokenStream> {
+) -> TokenStream {
     let mut func_token_streams = TokenStream::new();
     for func in fn_list {
         if skip_fn(func) {
             continue;
         }
-        let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
-        let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
-        for input in func.sig.inputs.iter() {
-            if let FnArg::Typed(PatType { pat, ty, .. }) = input {
-                if let Pat::Ident(ident) = pat.as_ref() {
-                    let ident = &ident.ident;
-                    args.push(quote!(#ident : #ty));
-                    args_without_type.push(quote!(#ident));
-                }
-            }
-        }
-
-        let variant = get_variant_ident(&func.sig.ident);
-
-        let func_name = &func.sig.ident;
-        let args = parse_args(args, true);
-
-        let func = match &func.sig.output {
-            ReturnType::Default => {
-                quote! {
-                    pub fn #func_name(&self #args) ->  Result<()> {
-                        self.0.unbounded_send(#event_name::#variant {
-                            #args_without_type
-                        })?;
-                        Ok(())
-                    }
-                }
-            }
-            ReturnType::Type(_, typ) => {
-                let (result, typ) = parse_result(typ);
-                let args_without_type = parse_args(args_without_type, false);
-                quote! {
-                    pub async fn #func_name(&self #args) -> #typ  {
-                        let (tx, rx) = futures::channel::oneshot::channel();
-                        self.0.unbounded_send(#event_name::#variant {
-                            #args_without_type tx
-                        })?;
-                        #result
-                    }
-                }
-            }
-        };
-
-        func_token_streams.extend(func);
+        func_token_streams.extend(generate_fn(event_name, &func.sig));
     }
 
-    Ok(quote! {
+    quote! {
         #[derive(Debug, Clone)]
         pub struct #event_tx_name(futures::channel::mpsc::UnboundedSender<#event_name>);
 
@@ -168,66 +101,25 @@ fn generate_event_tx(
 
             #func_token_streams
         }
-    })
+    }
 }
 
 fn generate_event_loop(
     struct_name: &syn::Ident,
     event_name: &syn::Ident,
     fn_list: &[&ImplItemFn],
-) -> Result<TokenStream> {
+) -> TokenStream {
     let mut variants = Vec::new();
     let instance_name = get_instance_ident(struct_name);
     for func in fn_list {
         if skip_fn(func) {
             continue;
         }
-        let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
-        let mut is_self_ref = true;
-        for input in func.sig.inputs.iter() {
-            match input {
-                FnArg::Typed(PatType { pat, .. }) => {
-                    if let Pat::Ident(ident) = pat.as_ref() {
-                        let ident = &ident.ident;
-                        args_without_type.push(quote!(#ident));
-                    }
-                }
-                FnArg::Receiver(recv) => {
-                    is_self_ref = recv.reference.is_some();
-                }
-            }
-        }
-
-        let variant = get_variant_ident(&func.sig.ident);
-        let args_without_type = parse_args(args_without_type, false);
-        let caller = generate_caller(
-            &instance_name,
-            &func.sig.ident,
-            is_self_ref,
-            &args_without_type,
-            &func.sig.output,
-            func.sig.asyncness.is_some(),
-        );
-        let variant = match &func.sig.output {
-            ReturnType::Default => {
-                quote! {
-                    #event_name::#variant { #args_without_type } => {
-                        #caller
-                    }
-                }
-            }
-            ReturnType::Type(..) => {
-                quote! {
-                    #event_name::#variant { #args_without_type tx } => {
-                        #caller
-                    }
-                }
-            }
-        };
+        let variant = generate_variant_for_loop(&instance_name, event_name, &func.sig);
         variants.push(variant);
     }
     let (loop_name, rx_name) = get_loop_and_rx_name(&instance_name);
-    Ok(quote! {
+    quote! {
         pub async fn #loop_name(
             mut #instance_name: #struct_name,
             mut #rx_name: futures::channel::mpsc::UnboundedReceiver<#event_name>,
@@ -247,7 +139,77 @@ fn generate_event_loop(
                 }
             }
         }
-    })
+    }
+}
+
+fn generate_variant_for_enum(sig: &Signature) -> TokenStream {
+    let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+
+    for input in sig.inputs.iter() {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = input {
+            if let Pat::Ident(ident) = pat.as_ref() {
+                let ident = &ident.ident;
+                args.push(quote!(#ident : #ty));
+            }
+        }
+    }
+
+    let variant = get_variant_ident(&sig.ident);
+    let args = parse_args(args, false);
+
+    match &sig.output {
+        ReturnType::Default => {
+            quote! { #variant { #args } }
+        }
+        ReturnType::Type(_, typ) => {
+            quote! { #variant { #args tx: futures::channel::oneshot::Sender<#typ> } }
+        }
+    }
+}
+
+fn generate_fn(event_name: &syn::Ident, sig: &Signature) -> TokenStream {
+    let mut args: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+    let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+    for input in sig.inputs.iter() {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = input {
+            if let Pat::Ident(ident) = pat.as_ref() {
+                let ident = &ident.ident;
+                args.push(quote!(#ident : #ty));
+                args_without_type.push(quote!(#ident));
+            }
+        }
+    }
+
+    let variant = get_variant_ident(&sig.ident);
+
+    let func_name = &sig.ident;
+    let args = parse_args(args, true);
+
+    match &sig.output {
+        ReturnType::Default => {
+            quote! {
+                pub fn #func_name(&self #args) ->  Result<()> {
+                    self.0.unbounded_send(#event_name::#variant {
+                        #args_without_type
+                    })?;
+                    Ok(())
+                }
+            }
+        }
+        ReturnType::Type(_, typ) => {
+            let (result, typ) = parse_result(typ);
+            let args_without_type = parse_args(args_without_type, false);
+            quote! {
+                pub async fn #func_name(&self #args) -> #typ  {
+                    let (tx, rx) = futures::channel::oneshot::channel();
+                    self.0.unbounded_send(#event_name::#variant {
+                        #args_without_type tx
+                    })?;
+                    #result
+                }
+            }
+        }
+    }
 }
 
 fn get_variant_ident(name: &syn::Ident) -> syn::Ident {
@@ -297,24 +259,49 @@ fn skip_fn(func: &ImplItemFn) -> bool {
     not_self_fn(&func.sig.inputs) || not_pub_fn(&func.vis) || ignore_fn(&func.attrs)
 }
 
-fn generate_caller(
+fn generate_variant_for_loop(
     instance: &Ident,
-    fn_name: &Ident,
-    is_self_ref: bool,
-    args: &TokenStream,
-    return_type: &ReturnType,
-    is_async: bool,
+    event_name: &syn::Ident,
+    sig: &Signature,
 ) -> TokenStream {
+    let fn_name = &sig.ident;
+    let return_type = &sig.output;
+    let is_async = sig.asyncness.is_some();
     let async_ident = if is_async { quote!(.await) } else { quote!() };
-    let mut caller = quote!(#instance.#fn_name(#args)#async_ident);
-    caller = match return_type {
-        ReturnType::Type(..) => quote! { let _ = tx.send(#caller); },
-        ReturnType::Default => quote!(#caller;),
+
+    let mut args_without_type: Punctuated<TokenStream, Token![,]> = Punctuated::new();
+    let mut is_self_ref = true;
+    for input in sig.inputs.iter() {
+        match input {
+            FnArg::Typed(PatType { pat, .. }) => {
+                if let Pat::Ident(ident) = pat.as_ref() {
+                    let ident = &ident.ident;
+                    args_without_type.push(quote!(#ident));
+                }
+            }
+            FnArg::Receiver(recv) => {
+                is_self_ref = recv.reference.is_some();
+            }
+        }
+    }
+
+    let caller = quote!(#instance.#fn_name(#args_without_type)#async_ident);
+    let (mut caller, tx_token) = match return_type {
+        ReturnType::Type(..) => (quote! { let _ = tx.send(#caller); }, quote!(tx)),
+        ReturnType::Default => (quote!(#caller;), quote!()),
     };
+
     if !is_self_ref {
         caller = quote! { #caller break; }
     }
-    caller
+
+    let variant = get_variant_ident(&sig.ident);
+    let args_without_type = parse_args(args_without_type, false);
+    quote! {
+        #event_name::#variant { #args_without_type #tx_token } => {
+            #caller
+        }
+    }
 }
 
 fn get_loop_and_rx_name(name: &Ident) -> (Ident, Ident) {

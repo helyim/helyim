@@ -578,7 +578,6 @@ fn load_volume_without_index(
         ..Default::default()
     };
     volume.load(false, false)?;
-
     Ok(volume)
 }
 
