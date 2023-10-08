@@ -83,32 +83,6 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     Ok(Json(stat))
 }
 
-pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<()> {
-    let mut store = ctx.store.lock().await;
-    for location in store.locations.iter_mut() {
-        for (vid, volume) in location.volumes.iter() {
-            info!("start compacting volume {vid}.");
-            volume.compact().await?;
-            info!("compact volume {vid} success.");
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn volume_commit_compact_handler(State(ctx): State<StorageContext>) -> Result<()> {
-    let mut store = ctx.store.lock().await;
-    for location in store.locations.iter_mut() {
-        for (vid, volume) in location.volumes.iter() {
-            info!("start committing compacted volume {vid}.");
-            volume.commit_compact().await?;
-            info!("commit compacted volume {vid} success.");
-        }
-    }
-
-    Ok(())
-}
-
 pub async fn fallback_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,

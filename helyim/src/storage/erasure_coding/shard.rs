@@ -15,7 +15,7 @@ pub struct EcVolumeShard {
     pub volume_id: VolumeId,
     pub collection: FastStr,
     dir: FastStr,
-    ecd_file: File,
+    pub ecd_file: File,
     pub ecd_filesize: u64,
 }
 
@@ -25,7 +25,7 @@ impl EcVolumeShard {
         collection: FastStr,
         volume_id: VolumeId,
         id: ShardId,
-    ) -> Result<Self> {
+    ) -> std::io::Result<Self> {
         let base_filename = ec_shard_filename(&collection, &dir, volume_id);
         let ecd_filename = format!("{}{}", base_filename, to_ext(id));
         let ecd_file = fs::OpenOptions::new()

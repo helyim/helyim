@@ -207,7 +207,7 @@ impl Helyim for DirectoryGrpcServer {
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(heartbeat) => {
-                        debug!("received {:?}", heartbeat);
+                        debug!("receive {:?}", heartbeat);
                         match handle_heartbeat(heartbeat, &topology, volume_size_limit, addr).await
                         {
                             Ok(resp) => {

@@ -21,4 +21,4 @@ proc-macro = true
 
 [features]
 default = []
-pretty_print = ["prettyplease"]
+pretty-print = ["prettyplease"]

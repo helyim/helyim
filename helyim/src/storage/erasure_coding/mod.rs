@@ -33,7 +33,9 @@ mod shard;
 pub use shard::{ec_shard_base_filename, ec_shard_filename, EcVolumeShard};
 
 mod volume;
-pub use volume::{ec_volume_loop, EcVolume, EcVolumeEvent, EcVolumeEventTx};
+pub use volume::{add_shard_id, ec_volume_loop, EcVolume, EcVolumeEvent, EcVolumeEventTx};
+
+use crate::storage::VolumeId;
 
 mod volume_info;
 
@@ -45,15 +47,14 @@ pub const TOTAL_SHARDS_COUNT: u32 = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
 pub const ERASURE_CODING_LARGE_BLOCK_SIZE: u64 = 1024 * 1024 * 1024;
 pub const ERASURE_CODING_SMALL_BLOCK_SIZE: u64 = 1024 * 1024;
 
-fn search_needle_from_sorted_index<F>(
+type ProcessNeedleFn = Box<dyn FnMut(&File, u64) -> Result<()>>;
+
+fn search_needle_from_sorted_index(
     ecx_file: &File,
     ecx_filesize: u64,
     needle_id: NeedleId,
-    process_needle: Option<F>,
-) -> Result<NeedleValue>
-where
-    F: FnMut(&File, u64) -> Result<()>,
-{
+    process_needle: Option<ProcessNeedleFn>,
+) -> Result<NeedleValue> {
     let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE as usize];
     let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_MAP_ENTRY_SIZE as u64);
     while low < high {
@@ -114,7 +115,7 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<()> {
             &ecx_file,
             ecx_filesize,
             needle_id,
-            Some(mark_needle_deleted),
+            Some(Box::new(mark_needle_deleted)),
         ) {
             if !matches!(err, Error::Needle(NeedleError::NotFound(_, _))) {
                 return Err(err);
@@ -125,4 +126,10 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<()> {
     fs::remove_file(ecj_filename)?;
 
     Ok(())
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ErasureCodingError {
+    #[error("shard {1} not found in volume {0}")]
+    ShardNotFound(VolumeId, ShardId),
 }

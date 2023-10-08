@@ -1,6 +1,16 @@
+use std::{io::ErrorKind, sync::Arc};
+
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
-use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
+use futures::{
+    channel::mpsc::{unbounded, Sender},
+    SinkExt, StreamExt,
+};
+use reed_solomon_erasure::galois_8::Field;
+use helyim_proto::{
+    volume_server_client::VolumeServerClient, HeartbeatRequest, VolumeEcShardInformationMessage,
+    VolumeEcShardReadRequest, VolumeInformationMessage, VolumeShortInformationMessage,
+};
+use reed_solomon_erasure::ReedSolomon;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -9,11 +19,15 @@ use crate::{
     rt_spawn,
     storage::{
         disk_location::DiskLocation,
+        erasure_coding::{
+            add_shard_id, EcVolume, EcVolumeEventTx, EcVolumeShard, ShardId, DATA_SHARDS_COUNT,
+            PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
+        },
         needle::Needle,
         needle_map::NeedleMapType,
         types::Size,
         volume::{volume_loop, Volume, VolumeEventTx},
-        ReplicaPlacement, Ttl, VolumeError, VolumeId,
+        ErasureCodingError, NeedleId, ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
 };
 
@@ -31,9 +45,15 @@ pub struct Store {
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
+
+    new_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
+    deleted_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
+    new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
+    deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
 }
 
 unsafe impl Send for Store {}
+
 unsafe impl Sync for Store {}
 
 impl Store {
@@ -63,6 +83,10 @@ impl Store {
             rack: FastStr::empty(),
             connected: false,
             volume_size_limit: 0,
+            new_volumes_tx: None,
+            deleted_volumes_tx: None,
+            new_ec_shards_tx: None,
+            deleted_ec_shards_tx: None,
         })
     }
 
@@ -196,6 +220,19 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_event_tx(
+        &mut self,
+        new_volumes_tx: Sender<VolumeShortInformationMessage>,
+        deleted_volumes_tx: Sender<VolumeShortInformationMessage>,
+        new_ec_shards_tx: Sender<VolumeEcShardInformationMessage>,
+        deleted_ec_shards_tx: Sender<VolumeEcShardInformationMessage>,
+    ) {
+        self.new_volumes_tx = Some(new_volumes_tx);
+        self.deleted_volumes_tx = Some(deleted_volumes_tx);
+        self.new_ec_shards_tx = Some(new_ec_shards_tx);
+        self.deleted_ec_shards_tx = Some(deleted_ec_shards_tx);
+    }
+
     pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
         let mut heartbeat = HeartbeatRequest::default();
 
@@ -251,6 +288,224 @@ impl Store {
         heartbeat.rack = self.rack.to_string();
 
         Ok(heartbeat)
+    }
+}
+
+/// erasure coding
+impl Store {
+    pub async fn find_ec_shard(
+        &self,
+        vid: VolumeId,
+        shard_id: ShardId,
+    ) -> Result<Option<Arc<EcVolumeShard>>> {
+        for location in self.locations.iter() {
+            let shard = location.find_ec_shard(vid, shard_id).await?;
+            if shard.is_some() {
+                return Ok(shard);
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<&EcVolumeEventTx> {
+        for location in self.locations.iter() {
+            let volume = location.ec_volumes.get(&vid);
+            if volume.is_some() {
+                return volume;
+            }
+        }
+        None
+    }
+
+    pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
+        for location in self.locations.iter_mut() {
+            location.destroy_ec_volume(vid).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn mount_ec_shards(
+        &mut self,
+        collection: &str,
+        vid: VolumeId,
+        shard_id: ShardId,
+    ) -> Result<()> {
+        for location in self.locations.iter_mut() {
+            match location.load_ec_shard(collection, vid, shard_id).await {
+                Ok(_) => {
+                    if let Some(tx) = self.new_ec_shards_tx.as_mut() {
+                        let shard_bits = 0;
+                        tx.send(VolumeEcShardInformationMessage {
+                            id: vid,
+                            collection: collection.to_string(),
+                            ec_index_bits: add_shard_id(shard_bits, shard_id),
+                        })
+                        .await?;
+                    }
+                    return Ok(());
+                }
+                Err(Error::Io(err)) => {
+                    if err.kind() == ErrorKind::NotFound {
+                        continue;
+                    }
+                }
+                Err(err) => {
+                    error!("mount ec shard failed, error: {err}");
+                    return Err(err);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn unmount_ec_shards(&mut self, vid: VolumeId, shard_id: ShardId) -> Result<()> {
+        match self.find_ec_shard(vid, shard_id).await? {
+            Some(shard) => {
+                for location in self.locations.iter_mut() {
+                    if location.unload_ec_shard(vid, shard_id).await? {
+                        if let Some(tx) = self.deleted_ec_shards_tx.as_mut() {
+                            let shard_bits = 0;
+                            tx.send(VolumeEcShardInformationMessage {
+                                id: vid,
+                                collection: shard.collection.to_string(),
+                                ec_index_bits: add_shard_id(shard_bits, shard_id),
+                            })
+                            .await?;
+                        }
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            None => Err(ErasureCodingError::ShardNotFound(vid, shard_id).into()),
+        }
+    }
+
+    async fn read_remote_ec_shard_interval(
+        &self,
+        src_nodes: &[String],
+        needle_id: NeedleId,
+        volume_id: VolumeId,
+        shard_id: ShardId,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<(usize, bool)> {
+        if src_nodes.is_empty() {
+            return Err(ErasureCodingError::ShardNotFound(volume_id, shard_id).into());
+        }
+
+        for src_node in src_nodes {
+            match self
+                .do_read_remote_ec_shard_interval(
+                    src_node.to_string(), needle_id, volume_id, shard_id, buf, offset,
+                )
+                .await
+            {
+                Ok((bytes_read, is_deleted)) => {
+                    return Ok((bytes_read, is_deleted));
+                }
+                Err(err) => error!(
+                    "read remote ec shard {}.{} from {}, {}",
+                    volume_id, shard_id, src_node, err
+                ),
+            }
+        }
+
+        Ok((0, false))
+    }
+
+    async fn do_read_remote_ec_shard_interval(
+        &self,
+        src_node: String,
+        needle_id: NeedleId,
+        volume_id: VolumeId,
+        shard_id: ShardId,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<(usize, bool)> {
+        let mut client = VolumeServerClient::connect(src_node).await?;
+        let response = client
+            .volume_ec_shard_read(VolumeEcShardReadRequest {
+                volume_id,
+                shard_id: shard_id as u32,
+                offset: offset as i64,
+                size: buf.len() as i64,
+                file_key: needle_id,
+            })
+            .await?;
+        let mut response = response.into_inner();
+        let mut is_deleted = false;
+        let mut bytes_read = 0;
+        while let Some(Ok(response)) = response.next().await {
+            if response.is_deleted {
+                is_deleted = true;
+            }
+            let len = response.data.len();
+            buf[bytes_read..bytes_read + len].copy_from_slice(&response.data);
+            bytes_read += len;
+        }
+        Ok((bytes_read, is_deleted))
+    }
+
+    async fn read_from_remote_locations(
+        &self,
+        locations: &[String],
+        volume: &mut EcVolume,
+        shard_id: ShardId,
+        needle_id: NeedleId,
+        offset: u64,
+        buf_len: usize,
+        bufs: &mut [Vec<u8>],
+    ) -> Result<()> {
+        let mut data = vec![0u8; buf_len];
+        let (bytes_read, is_deleted) = match self
+            .read_remote_ec_shard_interval(
+                locations,
+                needle_id,
+                volume.volume_id,
+                shard_id,
+                &mut data,
+                offset,
+            )
+            .await
+        {
+            Ok((bytes_read, is_deleted)) => (bytes_read, is_deleted),
+            Err(err) => {
+                volume.shard_locations.remove(&shard_id);
+                (0, false)
+            }
+        };
+        if bytes_read == buf_len {
+            bufs[shard_id as usize] = data;
+        }
+
+        Ok(())
+    }
+
+    async fn recover_one_remote_ec_shard_interval(
+        &mut self,
+        needle_id: NeedleId,
+        ec_volume: &mut EcVolume,
+        shard_id_to_recover: ShardId,
+        buf: &[u8],
+        offset: u64,
+    ) -> Result<(u64, bool)> {
+        let reed_solomon: ReedSolomon<Field> =
+            ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
+        let bufs: Vec<Vec<u8>> = vec![vec![]; TOTAL_SHARDS_COUNT as usize];
+
+        for (shard_id, locations) in ec_volume.shard_locations.iter() {
+            if *shard_id == shard_id_to_recover {
+                continue;
+            }
+            if locations.is_empty() {
+                continue;
+            }
+
+            let buf_len = buf.len();
+        }
+
+        todo!()
     }
 }
 

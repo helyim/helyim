@@ -41,7 +41,7 @@ fn do_expand(item_impl: ItemImpl, struct_name: Ident) -> Result<TokenStream> {
         #gen_loop
     };
 
-    #[cfg(feature = "pretty_print")]
+    #[cfg(feature = "pretty-print")]
     {
         let file = syn::parse_file(&token_stream.to_string())?;
         let pretty = prettyplease::unparse(&file);

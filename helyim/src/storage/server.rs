@@ -1,11 +1,16 @@
 use std::{
-    ffi::OsString, fs, path::Path, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration,
+    ffi::OsString, fs, os::unix::fs::FileExt, path::Path, pin::Pin, result::Result as StdResult,
+    sync::Arc, time::Duration,
 };
 
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
+use futures::{
+    channel::mpsc::{channel, unbounded},
+    lock::Mutex,
+    StreamExt,
+};
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
@@ -21,7 +26,7 @@ use helyim_proto::{
     VolumeEcShardsUnmountResponse, VolumeInfo,
 };
 use tokio::task::JoinHandle;
-use tokio_stream::Stream;
+use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 use tonic::{
     transport::{Channel, Server as TonicServer},
     Request, Response, Status, Streaming,
@@ -34,16 +39,16 @@ use crate::{
     proto::save_volume_info,
     rt_spawn,
     storage::{
-        api::{
-            fallback_handler, status_handler, volume_clean_handler, volume_commit_compact_handler,
-            StorageContext,
-        },
+        api::{fallback_handler, status_handler, StorageContext},
         erasure_coding::{
-            ec_shard_base_filename, rebuild_ec_files, rebuild_ecx_file, to_ext, write_ec_files,
+            ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
+            write_data_file, write_ec_files, write_idx_file_from_ec_index,
             write_sorted_file_from_idx, ShardId,
         },
         needle_map::NeedleMapType,
         store::Store,
+        version::Version,
+        BUFFER_SIZE_LIMIT,
     },
     util::file_exists,
     STOP_INTERVAL,
@@ -195,8 +200,6 @@ impl StorageServer {
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
                 .route("/status", get(status_handler))
-                .route("/volume/clean", get(volume_clean_handler))
-                .route("/volume/clean/commit", get(volume_commit_compact_handler))
                 .fallback(fallback_handler)
                 .with_state(ctx);
 
@@ -267,18 +270,42 @@ async fn heartbeat_stream(
 ) -> Result<Streaming<HeartbeatResponse>> {
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
 
+    let (new_volumes_tx, mut new_volumes_rx) = channel(3);
+    let (deleted_volumes_tx, mut deleted_volumes_rx) = channel(3);
+    let (new_ec_shards_tx, mut new_ec_shards_rx) = channel(3);
+    let (deleted_ec_shards_tx, mut deleted_ec_shards_rx) = channel(3);
+
+    store.lock().await.set_event_tx(
+        new_volumes_tx,
+        deleted_volumes_tx,
+        new_ec_shards_tx,
+        deleted_ec_shards_tx,
+    );
+
     let request_stream = stream! {
         loop {
             tokio::select! {
-                // to avoid server side got `channel closed` error
-                _ = shutdown_rx.recv() => {
-                    break;
+                _ = new_volumes_rx.next() => {
+
+                }
+                _ = deleted_volumes_rx.next() => {
+
+                }
+                _ = new_ec_shards_rx.next() => {
+
+                }
+                _ = deleted_ec_shards_rx.next() => {
+
                 }
                 _ = interval.tick() => {
                     match store.lock().await.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,
                         Err(err) => error!("collect heartbeat error: {err}")
                     }
+                }
+                // to avoid server side got `channel closed` error
+                _ = shutdown_rx.recv() => {
+                    break;
                 }
             }
         }
@@ -520,20 +547,121 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardReadRequest>,
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
-        todo!()
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+
+        if let Some(volume) = store.find_ec_volume(request.volume_id).await {
+            if let Some(shard) = volume.find_shard(request.shard_id as ShardId).await? {
+                if request.file_key != 0 {
+                    let needle_value = volume.find_needle_from_ecx(request.file_key).await?;
+                    if needle_value.size.is_deleted() {
+                        let response = VolumeEcShardReadResponse {
+                            is_deleted: true,
+                            ..Default::default()
+                        };
+                        let stream = Box::pin(futures::stream::iter(vec![Ok(response)]));
+                        return Ok(Response::new(stream as Self::VolumeEcShardReadStream));
+                    }
+                }
+
+                let mut buf_size = request.size as usize;
+                if buf_size > BUFFER_SIZE_LIMIT {
+                    buf_size = BUFFER_SIZE_LIMIT;
+                }
+
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+                tokio::spawn(async move {
+                    let mut buffer = vec![0u8; buf_size];
+                    let mut start_offset = request.offset as u64;
+                    let mut bytes_to_read = request.size as usize;
+                    while bytes_to_read > 0 {
+                        let mut buffer_size = buf_size;
+                        if buffer_size > bytes_to_read {
+                            buffer_size = bytes_to_read;
+                        }
+                        let mut bytes_read = shard
+                            .ecd_file
+                            .read_at(&mut buffer[0..buffer_size], start_offset)
+                            .unwrap_or_default();
+                        if bytes_read > 0 {
+                            if bytes_read > bytes_to_read {
+                                bytes_read = bytes_to_read;
+                            }
+                            if let Err(err) = tx.send(Ok(VolumeEcShardReadResponse {
+                                is_deleted: false,
+                                data: buffer[..bytes_read].to_vec(),
+                            })) {
+                                error!("send VolumeEcShardReadResponse error: {err}");
+                                break;
+                            }
+
+                            start_offset += bytes_read as u64;
+                            bytes_to_read -= bytes_read;
+                        }
+                    }
+                });
+
+                let stream = UnboundedReceiverStream::new(rx);
+                return Ok(Response::new(
+                    Box::pin(stream) as Self::VolumeEcShardReadStream
+                ));
+            }
+        }
+
+        return Err(Status::not_found(format!(
+            "ec volume {} is not found",
+            request.volume_id
+        )));
     }
 
     async fn volume_ec_blob_delete(
         &self,
         request: Request<VolumeEcBlobDeleteRequest>,
     ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
-        todo!()
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+
+        for location in store.locations.iter() {
+            if let Some(volume) = location.find_ec_volume(request.volume_id) {
+                let (needle_value, intervals) = volume
+                    .locate_ec_shard_needle(request.file_key, request.version as Version)
+                    .await?;
+                if needle_value.size.is_deleted() {
+                    return Ok(Response::new(VolumeEcBlobDeleteResponse::default()));
+                }
+
+                volume.delete_needle_from_ecx(request.file_key).await?;
+                break;
+            }
+        }
+        Ok(Response::new(VolumeEcBlobDeleteResponse::default()))
     }
 
+    /// generate the .idx, .dat, files from .ecx, .ecj and .ec01 - .ec14 files
     async fn volume_ec_shards_to_volume(
         &self,
         request: Request<VolumeEcShardsToVolumeRequest>,
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
-        todo!()
+        let store = self.store.lock().await;
+        let request = request.into_inner();
+
+        match store.find_ec_volume(request.volume_id).await {
+            Some(volume) => {
+                if volume.collection().await? == request.collection {
+                    return Err(Status::invalid_argument("unexpected collection"));
+                }
+                let base_filename = volume.filename().await?;
+                let data_filesize = find_data_filesize(&base_filename)?;
+                write_data_file(&base_filename, data_filesize)?;
+                write_idx_file_from_ec_index(&base_filename)?;
+
+                Ok(Response::new(VolumeEcShardsToVolumeResponse::default()))
+            }
+            None => Err(Status::not_found(format!(
+                "ec volume {} not found",
+                request.volume_id
+            ))),
+        }
     }
 }

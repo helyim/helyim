@@ -32,14 +32,14 @@ use crate::{
 };
 
 pub struct EcVolume {
-    volume_id: VolumeId,
+    pub volume_id: VolumeId,
     dir: FastStr,
     collection: FastStr,
     ecx_file: File,
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
     shards: Vec<Arc<EcVolumeShard>>,
-    shard_locations: HashMap<ShardId, Vec<FastStr>>,
+    pub shard_locations: HashMap<ShardId, Vec<FastStr>>,
     shard_locations_refresh_time: SystemTime,
     version: Version,
     ecj_file: Arc<Mutex<File>>,
@@ -128,16 +128,12 @@ impl EcVolume {
         self.shards.len()
     }
 
-    #[ignore]
-    pub fn locate_ec_shard_needle<F>(
+    pub fn locate_ec_shard_needle(
         &self,
         needle_id: NeedleId,
         version: Version,
-    ) -> Result<(NeedleValue, Vec<Interval>)>
-    where
-        F: FnMut(&File, u64) -> Result<()>,
-    {
-        let needle_value = self.find_needle_from_ecx::<F>(needle_id)?;
+    ) -> Result<(NeedleValue, Vec<Interval>)> {
+        let needle_value = self.find_needle_from_ecx(needle_id)?;
         let shard = &self.shards[0];
         let intervals = locate_data(
             ERASURE_CODING_LARGE_BLOCK_SIZE,
@@ -149,12 +145,8 @@ impl EcVolume {
         Ok((needle_value, intervals))
     }
 
-    #[ignore]
-    pub fn find_needle_from_ecx<F>(&self, needle_id: NeedleId) -> Result<NeedleValue>
-    where
-        F: FnMut(&File, u64) -> Result<()>,
-    {
-        search_needle_from_sorted_index::<F>(&self.ecx_file, self.ecx_filesize, needle_id, None)
+    pub fn find_needle_from_ecx(&self, needle_id: NeedleId) -> Result<NeedleValue> {
+        search_needle_from_sorted_index(&self.ecx_file, self.ecx_filesize, needle_id, None)
     }
 
     pub fn delete_needle_from_ecx(&mut self, needle_id: NeedleId) -> Result<()> {
@@ -162,7 +154,7 @@ impl EcVolume {
             &self.ecx_file,
             self.ecx_filesize,
             needle_id,
-            Some(mark_needle_deleted),
+            Some(Box::new(mark_needle_deleted)),
         )?;
 
         let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
@@ -205,7 +197,7 @@ impl EcVolume {
                 &ecx_file,
                 ecx_filesize,
                 needle_id,
-                Some(mark_needle_deleted),
+                Some(Box::new(mark_needle_deleted)),
             )?;
         }
 
@@ -215,6 +207,10 @@ impl EcVolume {
 
     pub fn filename(&self) -> String {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
+    }
+
+    pub fn collection(&self) -> FastStr {
+        self.collection.clone()
     }
 
     pub fn destroy(self) -> Result<()> {
@@ -249,6 +245,6 @@ impl EcVolume {
     }
 }
 
-fn add_shard_id(ec_index_bits: u32, shard_id: ShardId) -> u32 {
+pub fn add_shard_id(ec_index_bits: u32, shard_id: ShardId) -> u32 {
     ec_index_bits | 1 << shard_id
 }

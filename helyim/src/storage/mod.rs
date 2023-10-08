@@ -20,6 +20,7 @@ mod needle_value_map;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
 
 mod erasure_coding;
+pub use erasure_coding::ErasureCodingError;
 
 mod replica_placement;
 pub use replica_placement::ReplicaPlacement;
@@ -45,3 +46,5 @@ pub use volume::vacuum::{
 
 mod volume_info;
 pub use volume_info::VolumeInfo;
+
+pub const BUFFER_SIZE_LIMIT: usize = 2 * 1024 * 1024;
