@@ -1,16 +1,16 @@
 use std::{io::ErrorKind, sync::Arc};
 
+use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::{
     channel::mpsc::{unbounded, Sender},
     SinkExt, StreamExt,
 };
-use reed_solomon_erasure::galois_8::Field;
 use helyim_proto::{
     volume_server_client::VolumeServerClient, HeartbeatRequest, VolumeEcShardInformationMessage,
     VolumeEcShardReadRequest, VolumeInformationMessage, VolumeShortInformationMessage,
 };
-use reed_solomon_erasure::ReedSolomon;
+use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -37,7 +37,7 @@ pub struct Store {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    pub locations: Vec<DiskLocation>,
+    pub locations: Vec<Arc<DiskLocation>>,
 
     pub data_center: FastStr,
     pub rack: FastStr,
@@ -70,7 +70,7 @@ impl Store {
         for i in 0..folders.len() {
             let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
             location.load_existing_volumes(needle_map_type)?;
-            locations.push(location);
+            locations.push(Arc::new(location));
         }
 
         Ok(Store {
@@ -94,7 +94,7 @@ impl Store {
         self.find_volume(vid).is_some()
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&VolumeEventTx> {
+    pub fn find_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, VolumeEventTx>> {
         for location in self.locations.iter() {
             let volume = location.volumes.get(&vid);
             if volume.is_some() {
@@ -104,22 +104,32 @@ impl Store {
         None
     }
 
-    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Size> {
-        match self.find_volume(vid) {
+    pub fn find_volume_mut(&self, vid: VolumeId) -> Option<RefMut<VolumeId, VolumeEventTx>> {
+        for location in self.locations.iter() {
+            let volume = location.volumes.get_mut(&vid);
+            if volume.is_some() {
+                return volume;
+            }
+        }
+        None
+    }
+
+    pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
+        match self.find_volume_mut(vid) {
             Some(volume) => volume.delete_needle(needle).await,
             None => Ok(Size(0)),
         }
     }
 
-    pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume(vid) {
+    pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume_mut(vid) {
             Some(volume) => volume.read_needle(needle).await,
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
-    pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume(vid) {
+    pub async fn write_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume_mut(vid) {
             Some(volume) => {
                 if volume.is_readonly().await? {
                     return Err(anyhow!("volume {} is read only", vid));
@@ -131,9 +141,9 @@ impl Store {
         }
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             location.delete_volume(vid).await?;
             delete = true;
         }
@@ -145,10 +155,10 @@ impl Store {
         }
     }
 
-    fn find_free_location(&mut self) -> Option<&mut DiskLocation> {
+    fn find_free_location(&self) -> Option<&Arc<DiskLocation>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             let free = location.max_volume_count - location.volumes.len() as i64;
             if free > max_free {
                 max_free = free;
@@ -160,7 +170,7 @@ impl Store {
     }
 
     fn do_add_volume(
-        &mut self,
+        &self,
         vid: VolumeId,
         collection: FastStr,
         needle_map_type: NeedleMapType,
@@ -195,7 +205,7 @@ impl Store {
     }
 
     pub fn add_volume(
-        &mut self,
+        &self,
         volumes: &[u32],
         collection: &str,
         needle_map_type: NeedleMapType,
@@ -241,7 +251,9 @@ impl Store {
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
-            for (vid, volume) in location.volumes.iter() {
+            for entry in location.volumes.iter() {
+                let vid = entry.key();
+                let volume = entry.value();
                 let volume_max_file_key = volume.max_file_key().await?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
@@ -307,7 +319,7 @@ impl Store {
         Ok(None)
     }
 
-    pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<&EcVolumeEventTx> {
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolumeEventTx>> {
         for location in self.locations.iter() {
             let volume = location.ec_volumes.get(&vid);
             if volume.is_some() {
@@ -318,7 +330,7 @@ impl Store {
     }
 
     pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             location.destroy_ec_volume(vid).await?;
         }
         Ok(())
@@ -383,7 +395,7 @@ impl Store {
 
     async fn read_remote_ec_shard_interval(
         &self,
-        src_nodes: &[String],
+        src_nodes: &[FastStr],
         needle_id: NeedleId,
         volume_id: VolumeId,
         shard_id: ShardId,
@@ -397,17 +409,21 @@ impl Store {
         for src_node in src_nodes {
             match self
                 .do_read_remote_ec_shard_interval(
-                    src_node.to_string(), needle_id, volume_id, shard_id, buf, offset,
+                    src_node.to_string(),
+                    needle_id,
+                    volume_id,
+                    shard_id,
+                    buf,
+                    offset,
                 )
                 .await
             {
                 Ok((bytes_read, is_deleted)) => {
                     return Ok((bytes_read, is_deleted));
                 }
-                Err(err) => error!(
-                    "read remote ec shard {}.{} from {}, {}",
-                    volume_id, shard_id, src_node, err
-                ),
+                Err(err) => {
+                    error!("read remote ec shard {volume_id}.{shard_id} from {src_node}, {err}")
+                }
             }
         }
 
@@ -449,18 +465,17 @@ impl Store {
 
     async fn read_from_remote_locations(
         &self,
-        locations: &[String],
-        volume: &mut EcVolume,
+        locations: Vec<FastStr>,
+        volume: &EcVolume,
         shard_id: ShardId,
         needle_id: NeedleId,
         offset: u64,
         buf_len: usize,
-        bufs: &mut [Vec<u8>],
-    ) -> Result<()> {
+    ) -> Result<(Option<Vec<u8>>, bool)> {
         let mut data = vec![0u8; buf_len];
         let (bytes_read, is_deleted) = match self
             .read_remote_ec_shard_interval(
-                locations,
+                &locations,
                 needle_id,
                 volume.volume_id,
                 shard_id,
@@ -475,17 +490,19 @@ impl Store {
                 (0, false)
             }
         };
-        if bytes_read == buf_len {
-            bufs[shard_id as usize] = data;
-        }
+        let data = if bytes_read == buf_len {
+            Some(data)
+        } else {
+            None
+        };
 
-        Ok(())
+        Ok((data, is_deleted))
     }
 
     async fn recover_one_remote_ec_shard_interval(
-        &mut self,
+        self: Arc<Self>,
         needle_id: NeedleId,
-        ec_volume: &mut EcVolume,
+        ec_volume: &EcVolume,
         shard_id_to_recover: ShardId,
         buf: &[u8],
         offset: u64,
@@ -494,16 +511,28 @@ impl Store {
             ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
         let bufs: Vec<Vec<u8>> = vec![vec![]; TOTAL_SHARDS_COUNT as usize];
 
-        for (shard_id, locations) in ec_volume.shard_locations.iter() {
-            if *shard_id == shard_id_to_recover {
-                continue;
+        async_scoped::TokioScope::scope_and_block(|s| {
+            for entry in ec_volume.shard_locations.iter() {
+                if *entry.key() == shard_id_to_recover {
+                    continue;
+                }
+                if entry.value().is_empty() {
+                    continue;
+                }
+                let buf_len = buf.len();
+                let shard_id = *entry.key();
+                let locations = entry.value().clone();
+                let this = self.clone();
+                s.spawn(async move {
+                    if let Ok(a) = this
+                        .read_from_remote_locations(
+                            locations, ec_volume, shard_id, needle_id, offset, buf_len,
+                        )
+                        .await
+                    {}
+                });
             }
-            if locations.is_empty() {
-                continue;
-            }
-
-            let buf_len = buf.len();
-        }
+        });
 
         todo!()
     }

@@ -1,10 +1,6 @@
-use std::{
-    collections::{hash_map, HashMap},
-    fs,
-    path::Path,
-    sync::Arc,
-};
+use std::{fs, path::Path, sync::Arc};
 
+use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
@@ -31,8 +27,8 @@ static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\.ec[0-9][0-9]").unwrap())
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, VolumeEventTx>,
-    pub ec_volumes: HashMap<VolumeId, EcVolumeEventTx>,
+    pub volumes: DashMap<VolumeId, VolumeEventTx>,
+    pub ec_volumes: DashMap<VolumeId, EcVolumeEventTx>,
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
@@ -48,8 +44,8 @@ impl DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
-            volumes: HashMap::new(),
-            ec_volumes: HashMap::new(),
+            volumes: DashMap::new(),
+            ec_volumes: DashMap::new(),
             shutdown: shutdown_rx,
         }
     }
@@ -66,7 +62,7 @@ impl DiskLocation {
             if path.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
                 let (vid, collection) = parse_volume_id_from_path(path)?;
                 info!("load volume {}'s data file {:?}", vid, path);
-                if let hash_map::Entry::Vacant(entry) = self.volumes.entry(vid) {
+                if let dashmap::mapref::entry::Entry::Vacant(entry) = self.volumes.entry(vid) {
                     let volume = Volume::new(
                         self.directory.clone(),
                         FastStr::new(collection),
@@ -87,8 +83,8 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
-        if let Some(v) = self.volumes.remove(&vid) {
+    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
+        if let Some((vid, v)) = self.volumes.remove(&vid) {
             v.destroy().await?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
@@ -99,12 +95,12 @@ impl DiskLocation {
     }
 
     // erasure coding
-    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeEventTx> {
-        self.ec_volumes.get(&vid).cloned()
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolumeEventTx>> {
+        self.ec_volumes.get(&vid)
     }
 
-    pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<()> {
-        if let Some(volume) = self.ec_volumes.remove(&vid) {
+    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<()> {
+        if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
             volume.destroy().await?;
         }
         Ok(())
@@ -122,14 +118,14 @@ impl DiskLocation {
     }
 
     pub async fn load_ec_shard(
-        &mut self,
+        &self,
         collection: &str,
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<()> {
         let collection = FastStr::new(collection);
         let shard = EcVolumeShard::new(self.directory.clone(), collection.clone(), vid, shard_id)?;
-        let volume = match self.ec_volumes.get(&vid) {
+        let volume = match self.ec_volumes.get_mut(&vid) {
             Some(volume) => volume,
             None => {
                 let (tx, rx) = unbounded();
@@ -144,7 +140,7 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn unload_ec_shard(&mut self, vid: VolumeId, shard_id: ShardId) -> Result<bool> {
+    pub async fn unload_ec_shard(&self, vid: VolumeId, shard_id: ShardId) -> Result<bool> {
         match self.ec_volumes.get(&vid) {
             Some(volume) => {
                 if volume.delete_shard(shard_id).await?.is_some() && volume.shards_len().await? == 0

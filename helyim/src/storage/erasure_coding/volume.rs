@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     fs::File,
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
@@ -9,6 +8,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
+use dashmap::DashMap;
 use faststr::FastStr;
 use helyim_macros::event_fn;
 use helyim_proto::{VolumeEcShardInformationMessage, VolumeInfo};
@@ -39,7 +39,7 @@ pub struct EcVolume {
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
     shards: Vec<Arc<EcVolumeShard>>,
-    pub shard_locations: HashMap<ShardId, Vec<FastStr>>,
+    pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
     shard_locations_refresh_time: SystemTime,
     version: Version,
     ecj_file: Arc<Mutex<File>>,
@@ -85,7 +85,7 @@ impl EcVolume {
             ecx_created_at,
             ecj_file: Arc::new(Mutex::new(ecj_file)),
             shards: Vec::new(),
-            shard_locations: HashMap::new(),
+            shard_locations: DashMap::new(),
             shard_locations_refresh_time: SystemTime::now(),
             version,
         })

@@ -69,8 +69,8 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
 
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in store.locations.iter() {
-        for (_, volume) in location.volumes.iter() {
-            let volume_info = volume.get_volume_info().await?;
+        for entry in location.volumes.iter() {
+            let volume_info = entry.get_volume_info().await?;
             infos.push(volume_info);
         }
     }
@@ -157,7 +157,7 @@ pub async fn delete_handler(
     let cookie = needle.cookie;
 
     {
-        let mut store = ctx.store.lock().await;
+        let store = ctx.store.lock().await;
         needle = store.read_volume_needle(vid, needle).await?;
         if cookie != needle.cookie {
             info!(
@@ -181,7 +181,7 @@ async fn replicate_delete(
     needle: Needle,
     is_replicate: bool,
 ) -> Result<Size> {
-    let mut store = ctx.store.lock().await;
+    let store = ctx.store.lock().await;
     let local_url = format!("{}:{}", store.ip, store.port);
     let size = store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
@@ -254,7 +254,7 @@ async fn replicate_write(
     mut needle: Needle,
     is_replicate: bool,
 ) -> Result<Needle> {
-    let mut store = ctx.store.lock().await;
+    let store = ctx.store.lock().await;
     let local_url = format!("{}:{}", store.ip, store.port);
     needle = store.write_volume_needle(vid, needle).await?;
     if is_replicate {
@@ -474,7 +474,7 @@ pub async fn get_or_head_handler(
     needle.parse_path(fid)?;
     let cookie = needle.cookie;
 
-    let mut store = ctx.store.lock().await;
+    let store = ctx.store.lock().await;
     let mut response = Response::new(Body::empty());
 
     if !store.has_volume(vid) {

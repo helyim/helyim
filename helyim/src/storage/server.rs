@@ -326,7 +326,7 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<AllocateVolumeRequest>,
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
-        let mut store = self.store.lock().await;
+        let store = self.store.lock().await;
         let request = request.into_inner();
         store.add_volume(
             &request.volumes,
@@ -394,7 +394,7 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
         let store = self.store.lock().await;
         let request = request.into_inner();
-        match store.find_volume(request.volume_id) {
+        let x = match store.find_volume(request.volume_id) {
             Some(volume) => {
                 let base_filename = volume.filename().await?;
                 let collection = volume.collection().await?;
@@ -416,7 +416,8 @@ impl VolumeServer for StorageGrpcServer {
                 "volume {} is not found.",
                 request.volume_id
             ))),
-        }
+        };
+        x
     }
 
     async fn volume_ec_shards_rebuild(
@@ -550,7 +551,7 @@ impl VolumeServer for StorageGrpcServer {
         let store = self.store.lock().await;
         let request = request.into_inner();
 
-        if let Some(volume) = store.find_ec_volume(request.volume_id).await {
+        if let Some(volume) = store.find_ec_volume(request.volume_id) {
             if let Some(shard) = volume.find_shard(request.shard_id as ShardId).await? {
                 if request.file_key != 0 {
                     let needle_value = volume.find_needle_from_ecx(request.file_key).await?;
@@ -646,7 +647,7 @@ impl VolumeServer for StorageGrpcServer {
         let store = self.store.lock().await;
         let request = request.into_inner();
 
-        match store.find_ec_volume(request.volume_id).await {
+        let x = match store.find_ec_volume(request.volume_id) {
             Some(volume) => {
                 if volume.collection().await? == request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));
@@ -662,6 +663,7 @@ impl VolumeServer for StorageGrpcServer {
                 "ec volume {} not found",
                 request.volume_id
             ))),
-        }
+        };
+        x
     }
 }
