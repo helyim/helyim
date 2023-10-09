@@ -3,7 +3,7 @@ use std::{io::ErrorKind, sync::Arc};
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::{
-    channel::mpsc::{unbounded, Sender},
+    channel::mpsc::{channel, unbounded, Sender},
     SinkExt, StreamExt,
 };
 use helyim_proto::{
@@ -509,8 +509,9 @@ impl Store {
     ) -> Result<(u64, bool)> {
         let reed_solomon: ReedSolomon<Field> =
             ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
-        let bufs: Vec<Vec<u8>> = vec![vec![]; TOTAL_SHARDS_COUNT as usize];
+        let mut bufs: Vec<Vec<u8>> = vec![vec![]; TOTAL_SHARDS_COUNT as usize];
 
+        let (tx, mut rx) = channel(ec_volume.shard_locations.len());
         async_scoped::TokioScope::scope_and_block(|s| {
             for entry in ec_volume.shard_locations.iter() {
                 if *entry.key() == shard_id_to_recover {
@@ -523,16 +524,30 @@ impl Store {
                 let shard_id = *entry.key();
                 let locations = entry.value().clone();
                 let this = self.clone();
+
+                let mut entry_tx = tx.clone();
                 s.spawn(async move {
-                    if let Ok(a) = this
+                    if let Ok((Some(buf), is_deleted)) = this
                         .read_from_remote_locations(
                             locations, ec_volume, shard_id, needle_id, offset, buf_len,
                         )
                         .await
-                    {}
+                    {
+                        if let Err(err) = entry_tx.send((shard_id, buf, is_deleted)).await {
+                            error!(
+                                "read from remote locations failed, needle_id: {needle_id}, \
+                                 shard_id: {shard_id}, error: {err}"
+                            );
+                        }
+                    }
                 });
             }
         });
+
+        drop(tx);
+        while let Some((shard_id, buf, is_deleted)) = rx.next().await {
+            bufs[shard_id as usize] = buf;
+        }
 
         todo!()
     }
