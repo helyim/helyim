@@ -646,14 +646,12 @@ mod tests {
     use futures::{channel::mpsc::channel, SinkExt, StreamExt};
     use tokio::time::timeout;
 
-    use crate::rt_spawn;
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     pub async fn test_async_scope() {
         let timeout = timeout(Duration::from_secs(1), async {
             let (tx, mut rx) = channel(10);
 
-            let handle = rt_spawn(async move {
+            let handle = tokio::spawn(async move {
                 while let Some(i) = rx.next().await {
                     println!("{i}");
                 }
