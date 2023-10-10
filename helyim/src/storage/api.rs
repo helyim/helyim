@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add,
-    result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
+    result::Result as StdResult, str::FromStr, time, time::Duration,
 };
 
 use axum::{
@@ -13,7 +13,7 @@ use axum::{
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
-use futures::{lock::Mutex, stream::once};
+use futures::stream::once;
 use hyper::{
     header::{
         HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -46,7 +46,7 @@ use crate::{
         crc,
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
-        store::Store,
+        store::StoreEventTx,
         types::Size,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
@@ -57,7 +57,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct StorageContext {
-    pub store: Arc<Mutex<Store>>,
+    pub store: StoreEventTx,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
@@ -65,10 +65,8 @@ pub struct StorageContext {
 }
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
-    let store = ctx.store.lock().await;
-
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in store.locations.iter() {
+    for location in ctx.store.locations().await?.iter() {
         for entry in location.volumes.iter() {
             let volume_info = entry.get_volume_info().await?;
             infos.push(volume_info);
@@ -157,8 +155,7 @@ pub async fn delete_handler(
     let cookie = needle.cookie;
 
     {
-        let store = ctx.store.lock().await;
-        needle = store.read_volume_needle(vid, needle).await?;
+        needle = ctx.store.read_volume_needle(vid, needle).await?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
@@ -181,14 +178,13 @@ async fn replicate_delete(
     needle: Needle,
     is_replicate: bool,
 ) -> Result<Size> {
-    let store = ctx.store.lock().await;
-    let local_url = format!("{}:{}", store.ip, store.port);
-    let size = store.delete_volume_needle(vid, needle).await?;
+    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = store.find_volume(vid) {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate().await? {
             return Ok(size);
         }
@@ -254,14 +250,13 @@ async fn replicate_write(
     mut needle: Needle,
     is_replicate: bool,
 ) -> Result<Needle> {
-    let store = ctx.store.lock().await;
-    let local_url = format!("{}:{}", store.ip, store.port);
-    needle = store.write_volume_needle(vid, needle).await?;
+    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    needle = ctx.store.write_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(needle);
     }
 
-    if let Some(volume) = store.find_volume(vid) {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate().await? {
             return Ok(needle);
         }
@@ -474,10 +469,9 @@ pub async fn get_or_head_handler(
     needle.parse_path(fid)?;
     let cookie = needle.cookie;
 
-    let store = ctx.store.lock().await;
     let mut response = Response::new(Body::empty());
 
-    if !store.has_volume(vid) {
+    if !ctx.store.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
@@ -486,7 +480,7 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = store.read_volume_needle(vid, needle).await?;
+    needle = ctx.store.read_volume_needle(vid, needle).await?;
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }

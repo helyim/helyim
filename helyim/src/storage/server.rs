@@ -1,6 +1,6 @@
 use std::{
     ffi::OsString, fs, os::unix::fs::FileExt, path::Path, pin::Pin, result::Result as StdResult,
-    sync::Arc, time::Duration,
+    time::Duration,
 };
 
 use async_stream::stream;
@@ -8,7 +8,6 @@ use axum::{routing::get, Router};
 use faststr::FastStr;
 use futures::{
     channel::mpsc::{channel, unbounded},
-    lock::Mutex,
     StreamExt,
 };
 use helyim_proto::{
@@ -46,7 +45,7 @@ use crate::{
             write_sorted_file_from_idx, ShardId,
         },
         needle_map::NeedleMapType,
-        store::Store,
+        store::{store_loop, Store, StoreEventTx},
         version::Version,
         BUFFER_SIZE_LIMIT,
     },
@@ -61,7 +60,7 @@ pub struct StorageServer {
     pub pulse_seconds: i64,
     pub data_center: FastStr,
     pub rack: FastStr,
-    pub store: Arc<Mutex<Store>>,
+    pub store: StoreEventTx,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
@@ -96,7 +95,10 @@ impl StorageServer {
             shutdown_rx.clone(),
         )?;
 
-        let store = Arc::new(Mutex::new(store));
+        let (tx, rx) = unbounded();
+        let store_tx = StoreEventTx::new(tx);
+        rt_spawn(store_loop(store, rx, shutdown_rx.clone()));
+
         let storage = StorageServer {
             host: FastStr::new(host),
             port,
@@ -106,7 +108,7 @@ impl StorageServer {
             rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
-            store: store.clone(),
+            store: store_tx.clone(),
             handles: vec![],
             shutdown,
         };
@@ -117,7 +119,7 @@ impl StorageServer {
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
-                    store: store.clone(),
+                    store: store_tx,
                     needle_map_type,
                 }))
                 .serve_with_shutdown(addr, async {
@@ -219,7 +221,7 @@ impl StorageServer {
 }
 
 async fn start_heartbeat(
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -238,7 +240,11 @@ async fn start_heartbeat(
                             info!("heartbeat starting up success");
                             while let Some(response) = stream.next().await {
                                 match response {
-                                    Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
+                                    Ok(response) => {
+                                        if let Err(err) = store.set_volume_size_limit(response.volume_size_limit) {
+                                            error!("set volume_size_limit failed, error: {err}");
+                                        }
+                                    }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
                                         tokio::time::sleep(STOP_INTERVAL * 2).await;
@@ -263,7 +269,7 @@ async fn start_heartbeat(
 }
 
 async fn heartbeat_stream(
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
@@ -275,12 +281,12 @@ async fn heartbeat_stream(
     let (new_ec_shards_tx, mut new_ec_shards_rx) = channel(3);
     let (deleted_ec_shards_tx, mut deleted_ec_shards_rx) = channel(3);
 
-    store.lock().await.set_event_tx(
+    store.set_event_tx(
         new_volumes_tx,
         deleted_volumes_tx,
         new_ec_shards_tx,
         deleted_ec_shards_tx,
-    );
+    )?;
 
     let request_stream = stream! {
         loop {
@@ -298,7 +304,7 @@ async fn heartbeat_stream(
 
                 }
                 _ = interval.tick() => {
-                    match store.lock().await.collect_heartbeat().await {
+                    match store.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,
                         Err(err) => error!("collect heartbeat error: {err}")
                     }
@@ -316,7 +322,7 @@ async fn heartbeat_stream(
 
 #[derive(Clone)]
 struct StorageGrpcServer {
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     needle_map_type: NeedleMapType,
 }
 
@@ -326,16 +332,17 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<AllocateVolumeRequest>,
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
-        store.add_volume(
-            &request.volumes,
-            &request.collection,
-            self.needle_map_type,
-            &request.replication,
-            &request.ttl,
-            request.preallocate,
-        )?;
+        self.store
+            .add_volume(
+                request.volumes,
+                request.collection,
+                self.needle_map_type,
+                request.replication,
+                request.ttl,
+                request.preallocate,
+            )
+            .await?;
         Ok(Response::new(AllocateVolumeResponse {}))
     }
 
@@ -343,10 +350,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -354,10 +360,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCompactRequest>,
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} compact", request.volume_id);
-        store
+        self.store
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
@@ -367,10 +372,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} commit compaction", request.volume_id);
-        store.commit_compact_volume(request.volume_id).await?;
+        self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -381,10 +385,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} cleanup", request.volume_id);
-        store.commit_cleanup_volume(request.volume_id).await?;
+        self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
@@ -392,9 +395,8 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
-        let x = match store.find_volume(request.volume_id) {
+        match self.store.find_volume(request.volume_id).await? {
             Some(volume) => {
                 let base_filename = volume.filename().await?;
                 let collection = volume.collection().await?;
@@ -416,20 +418,18 @@ impl VolumeServer for StorageGrpcServer {
                 "volume {} is not found.",
                 request.volume_id
             ))),
-        };
-        x
+        }
     }
 
     async fn volume_ec_shards_rebuild(
         &self,
         request: Request<VolumeEcShardsRebuildRequest>,
     ) -> StdResult<Response<VolumeEcShardsRebuildResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         let base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
 
         let mut rebuilt_shard_ids = Vec::new();
-        for location in store.locations.iter() {
+        for location in self.store.locations().await?.iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}{}", location.directory, base_filename);
@@ -455,12 +455,11 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsDeleteRequest>,
     ) -> StdResult<Response<VolumeEcShardsDeleteResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         let mut base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
         let mut found = false;
 
-        for location in store.locations.iter() {
+        for location in self.store.locations().await?.iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 found = true;
@@ -491,7 +490,7 @@ impl VolumeServer for StorageGrpcServer {
         let idx_filename = format!("{}.idx", filename);
         let ec_prefix = format!("{}.ec", filename);
 
-        for location in store.locations.iter() {
+        for location in self.store.locations().await?.iter() {
             let read_dir = fs::read_dir(location.directory.to_string())?;
             for entry in read_dir {
                 match entry?.file_name().into_string() {
@@ -548,10 +547,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardReadRequest>,
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
 
-        if let Some(volume) = store.find_ec_volume(request.volume_id) {
+        if let Some(volume) = self.store.find_ec_volume(request.volume_id).await? {
             if let Some(shard) = volume.find_shard(request.shard_id as ShardId).await? {
                 if request.file_key != 0 {
                     let needle_value = volume.find_needle_from_ecx(request.file_key).await?;
@@ -620,10 +618,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcBlobDeleteRequest>,
     ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
 
-        for location in store.locations.iter() {
+        for location in self.store.locations().await?.iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
                     .locate_ec_shard_needle(request.file_key, request.version as Version)
@@ -644,10 +641,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsToVolumeRequest>,
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
 
-        let x = match store.find_ec_volume(request.volume_id) {
+        match self.store.find_ec_volume(request.volume_id).await? {
             Some(volume) => {
                 if volume.collection().await? == request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));
@@ -663,7 +659,6 @@ impl VolumeServer for StorageGrpcServer {
                 "ec volume {} not found",
                 request.volume_id
             ))),
-        };
-        x
+        }
     }
 }

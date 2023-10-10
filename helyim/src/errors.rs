@@ -101,6 +101,8 @@ pub enum Error {
     BroadcastSendError(#[from] async_broadcast::SendError<()>),
     #[error("Oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
+    #[error("JoinHandle error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

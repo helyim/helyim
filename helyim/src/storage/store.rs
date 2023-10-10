@@ -1,11 +1,11 @@
 use std::{io::ErrorKind, sync::Arc};
 
-use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::{
     channel::mpsc::{channel, unbounded, Sender},
     SinkExt, StreamExt,
 };
+use helyim_macros::event_fn;
 use helyim_proto::{
     volume_server_client::VolumeServerClient, HeartbeatRequest, VolumeEcShardInformationMessage,
     VolumeEcShardReadRequest, VolumeInformationMessage, VolumeShortInformationMessage,
@@ -56,6 +56,7 @@ unsafe impl Send for Store {}
 
 unsafe impl Sync for Store {}
 
+#[event_fn]
 impl Store {
     pub fn new(
         ip: &str,
@@ -90,46 +91,52 @@ impl Store {
         })
     }
 
+    pub fn ip(&self) -> FastStr {
+        self.ip.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn set_volume_size_limit(&mut self, volume_size_limit: u64) {
+        self.volume_size_limit = volume_size_limit;
+    }
+
+    pub fn locations(&self) -> Vec<Arc<DiskLocation>> {
+        self.locations.clone()
+    }
+
     pub fn has_volume(&self, vid: VolumeId) -> bool {
         self.find_volume(vid).is_some()
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, VolumeEventTx>> {
+    pub fn find_volume(&self, vid: VolumeId) -> Option<VolumeEventTx> {
         for location in self.locations.iter() {
             let volume = location.volumes.get(&vid);
             if volume.is_some() {
-                return volume;
-            }
-        }
-        None
-    }
-
-    pub fn find_volume_mut(&self, vid: VolumeId) -> Option<RefMut<VolumeId, VolumeEventTx>> {
-        for location in self.locations.iter() {
-            let volume = location.volumes.get_mut(&vid);
-            if volume.is_some() {
-                return volume;
+                return volume.map(|v| v.value().clone());
             }
         }
         None
     }
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
-        match self.find_volume_mut(vid) {
+        match self.find_volume(vid) {
             Some(volume) => volume.delete_needle(needle).await,
             None => Ok(Size(0)),
         }
     }
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume_mut(vid) {
+        match self.find_volume(vid) {
             Some(volume) => volume.read_needle(needle).await,
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
     pub async fn write_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume_mut(vid) {
+        match self.find_volume(vid) {
             Some(volume) => {
                 if volume.is_readonly().await? {
                     return Err(anyhow!("volume {} is read only", vid));
@@ -206,20 +213,20 @@ impl Store {
 
     pub fn add_volume(
         &self,
-        volumes: &[u32],
-        collection: &str,
+        volumes: Vec<u32>,
+        collection: String,
         needle_map_type: NeedleMapType,
-        replica_placement: &str,
-        ttl: &str,
+        replica_placement: String,
+        ttl: String,
         preallocate: i64,
     ) -> Result<()> {
-        let rp = ReplicaPlacement::new(replica_placement)?;
-        let ttl = Ttl::new(ttl)?;
+        let rp = ReplicaPlacement::new(&replica_placement)?;
+        let ttl = Ttl::new(&ttl)?;
 
         let collection = FastStr::new(collection);
         for volume in volumes {
             self.do_add_volume(
-                *volume,
+                volume,
                 collection.clone(),
                 needle_map_type,
                 rp,
@@ -301,10 +308,66 @@ impl Store {
 
         Ok(heartbeat)
     }
-}
 
-/// erasure coding
-impl Store {
+    pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                let garbage_level = volume.garbage_level().await?;
+                info!("volume {vid} garbage level: {garbage_level}");
+                Ok(garbage_level)
+            }
+            None => {
+                error!("volume {vid} is not found during check compact");
+                Err(VolumeError::NotFound(vid).into())
+            }
+        }
+    }
+
+    pub async fn compact_volume(&self, vid: VolumeId, _preallocate: u64) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.compact().await?;
+                info!("volume {vid} compacting success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during compacting.");
+                Err(VolumeError::NotFound(vid).into())
+            }
+        }
+    }
+
+    pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                // TODO: check disk status
+                volume.commit_compact().await?;
+                info!("volume {vid} committing compaction success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during committing compaction.");
+                Err(VolumeError::NotFound(vid).into())
+            }
+        }
+    }
+
+    pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
+        match self.find_volume(vid) {
+            Some(volume) => {
+                volume.cleanup_compact().await?;
+                info!("volume {vid} committing cleanup success.");
+                Ok(())
+            }
+            None => {
+                error!("volume {vid} is not found during cleaning up.");
+                Err(VolumeError::NotFound(vid).into())
+            }
+        }
+    }
+
+    // erasure coding
     pub async fn find_ec_shard(
         &self,
         vid: VolumeId,
@@ -319,11 +382,11 @@ impl Store {
         Ok(None)
     }
 
-    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolumeEventTx>> {
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeEventTx> {
         for location in self.locations.iter() {
             let volume = location.ec_volumes.get(&vid);
             if volume.is_some() {
-                return volume;
+                return volume.map(|v| v.value().clone());
             }
         }
         None
@@ -338,12 +401,12 @@ impl Store {
 
     pub async fn mount_ec_shards(
         &mut self,
-        collection: &str,
+        collection: String,
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<()> {
         for location in self.locations.iter_mut() {
-            match location.load_ec_shard(collection, vid, shard_id).await {
+            match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
                     if let Some(tx) = self.new_ec_shards_tx.as_mut() {
                         let shard_bits = 0;
@@ -465,7 +528,7 @@ impl Store {
 
     async fn read_from_remote_locations(
         &self,
-        locations: Vec<FastStr>,
+        locations: &[FastStr],
         volume: &EcVolume,
         shard_id: ShardId,
         needle_id: NeedleId,
@@ -475,7 +538,7 @@ impl Store {
         let mut data = vec![0u8; buf_len];
         let (bytes_read, is_deleted) = match self
             .read_remote_ec_shard_interval(
-                &locations,
+                locations,
                 needle_id,
                 volume.volume_id,
                 shard_id,
@@ -500,40 +563,61 @@ impl Store {
     }
 
     async fn recover_one_remote_ec_shard_interval(
-        self: Arc<Self>,
+        &self,
         needle_id: NeedleId,
         ec_volume: &EcVolume,
         shard_id_to_recover: ShardId,
-        buf: &[u8],
+        buf: &mut [u8],
         offset: u64,
-    ) -> Result<(u64, bool)> {
+    ) -> Result<(usize, bool)> {
         let reed_solomon: ReedSolomon<Field> =
             ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
-        let mut bufs: Vec<Vec<u8>> = vec![vec![]; TOTAL_SHARDS_COUNT as usize];
+        let mut bufs = vec![None; TOTAL_SHARDS_COUNT as usize];
 
         let (tx, mut rx) = channel(ec_volume.shard_locations.len());
+
+        let reconstruct = rt_spawn(async move {
+            let mut is_deleted = false;
+            while let Some((shard_id, data, if_deleted)) = rx.next().await {
+                bufs[shard_id as usize] = Some(data);
+                if if_deleted {
+                    is_deleted = if_deleted;
+                }
+            }
+
+            let ret = match reed_solomon.reconstruct(&mut bufs) {
+                Ok(_) => Ok(bufs),
+                Err(err) => Err(err),
+            };
+
+            (ret, is_deleted)
+        });
+
         async_scoped::TokioScope::scope_and_block(|s| {
             for entry in ec_volume.shard_locations.iter() {
-                if *entry.key() == shard_id_to_recover {
+                let shard_id = *entry.key();
+                if shard_id == shard_id_to_recover {
                     continue;
                 }
                 if entry.value().is_empty() {
                     continue;
                 }
-                let buf_len = buf.len();
-                let shard_id = *entry.key();
-                let locations = entry.value().clone();
-                let this = self.clone();
 
+                let buf_len = buf.len();
                 let mut entry_tx = tx.clone();
                 s.spawn(async move {
-                    if let Ok((Some(buf), is_deleted)) = this
+                    if let Ok((Some(data), is_deleted)) = self
                         .read_from_remote_locations(
-                            locations, ec_volume, shard_id, needle_id, offset, buf_len,
+                            entry.value(),
+                            ec_volume,
+                            shard_id,
+                            needle_id,
+                            offset,
+                            buf_len,
                         )
                         .await
                     {
-                        if let Err(err) = entry_tx.send((shard_id, buf, is_deleted)).await {
+                        if let Err(err) = entry_tx.send((shard_id, data, is_deleted)).await {
                             error!(
                                 "read from remote locations failed, needle_id: {needle_id}, \
                                  shard_id: {shard_id}, error: {err}"
@@ -544,72 +628,57 @@ impl Store {
             }
         });
 
+        // prevent reconstruct thread from staying alive indefinitely
         drop(tx);
-        while let Some((shard_id, buf, is_deleted)) = rx.next().await {
-            bufs[shard_id as usize] = buf;
-        }
 
-        todo!()
+        let (data, is_deleted) = reconstruct.await?;
+        if let Some(Some(data)) = data?.get(shard_id_to_recover as usize) {
+            buf.copy_from_slice(data);
+        }
+        Ok((buf.len(), is_deleted))
     }
 }
 
-/// compact volume
-impl Store {
-    pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
-        match self.find_volume(vid) {
-            Some(volume) => {
-                let garbage_level = volume.garbage_level().await?;
-                info!("volume {vid} garbage level: {garbage_level}");
-                Ok(garbage_level)
-            }
-            None => {
-                error!("volume {vid} is not found during check compact");
-                Err(VolumeError::NotFound(vid).into())
-            }
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-    pub async fn compact_volume(&self, vid: VolumeId, _preallocate: u64) -> Result<()> {
-        match self.find_volume(vid) {
-            Some(volume) => {
-                // TODO: check disk status
-                volume.compact().await?;
-                info!("volume {vid} compacting success.");
-                Ok(())
-            }
-            None => {
-                error!("volume {vid} is not found during compacting.");
-                Err(VolumeError::NotFound(vid).into())
-            }
-        }
-    }
+    use futures::{channel::mpsc::channel, SinkExt, StreamExt};
+    use tokio::time::timeout;
 
-    pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid) {
-            Some(volume) => {
-                // TODO: check disk status
-                volume.commit_compact().await?;
-                info!("volume {vid} committing compaction success.");
-                Ok(())
-            }
-            None => {
-                error!("volume {vid} is not found during committing compaction.");
-                Err(VolumeError::NotFound(vid).into())
-            }
-        }
-    }
+    use crate::rt_spawn;
 
-    pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid) {
-            Some(volume) => {
-                volume.cleanup_compact().await?;
-                info!("volume {vid} committing cleanup success.");
-                Ok(())
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    pub async fn test_async_scope() {
+        let timeout = timeout(Duration::from_secs(1), async {
+            let (tx, mut rx) = channel(10);
+
+            let handle = rt_spawn(async move {
+                while let Some(i) = rx.next().await {
+                    println!("{i}");
+                }
+            });
+
+            async_scoped::TokioScope::scope_and_block(|s| {
+                for i in 0..10 {
+                    let mut tmp_tx = tx.clone();
+                    s.spawn(async move {
+                        let _ = tmp_tx.send(i).await;
+                    });
+                }
+            });
+
+            drop(tx);
+
+            match handle.await {
+                Ok(_) => println!("done"),
+                Err(err) => eprintln!("{err}"),
             }
-            None => {
-                error!("volume {vid} is not found during cleaning up.");
-                Err(VolumeError::NotFound(vid).into())
-            }
+        })
+        .await;
+
+        if let Err(err) = timeout {
+            panic!("{err}");
         }
     }
 }
