@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "helyim",
-    "macros",
+    "helyim-macros",
     "proto",
 ]
 
