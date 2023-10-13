@@ -3,7 +3,7 @@ use crate::storage::erasure_coding::{ShardId, DATA_SHARDS_COUNT};
 pub struct Interval {
     block_index: u64,
     inner_block_offset: u64,
-    size: u64,
+    pub size: u64,
     is_large_block: bool,
     large_block_rows: u64,
 }

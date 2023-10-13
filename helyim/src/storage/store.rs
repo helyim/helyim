@@ -1,4 +1,10 @@
-use std::{io::ErrorKind, sync::Arc};
+use std::{
+    io::ErrorKind,
+    ops::Add,
+    os::unix::fs::FileExt,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use faststr::FastStr;
 use futures::{
@@ -7,8 +13,9 @@ use futures::{
 };
 use helyim_macros::event_fn;
 use helyim_proto::{
-    volume_server_client::VolumeServerClient, HeartbeatRequest, VolumeEcShardInformationMessage,
-    VolumeEcShardReadRequest, VolumeInformationMessage, VolumeShortInformationMessage,
+    helyim_client::HelyimClient, volume_server_client::VolumeServerClient, HeartbeatRequest,
+    VolumeEcShardInformationMessage, VolumeEcShardReadRequest, VolumeInformationMessage,
+    VolumeShortInformationMessage,
 };
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{debug, error, info, warn};
@@ -20,14 +27,15 @@ use crate::{
     storage::{
         disk_location::DiskLocation,
         erasure_coding::{
-            add_shard_id, EcVolume, EcVolumeEventTx, EcVolumeShard, ShardId, DATA_SHARDS_COUNT,
-            PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
+            add_shard_id, EcVolume, EcVolumeEventTx, EcVolumeShard, ErasureCodingError, Interval,
+            ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
+            ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
         needle::Needle,
         needle_map::NeedleMapType,
         types::Size,
         volume::{volume_loop, Volume, VolumeEventTx},
-        ErasureCodingError, NeedleId, ReplicaPlacement, Ttl, VolumeError, VolumeId,
+        NeedleId, ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
 };
 
@@ -42,6 +50,8 @@ pub struct Store {
     pub data_center: FastStr,
     pub rack: FastStr,
     pub connected: bool,
+
+    pub master_addr: FastStr,
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
@@ -65,6 +75,7 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
+        master_addr: FastStr,
         shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
@@ -80,6 +91,7 @@ impl Store {
             public_url: FastStr::new(public_url),
             locations,
             needle_map_type,
+            master_addr,
             data_center: FastStr::empty(),
             rack: FastStr::empty(),
             connected: false,
@@ -456,6 +468,37 @@ impl Store {
         }
     }
 
+    async fn cached_lookup_ec_shard_locations(&self, volume: &EcVolume) -> Result<()> {
+        let shard_count = volume.shard_locations.len() as u32;
+        let now = SystemTime::now();
+        if shard_count < DATA_SHARDS_COUNT
+            && volume
+                .shard_locations_refresh_time
+                .add(Duration::from_secs(11))
+                > now
+            || shard_count == TOTAL_SHARDS_COUNT
+                && volume
+                    .shard_locations_refresh_time
+                    .add(Duration::from_secs(37 * 60))
+                    > now
+            || shard_count >= DATA_SHARDS_COUNT
+                && volume
+                    .shard_locations_refresh_time
+                    .add(Duration::from_secs(7 * 60))
+                    > now
+        {
+            return Ok(());
+        }
+
+        info!("lookup and cache ec volume {} locations", volume.volume_id);
+
+        let client = HelyimClient::connect(self.master_addr.to_string()).await?;
+
+        // let request = LookEc
+
+        Ok(())
+    }
+
     async fn read_remote_ec_shard_interval(
         &self,
         src_nodes: &[FastStr],
@@ -524,6 +567,54 @@ impl Store {
             bytes_read += len;
         }
         Ok((bytes_read, is_deleted))
+    }
+
+    async fn read_one_ec_shard_interval(
+        &self,
+        needle_id: NeedleId,
+        ec_volume: &EcVolume,
+        interval: Interval,
+    ) -> Result<(Vec<u8>, bool)> {
+        let actual_offset = interval.offset(
+            ERASURE_CODING_LARGE_BLOCK_SIZE,
+            ERASURE_CODING_SMALL_BLOCK_SIZE,
+        );
+        let shard_id = interval.shard_id();
+
+        let mut data = vec![0u8; interval.size as usize];
+
+        match ec_volume.find_shard(shard_id) {
+            Some(shard) => {
+                shard.ecd_file.read_at(&mut data, actual_offset)?;
+                Ok((data, false))
+            }
+            None => {
+                if let Some(entry) = ec_volume.shard_locations.get(&shard_id) {
+                    let (_, is_deleted) = self
+                        .read_remote_ec_shard_interval(
+                            entry.value(),
+                            needle_id,
+                            ec_volume.volume_id,
+                            shard_id,
+                            &mut data,
+                            actual_offset,
+                        )
+                        .await?;
+                    return Ok((data, is_deleted));
+                }
+
+                let (_, is_deleted) = self
+                    .recover_one_remote_ec_shard_interval(
+                        needle_id,
+                        ec_volume,
+                        shard_id,
+                        &mut data,
+                        actual_offset,
+                    )
+                    .await?;
+                Ok((data, is_deleted))
+            }
+        }
     }
 
     async fn read_from_remote_locations(

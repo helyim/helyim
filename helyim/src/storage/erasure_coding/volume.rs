@@ -40,7 +40,7 @@ pub struct EcVolume {
     ecx_created_at: SystemTime,
     shards: Vec<Arc<EcVolumeShard>>,
     pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
-    shard_locations_refresh_time: SystemTime,
+    pub shard_locations_refresh_time: SystemTime,
     version: Version,
     ecj_file: Arc<Mutex<File>>,
 }

@@ -6,7 +6,8 @@ use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     lookup_volume_response::VolumeLocation,
-    HeartbeatRequest, HeartbeatResponse, Location, LookupVolumeRequest, LookupVolumeResponse,
+    HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
+    LookupVolumeRequest, LookupVolumeResponse,
 };
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -277,6 +278,13 @@ impl Helyim for DirectoryGrpcServer {
         }
 
         Ok(Response::new(LookupVolumeResponse { volume_locations }))
+    }
+
+    async fn lookup_ec_volume(
+        &self,
+        _request: Request<LookupEcVolumeRequest>,
+    ) -> StdResult<Response<LookupEcVolumeResponse>, Status> {
+        todo!()
     }
 }
 

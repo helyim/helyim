@@ -29,6 +29,8 @@ pub use encoder::{rebuild_ec_files, write_ec_files, write_sorted_file_from_idx};
 use crate::errors::Error;
 
 mod locate;
+pub use locate::Interval;
+
 mod shard;
 pub use shard::{ec_shard_base_filename, ec_shard_filename, EcVolumeShard};
 

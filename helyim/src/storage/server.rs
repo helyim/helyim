@@ -85,6 +85,8 @@ impl StorageServer {
     ) -> Result<StorageServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
+        let master_node = FastStr::new(master_node);
+
         let store = Store::new(
             ip,
             port,
@@ -92,6 +94,7 @@ impl StorageServer {
             folders,
             max_counts,
             needle_map_type,
+            master_node.clone(),
             shutdown_rx.clone(),
         )?;
 
@@ -102,7 +105,7 @@ impl StorageServer {
         let storage = StorageServer {
             host: FastStr::new(host),
             port,
-            master_node: FastStr::new(master_node),
+            master_node,
             pulse_seconds,
             data_center: FastStr::new(data_center),
             rack: FastStr::new(rack),

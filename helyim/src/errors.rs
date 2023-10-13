@@ -12,7 +12,7 @@ use hyper::{
 use serde_json::json;
 use tracing::error;
 
-use crate::storage::{ErasureCodingError, NeedleError, VolumeError};
+use crate::storage::{erasure_coding::ErasureCodingError, NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
