@@ -3,10 +3,7 @@ use std::{pin::Pin, result::Result as StdResult, time::Duration};
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{
-    channel::mpsc::{channel, unbounded},
-    StreamExt,
-};
+use futures::{channel::mpsc::unbounded, StreamExt};
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
@@ -267,33 +264,9 @@ async fn heartbeat_stream(
 ) -> Result<Streaming<HeartbeatResponse>> {
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
 
-    let (new_volumes_tx, mut new_volumes_rx) = channel(3);
-    let (deleted_volumes_tx, mut deleted_volumes_rx) = channel(3);
-    let (new_ec_shards_tx, mut new_ec_shards_rx) = channel(3);
-    let (deleted_ec_shards_tx, mut deleted_ec_shards_rx) = channel(3);
-
-    store.set_event_tx(
-        new_volumes_tx,
-        deleted_volumes_tx,
-        new_ec_shards_tx,
-        deleted_ec_shards_tx,
-    )?;
-
     let request_stream = stream! {
         loop {
             tokio::select! {
-                _ = new_volumes_rx.next() => {
-
-                }
-                _ = deleted_volumes_rx.next() => {
-
-                }
-                _ = new_ec_shards_rx.next() => {
-
-                }
-                _ = deleted_ec_shards_rx.next() => {
-
-                }
                 _ = interval.tick() => {
                     match store.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,

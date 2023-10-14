@@ -1,12 +1,9 @@
 use std::sync::Arc;
 
 use faststr::FastStr;
-use futures::channel::mpsc::{unbounded, Sender};
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
-use helyim_proto::{
-    HeartbeatRequest, VolumeEcShardInformationMessage, VolumeInformationMessage,
-    VolumeShortInformationMessage,
-};
+use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -39,11 +36,6 @@ pub struct Store {
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
-
-    new_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
-    deleted_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
-    new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
-    deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
 }
 
 unsafe impl Send for Store {}
@@ -80,10 +72,6 @@ impl Store {
             rack: FastStr::empty(),
             connected: false,
             volume_size_limit: 0,
-            new_volumes_tx: None,
-            deleted_volumes_tx: None,
-            new_ec_shards_tx: None,
-            deleted_ec_shards_tx: None,
         })
     }
 
@@ -231,19 +219,6 @@ impl Store {
             )?;
         }
         Ok(())
-    }
-
-    pub fn set_event_tx(
-        &mut self,
-        new_volumes_tx: Sender<VolumeShortInformationMessage>,
-        deleted_volumes_tx: Sender<VolumeShortInformationMessage>,
-        new_ec_shards_tx: Sender<VolumeEcShardInformationMessage>,
-        deleted_ec_shards_tx: Sender<VolumeEcShardInformationMessage>,
-    ) {
-        self.new_volumes_tx = Some(new_volumes_tx);
-        self.deleted_volumes_tx = Some(deleted_volumes_tx);
-        self.new_ec_shards_tx = Some(new_ec_shards_tx);
-        self.deleted_ec_shards_tx = Some(deleted_ec_shards_tx);
     }
 
     pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
