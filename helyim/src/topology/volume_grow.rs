@@ -1,42 +1,18 @@
 use faststr::FastStr;
-use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
-    StreamExt,
-};
+use helyim_macros::event_fn;
 use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
-use tracing::info;
 
 use crate::{
-    directory::topology::{
-        data_center::DataCenterEventTx, topology::TopologyEventTx, DataNodeEventTx, RackEventTx,
-    },
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+    topology::{DataCenterEventTx, DataNodeEventTx, RackEventTx, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
-pub struct VolumeGrowth {
-    shutdown: async_broadcast::Receiver<()>,
-}
+pub struct VolumeGrowth;
 
 impl VolumeGrowth {
-    pub fn new(shutdown: async_broadcast::Receiver<()>) -> Self {
-        Self { shutdown }
-    }
-
-    pub async fn grow_by_type(
-        &mut self,
-        option: &VolumeGrowOption,
-        topology: TopologyEventTx,
-    ) -> Result<usize> {
-        let count = self.find_volume_count(option.replica_placement.copy_count());
-        self.grow_by_count_and_type(count, option, topology).await
-    }
-
     /// one replication type may need rp.get_copy_count() actual volumes
     /// given copy_count, how many logical volumes to create
     fn find_volume_count(&self, count: usize) -> usize {
@@ -311,64 +287,15 @@ impl VolumeGrowth {
     }
 }
 
-pub enum VolumeGrowthEvent {
-    GrowByType {
-        option: VolumeGrowOption,
-        topology: TopologyEventTx,
-        tx: oneshot::Sender<Result<usize>>,
-    },
-}
-
-pub async fn volume_growth_loop(
-    mut volume_grow: VolumeGrowth,
-    mut volume_grow_rx: UnboundedReceiver<VolumeGrowthEvent>,
-) {
-    info!("volume growth event loop starting.");
-    loop {
-        tokio::select! {
-            Some(event) = volume_grow_rx.next() => {
-                match event {
-                    VolumeGrowthEvent::GrowByType {
-                        option,
-                        topology,
-                        tx,
-                    } => {
-                        let _ = tx.send(volume_grow.grow_by_type(&option, topology).await);
-                    }
-                }
-            }
-            _ = volume_grow.shutdown.recv() => {
-                break;
-            }
-        }
-    }
-    info!("volume growth event loop stopped.");
-}
-
-#[derive(Debug, Clone)]
-pub struct VolumeGrowthEventTx(UnboundedSender<VolumeGrowthEvent>);
-
-impl VolumeGrowthEventTx {
-    pub fn new(tx: UnboundedSender<VolumeGrowthEvent>) -> Self {
-        Self(tx)
-    }
-
+#[event_fn]
+impl VolumeGrowth {
     pub async fn grow_by_type(
-        &self,
+        &mut self,
         option: VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
-        let (tx, rx) = oneshot::channel();
-        self.0.unbounded_send(VolumeGrowthEvent::GrowByType {
-            option,
-            topology,
-            tx,
-        })?;
-        rx.await?
-    }
-
-    pub fn close(&self) {
-        self.0.close_channel();
+        let count = self.find_volume_count(option.replica_placement.copy_count());
+        self.grow_by_count_and_type(count, &option, topology).await
     }
 }
 

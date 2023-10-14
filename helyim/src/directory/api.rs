@@ -6,13 +6,13 @@ use faststr::FastStr;
 use serde::Deserialize;
 
 use crate::{
-    directory::{
-        topology::{topology::TopologyEventTx, volume_grow::VolumeGrowthEventTx},
-        Topology, VolumeGrowOption,
-    },
     errors::{Error, Result},
     operation::{Assignment, ClusterStatus},
     storage::{ReplicaPlacement, Ttl},
+    topology::{
+        volume_grow::{VolumeGrowOption, VolumeGrowthEventTx},
+        Topology, TopologyEventTx,
+    },
 };
 
 #[derive(Debug, Clone)]

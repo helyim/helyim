@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
+use helyim_macros::event_fn;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tracing::{debug, error, info, warn};
 
@@ -11,8 +14,9 @@ use crate::{
         disk_location::DiskLocation,
         needle::Needle,
         needle_map::NeedleMapType,
+        types::Size,
         volume::{volume_loop, Volume, VolumeEventTx},
-        ReplicaPlacement, Ttl, VolumeId,
+        ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
 };
 
@@ -22,19 +26,23 @@ pub struct Store {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    pub locations: Vec<DiskLocation>,
+    pub locations: Vec<Arc<DiskLocation>>,
 
     pub data_center: FastStr,
     pub rack: FastStr,
     pub connected: bool,
+
+    pub master_addr: FastStr,
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
 }
 
 unsafe impl Send for Store {}
+
 unsafe impl Sync for Store {}
 
+#[event_fn]
 impl Store {
     pub fn new(
         ip: &str,
@@ -43,13 +51,14 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
+        master_addr: FastStr,
         shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
             let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
             location.load_existing_volumes(needle_map_type)?;
-            locations.push(location);
+            locations.push(Arc::new(location));
         }
 
         Ok(Store {
@@ -58,6 +67,7 @@ impl Store {
             public_url: FastStr::new(public_url),
             locations,
             needle_map_type,
+            master_addr,
             data_center: FastStr::empty(),
             rack: FastStr::empty(),
             connected: false,
@@ -65,35 +75,51 @@ impl Store {
         })
     }
 
+    pub fn ip(&self) -> FastStr {
+        self.ip.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn set_volume_size_limit(&mut self, volume_size_limit: u64) {
+        self.volume_size_limit = volume_size_limit;
+    }
+
+    pub fn locations(&self) -> Vec<Arc<DiskLocation>> {
+        self.locations.clone()
+    }
+
     pub fn has_volume(&self, vid: VolumeId) -> bool {
         self.find_volume(vid).is_some()
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&VolumeEventTx> {
+    pub fn find_volume(&self, vid: VolumeId) -> Option<VolumeEventTx> {
         for location in self.locations.iter() {
             let volume = location.volumes.get(&vid);
             if volume.is_some() {
-                return volume;
+                return volume.map(|v| v.value().clone());
             }
         }
         None
     }
 
-    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<u32> {
+    pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume(vid) {
             Some(volume) => volume.delete_needle(needle).await,
-            None => Ok(0),
+            None => Ok(Size(0)),
         }
     }
 
-    pub async fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+    pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid) {
             Some(volume) => volume.read_needle(needle).await,
-            None => Err(Error::MissingVolume(vid)),
+            None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
-    pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+    pub async fn write_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid) {
             Some(volume) => {
                 if volume.is_readonly().await? {
@@ -102,13 +128,13 @@ impl Store {
 
                 volume.write_needle(needle).await
             }
-            None => Err(Error::MissingVolume(vid)),
+            None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             location.delete_volume(vid).await?;
             delete = true;
         }
@@ -116,14 +142,14 @@ impl Store {
             // TODO: update master
             Ok(())
         } else {
-            Err(Error::MissingVolume(vid))
+            Err(VolumeError::NotFound(vid).into())
         }
     }
 
-    fn find_free_location(&mut self) -> Option<&mut DiskLocation> {
+    fn find_free_location(&self) -> Option<&Arc<DiskLocation>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             let free = location.max_volume_count - location.volumes.len() as i64;
             if free > max_free {
                 max_free = free;
@@ -135,7 +161,7 @@ impl Store {
     }
 
     fn do_add_volume(
-        &mut self,
+        &self,
         vid: VolumeId,
         collection: FastStr,
         needle_map_type: NeedleMapType,
@@ -170,21 +196,21 @@ impl Store {
     }
 
     pub fn add_volume(
-        &mut self,
-        volumes: &[u32],
-        collection: &str,
+        &self,
+        volumes: Vec<u32>,
+        collection: String,
         needle_map_type: NeedleMapType,
-        replica_placement: &str,
-        ttl: &str,
+        replica_placement: String,
+        ttl: String,
         preallocate: i64,
     ) -> Result<()> {
-        let rp = ReplicaPlacement::new(replica_placement)?;
-        let ttl = Ttl::new(ttl)?;
+        let rp = ReplicaPlacement::new(&replica_placement)?;
+        let ttl = Ttl::new(&ttl)?;
 
         let collection = FastStr::new(collection);
         for volume in volumes {
             self.do_add_volume(
-                *volume,
+                volume,
                 collection.clone(),
                 needle_map_type,
                 rp,
@@ -203,7 +229,9 @@ impl Store {
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
-            for (vid, volume) in location.volumes.iter() {
+            for entry in location.volumes.iter() {
+                let vid = entry.key();
+                let volume = entry.value();
                 let volume_max_file_key = volume.max_file_key().await?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
@@ -251,10 +279,7 @@ impl Store {
 
         Ok(heartbeat)
     }
-}
 
-/// compact volume
-impl Store {
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid) {
             Some(volume) => {
@@ -264,22 +289,22 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during check compact");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
 
-    pub async fn compact_volume(&self, vid: VolumeId, preallocate: i64) -> Result<()> {
+    pub async fn compact_volume(&self, vid: VolumeId, _preallocate: u64) -> Result<()> {
         match self.find_volume(vid) {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact(preallocate).await?;
+                volume.compact().await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }
             None => {
                 error!("volume {vid} is not found during compacting.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
@@ -294,7 +319,7 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during committing compaction.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::NotFound(vid).into())
             }
         }
     }
@@ -308,8 +333,50 @@ impl Store {
             }
             None => {
                 error!("volume {vid} is not found during cleaning up.");
-                Err(Error::MissingVolume(vid))
+                Err(VolumeError::NotFound(vid).into())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::{channel::mpsc::channel, SinkExt, StreamExt};
+    use tokio::time::timeout;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    pub async fn test_async_scope() {
+        let timeout = timeout(Duration::from_secs(1), async {
+            let (tx, mut rx) = channel(10);
+
+            let handle = tokio::spawn(async move {
+                while let Some(i) = rx.next().await {
+                    println!("{i}");
+                }
+            });
+
+            async_scoped::TokioScope::scope_and_block(|s| {
+                for i in 0..10 {
+                    let mut tmp_tx = tx.clone();
+                    s.spawn(async move {
+                        let _ = tmp_tx.send(i).await;
+                    });
+                }
+            });
+
+            drop(tx);
+
+            match handle.await {
+                Ok(_) => println!("done"),
+                Err(err) => eprintln!("{err}"),
+            }
+        })
+        .await;
+
+        if let Err(err) = timeout {
+            panic!("{err}");
         }
     }
 }

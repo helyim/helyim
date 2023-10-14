@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use helyim::{
-    directory::{DirectoryServer, MemorySequencer},
+    directory::{DirectoryServer, Sequencer},
     storage::{NeedleMapType, ReplicaPlacement, StorageServer},
 };
 use tokio::signal;
@@ -18,12 +18,12 @@ struct Opts {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Master(Master),
-    Volume(Volume),
+    Master(MasterOptions),
+    Volume(VolumeOptions),
 }
 
 #[derive(Args, Debug)]
-struct Master {
+struct MasterOptions {
     #[arg(long, default_value("127.0.0.1"))]
     ip: String,
     #[arg(long, default_value_t = 9333)]
@@ -40,7 +40,7 @@ struct Master {
 }
 
 #[derive(Args, Debug)]
-struct Volume {
+struct VolumeOptions {
     #[arg(long, default_value("127.0.0.1"))]
     ip: String,
     #[arg(long, default_value_t = 8080)]
@@ -67,7 +67,7 @@ struct Volume {
     dir: Vec<String>,
 }
 
-async fn start_master(host: &str, master: Master) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut dir = DirectoryServer::new(
         host,
         &master.ip,
@@ -77,7 +77,7 @@ async fn start_master(host: &str, master: Master) -> Result<(), Box<dyn std::err
         master.pulse_seconds,
         ReplicaPlacement::new(&master.default_replication)?,
         0.3,
-        MemorySequencer::new(),
+        Sequencer::new("snowflake")?,
     )
     .await?;
     dir.start().await?;
@@ -86,7 +86,7 @@ async fn start_master(host: &str, master: Master) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-async fn start_volume(host: &str, volume: Volume) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_volume(host: &str, volume: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
     let public_url = volume
         .public_url
         .unwrap_or(format!("{}:{}", volume.ip, volume.port));

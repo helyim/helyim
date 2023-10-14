@@ -1,18 +1,25 @@
-use std::{result::Result as StdResult, sync::Arc, time::Duration};
+use std::{pin::Pin, result::Result as StdResult, time::Duration};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, lock::Mutex, StreamExt};
+use futures::{channel::mpsc::unbounded, StreamExt};
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, HeartbeatResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse,
+    VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
+    VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
+    VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
+    VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
+    VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
+    VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
+    VolumeEcShardsUnmountResponse,
 };
 use tokio::task::JoinHandle;
+use tokio_stream::Stream;
 use tonic::{
     transport::{Channel, Server as TonicServer},
     Request, Response, Status, Streaming,
@@ -24,12 +31,9 @@ use crate::{
     operation::{looker_loop, Looker, LookerEventTx},
     rt_spawn,
     storage::{
-        api::{
-            fallback_handler, status_handler, volume_clean_handler, volume_commit_compact_handler,
-            StorageContext,
-        },
+        api::{fallback_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
-        store::Store,
+        store::{store_loop, Store, StoreEventTx},
     },
     STOP_INTERVAL,
 };
@@ -41,7 +45,7 @@ pub struct StorageServer {
     pub pulse_seconds: i64,
     pub data_center: FastStr,
     pub rack: FastStr,
-    pub store: Arc<Mutex<Store>>,
+    pub store: StoreEventTx,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
@@ -66,6 +70,8 @@ impl StorageServer {
     ) -> Result<StorageServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
+        let master_node = FastStr::new(master_node);
+
         let store = Store::new(
             ip,
             port,
@@ -73,20 +79,24 @@ impl StorageServer {
             folders,
             max_counts,
             needle_map_type,
+            master_node.clone(),
             shutdown_rx.clone(),
         )?;
 
-        let store = Arc::new(Mutex::new(store));
+        let (tx, rx) = unbounded();
+        let store_tx = StoreEventTx::new(tx);
+        rt_spawn(store_loop(store, rx, shutdown_rx.clone()));
+
         let storage = StorageServer {
             host: FastStr::new(host),
             port,
-            master_node: FastStr::new(master_node),
+            master_node,
             pulse_seconds,
             data_center: FastStr::new(data_center),
             rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
-            store: store.clone(),
+            store: store_tx.clone(),
             handles: vec![],
             shutdown,
         };
@@ -97,7 +107,7 @@ impl StorageServer {
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
-                    store: store.clone(),
+                    store: store_tx,
                     needle_map_type,
                 }))
                 .serve_with_shutdown(addr, async {
@@ -147,8 +157,12 @@ impl StorageServer {
         let client = HelyimClient::connect(self.grpc_addr()?).await?;
 
         let (looker_tx, looker_rx) = unbounded();
-        let looker = Looker::new(client.clone(), self.shutdown.new_receiver());
-        self.handles.push(rt_spawn(looker_loop(looker, looker_rx)));
+        let looker = Looker::new(client.clone());
+        self.handles.push(rt_spawn(looker_loop(
+            looker,
+            looker_rx,
+            self.shutdown.new_receiver(),
+        )));
 
         let ctx = StorageContext {
             store,
@@ -176,8 +190,6 @@ impl StorageServer {
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
                 .route("/status", get(status_handler))
-                .route("/volume/clean", get(volume_clean_handler))
-                .route("/volume/clean/commit", get(volume_commit_compact_handler))
                 .fallback(fallback_handler)
                 .with_state(ctx);
 
@@ -197,7 +209,7 @@ impl StorageServer {
 }
 
 async fn start_heartbeat(
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -216,7 +228,11 @@ async fn start_heartbeat(
                             info!("heartbeat starting up success");
                             while let Some(response) = stream.next().await {
                                 match response {
-                                    Ok(response) => store.lock().await.volume_size_limit = response.volume_size_limit,
+                                    Ok(response) => {
+                                        if let Err(err) = store.set_volume_size_limit(response.volume_size_limit) {
+                                            error!("set volume_size_limit failed, error: {err}");
+                                        }
+                                    }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
                                         tokio::time::sleep(STOP_INTERVAL * 2).await;
@@ -241,7 +257,7 @@ async fn start_heartbeat(
 }
 
 async fn heartbeat_stream(
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
@@ -251,15 +267,15 @@ async fn heartbeat_stream(
     let request_stream = stream! {
         loop {
             tokio::select! {
-                // to avoid server side got `channel closed` error
-                _ = shutdown_rx.recv() => {
-                    break;
-                }
                 _ = interval.tick() => {
-                    match store.lock().await.collect_heartbeat().await {
+                    match store.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,
                         Err(err) => error!("collect heartbeat error: {err}")
                     }
+                }
+                // to avoid server side got `channel closed` error
+                _ = shutdown_rx.recv() => {
+                    break;
                 }
             }
         }
@@ -270,7 +286,7 @@ async fn heartbeat_stream(
 
 #[derive(Clone)]
 struct StorageGrpcServer {
-    store: Arc<Mutex<Store>>,
+    store: StoreEventTx,
     needle_map_type: NeedleMapType,
 }
 
@@ -280,16 +296,17 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<AllocateVolumeRequest>,
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
-        let mut store = self.store.lock().await;
         let request = request.into_inner();
-        store.add_volume(
-            &request.volumes,
-            &request.collection,
-            self.needle_map_type,
-            &request.replication,
-            &request.ttl,
-            request.preallocate,
-        )?;
+        self.store
+            .add_volume(
+                request.volumes,
+                request.collection,
+                self.needle_map_type,
+                request.replication,
+                request.ttl,
+                request.preallocate,
+            )
+            .await?;
         Ok(Response::new(AllocateVolumeResponse {}))
     }
 
@@ -297,10 +314,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -308,10 +324,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCompactRequest>,
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} compact", request.volume_id);
-        store
+        self.store
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
@@ -321,10 +336,9 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} commit compaction", request.volume_id);
-        store.commit_compact_volume(request.volume_id).await?;
+        self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -335,10 +349,76 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
-        let store = self.store.lock().await;
         let request = request.into_inner();
         info!("vacuum volume {} cleanup", request.volume_id);
-        store.commit_cleanup_volume(request.volume_id).await?;
+        self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
+    }
+
+    async fn volume_ec_shards_generate(
+        &self,
+        request: Request<VolumeEcShardsGenerateRequest>,
+    ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_rebuild(
+        &self,
+        request: Request<VolumeEcShardsRebuildRequest>,
+    ) -> StdResult<Response<VolumeEcShardsRebuildResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_copy(
+        &self,
+        request: Request<VolumeEcShardsCopyRequest>,
+    ) -> StdResult<Response<VolumeEcShardsCopyResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_delete(
+        &self,
+        request: Request<VolumeEcShardsDeleteRequest>,
+    ) -> StdResult<Response<VolumeEcShardsDeleteResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_mount(
+        &self,
+        request: Request<VolumeEcShardsMountRequest>,
+    ) -> StdResult<Response<VolumeEcShardsMountResponse>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_shards_unmount(
+        &self,
+        request: Request<VolumeEcShardsUnmountRequest>,
+    ) -> StdResult<Response<VolumeEcShardsUnmountResponse>, Status> {
+        todo!()
+    }
+
+    type VolumeEcShardReadStream =
+        Pin<Box<dyn Stream<Item = StdResult<VolumeEcShardReadResponse, Status>> + Send>>;
+
+    async fn volume_ec_shard_read(
+        &self,
+        request: Request<VolumeEcShardReadRequest>,
+    ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
+        todo!()
+    }
+
+    async fn volume_ec_blob_delete(
+        &self,
+        request: Request<VolumeEcBlobDeleteRequest>,
+    ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
+        todo!()
+    }
+
+    /// generate the .idx, .dat, files from .ecx, .ecj and .ec01 - .ec14 files
+    async fn volume_ec_shards_to_volume(
+        &self,
+        request: Request<VolumeEcShardsToVolumeRequest>,
+    ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
+        todo!()
     }
 }

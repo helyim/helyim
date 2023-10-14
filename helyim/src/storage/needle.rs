@@ -17,12 +17,20 @@ use crate::{
     storage::{
         crc,
         ttl::Ttl,
+        types::{Cookie, Offset, Size},
         version::{Version, CURRENT_VERSION, VERSION2},
+        NeedleError, NeedleId,
     },
 };
 
+pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
 pub const NEEDLE_PADDING_SIZE: u32 = 8;
+pub const NEEDLE_ID_SIZE: u32 = 8;
+pub const OFFSET_SIZE: u32 = 4;
+pub const SIZE_SIZE: u32 = 4;
+pub const TIMESTAMP_SIZE: u32 = 8;
+pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
 pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
@@ -44,21 +52,42 @@ pub const NEEDLE_ID_OFFSET: usize = 4;
 pub const NEEDLE_SIZE_OFFSET: usize = 12;
 
 /// Needle index
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct NeedleValue {
     // pub key: u64,
     /// needle offset in the store
-    pub offset: u32,
+    pub offset: Offset,
     /// needle data size
-    pub size: u32,
+    pub size: Size,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Needle {
-    pub cookie: u32,
-    pub id: u64,
-    pub size: u32,
+impl NeedleValue {
+    pub fn deleted() -> Self {
+        Self {
+            offset: 0,
+            size: Size(-1),
+        }
+    }
+    pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
+        let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
+        (&mut buf[..]).put_u64(needle_id);
+        (&mut buf[..]).put_u32(self.offset);
+        (&mut buf[..]).put_i32(self.size.0);
+        buf
+    }
+}
 
+impl Display for NeedleValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(offset: {}, size: {})", self.offset, self.size)
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Needle {
+    pub cookie: Cookie,
+    pub id: NeedleId,
+    pub size: Size,
     pub data_size: u32,
     pub data: Bytes,
     pub flags: u8,
@@ -69,9 +98,7 @@ pub struct Needle {
     pub pairs_size: u16,
     pub pairs: Bytes,
     pub last_modified: u64,
-
     pub ttl: Ttl,
-
     pub checksum: u32,
     pub padding: Vec<u8>,
 }
@@ -91,22 +118,15 @@ impl Display for Needle {
     }
 }
 
-pub fn actual_size(size: u32) -> u32 {
-    let left = (NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE;
-    let padding = if left > 0 {
-        NEEDLE_PADDING_SIZE - left
-    } else {
-        0
-    };
-
-    NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE + padding
+pub fn actual_size(size: Size) -> u64 {
+    (NEEDLE_HEADER_SIZE + size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding_len(size)) as u64
 }
 
-pub fn actual_offset(offset: u32) -> u64 {
+pub fn actual_offset(offset: Offset) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-pub fn read_needle_blob(file: &mut File, offset: u32, size: u32) -> Result<Bytes> {
+pub fn read_needle_blob(file: &mut File, offset: Offset, size: Size) -> Result<Bytes> {
     let size = actual_size(size);
     let mut buffer = vec![0; size as usize];
 
@@ -121,7 +141,7 @@ impl Needle {
     pub fn parse_needle_header(&mut self, mut bytes: &[u8]) {
         self.cookie = bytes.get_u32();
         self.id = bytes.get_u64();
-        self.size = bytes.get_u32();
+        self.size = Size(bytes.get_i32());
         debug!(
             "parse needle header success, cookie: {}, id: {}, size: {}",
             self.cookie, self.id, self.size
@@ -138,9 +158,9 @@ impl Needle {
             None => (&fid[0..fid.len()], &fid[0..0]),
         };
 
-        let ret = parse_key_hash(id)?;
-        self.id = ret.0;
-        self.cookie = ret.1;
+        let (key, cookie) = parse_key_hash(id)?;
+        self.id = key;
+        self.cookie = cookie;
         if !delta.is_empty() {
             let id_delta: u64 = delta.parse()?;
             self.id += id_delta;
@@ -216,7 +236,7 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> Result<(u32, u32)> {
+    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> Result<()> {
         if version != CURRENT_VERSION {
             return Err(anyhow!("no supported version"));
         }
@@ -225,85 +245,77 @@ impl Needle {
         self.name_size = self.name.len() as u8;
         self.mime_size = self.mime.len() as u8;
         self.pairs_size = self.pairs.len() as u16;
-        self.size = 0;
+        self.size = Size(0);
 
         let mut buf = vec![];
         buf.put_u32(self.cookie);
         buf.put_u64(self.id);
-        buf.put_u32(self.size);
+        buf.put_i32(self.size.0);
 
         if self.data_size > 0 {
             buf.put_u32(self.data_size);
             buf.put_slice(&self.data);
             buf.put_u8(self.flags);
-            self.size = 4 + self.data_size + 1; // one for flag;
+            self.size.0 = 4 + self.data_size as i32 + 1; // one for flag;
             if self.has_name() {
                 buf.put_u8(self.name_size);
                 buf.put_slice(&self.name);
-                self.size += 1 + self.name_size as u32;
+                self.size.0 += 1 + self.name_size as i32;
             }
             if self.has_mime() {
                 buf.put_u8(self.mime_size);
                 buf.put_slice(&self.mime);
-                self.size += 1 + self.mime_size as u32;
+                self.size.0 += 1 + self.mime_size as i32;
             }
             if self.has_last_modified_date() {
                 buf.put_u64(self.last_modified);
-                self.size += LAST_MODIFIED_BYTES_LENGTH as u32;
+                self.size.0 += LAST_MODIFIED_BYTES_LENGTH as i32;
             }
             if self.has_ttl() {
                 buf.put_slice(&self.ttl.as_bytes());
-                self.size += TTL_BYTES_LENGTH as u32;
+                self.size.0 += TTL_BYTES_LENGTH as i32;
             }
             if self.has_pairs() {
                 buf.put_u16(self.pairs.len() as u16);
                 buf.put_slice(&self.pairs);
-                self.size += 2 + self.pairs.len() as u32;
+                self.size.0 += 2 + self.pairs.len() as i32;
             }
         }
         if self.size > 0 {
-            (&mut buf[12..16]).put_u32(self.size);
+            (&mut buf[12..16]).put_u32(self.size.0 as u32);
         }
 
-        let mut padding = 0;
-        if (NEEDLE_HEADER_SIZE + self.size + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE != 0 {
-            padding = NEEDLE_PADDING_SIZE
-                - (NEEDLE_HEADER_SIZE + self.size + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE;
-        }
+        let padding = padding_len(self.size);
 
         buf.put_u32(self.checksum);
         buf.put_slice(&vec![0; padding as usize]);
         w.write_all(&buf)?;
 
-        Ok((self.data_size, actual_size(self.size)))
+        Ok(())
     }
 
     pub fn read_data(
         &mut self,
         file: &mut File,
-        offset: u32,
-        size: u32,
+        offset: Offset,
+        size: Size,
         version: Version,
     ) -> Result<()> {
         let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
         if self.size != size {
-            return Err(anyhow!(
-                "file entry not found. needle {} memory {}",
-                self.size,
-                size
-            ));
+            return Err(NeedleError::NotFound(0, self.id).into());
         }
 
         if version == VERSION2 {
-            let end = (NEEDLE_HEADER_SIZE + self.size) as usize;
-            self.read_needle_data(bytes.slice(NEEDLE_HEADER_SIZE as usize..end));
+            let end = NEEDLE_HEADER_SIZE + self.size.0 as u32;
+            self.read_needle_data(bytes.slice(NEEDLE_HEADER_SIZE as usize..end as usize));
         }
 
-        let checksum_start = (NEEDLE_HEADER_SIZE + size) as usize;
-        let checksum_end = (NEEDLE_HEADER_SIZE + size + NEEDLE_CHECKSUM_SIZE) as usize;
-        self.checksum = (&bytes[checksum_start..checksum_end]).get_u32();
+        let checksum_start = NEEDLE_HEADER_SIZE + size.0 as u32;
+        let checksum_end = (NEEDLE_HEADER_SIZE + size.0 as u32 + NEEDLE_CHECKSUM_SIZE) as usize;
+        self.checksum = (&bytes[checksum_start as usize..checksum_end]).get_u32();
         let checksum = crc::checksum(&self.data);
 
         if self.checksum != checksum {
@@ -383,7 +395,7 @@ impl Needle {
         format!("{}{}{}{}", buf[0], buf[1], buf[2], buf[3])
     }
 
-    pub fn disk_size(&self) -> u32 {
+    pub fn disk_size(&self) -> u64 {
         actual_size(self.size)
     }
 
@@ -392,7 +404,7 @@ impl Needle {
     }
 }
 
-fn parse_key_hash(hash: &str) -> Result<(u64, u32)> {
+fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie)> {
     if hash.len() <= 8 || hash.len() > 24 {
         return Err(anyhow!("key hash too short or too long: {}", hash));
     }
@@ -405,7 +417,7 @@ fn parse_key_hash(hash: &str) -> Result<(u64, u32)> {
     Ok((key, cookie))
 }
 
-pub fn read_needle_header(file: &File, version: Version, offset: u32) -> Result<(Needle, u32)> {
+pub fn read_needle_header(file: &File, version: Version, offset: Offset) -> Result<(Needle, u32)> {
     let mut needle = Needle::default();
     let mut body_len = 0;
 
@@ -413,10 +425,45 @@ pub fn read_needle_header(file: &File, version: Version, offset: u32) -> Result<
         let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
         file.read_exact_at(&mut buf, offset as u64)?;
         needle.parse_needle_header(&buf);
-        let padding = NEEDLE_PADDING_SIZE
-            - ((needle.size + NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE);
-        body_len = needle.size + NEEDLE_CHECKSUM_SIZE + padding;
+        let padding = padding_len(needle.size);
+        body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;
     }
 
     Ok((needle, body_len))
+}
+
+pub fn padding_len(needle_size: Size) -> u32 {
+    NEEDLE_PADDING_SIZE
+        - ((NEEDLE_HEADER_SIZE + needle_size.0 as u32 + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::needle::parse_key_hash;
+
+    #[test]
+    pub fn test_parse_key_hash() {
+        let (key, cookie) = parse_key_hash("4ed4c8116e41").unwrap();
+        assert_eq!(key, 0x4ed4);
+        assert_eq!(cookie, 0xc8116e41);
+
+        let (key, cookie) = parse_key_hash("4ed401116e41").unwrap();
+        assert_eq!(key, 0x4ed4);
+        assert_eq!(cookie, 0x01116e41);
+
+        let (key, cookie) = parse_key_hash("ed400116e41").unwrap();
+        assert_eq!(key, 0xed4);
+        assert_eq!(cookie, 0x00116e41);
+
+        let (key, cookie) = parse_key_hash("fed4c8114ed4c811f0116e41").unwrap();
+        assert_eq!(key, 0xfed4c8114ed4c811);
+        assert_eq!(cookie, 0xf0116e41);
+
+        // invalid character
+        assert!(parse_key_hash("helloworld").is_err());
+        // too long
+        assert!(parse_key_hash("4ed4c8114ed4c8114ed4c8111").is_err());
+        // too short
+        assert!(parse_key_hash("4ed4c811").is_err());
+    }
 }

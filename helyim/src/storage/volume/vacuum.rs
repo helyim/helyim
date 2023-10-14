@@ -7,7 +7,11 @@ use std::{
 };
 
 use bytes::BufMut;
-use tracing::{debug, error, info};
+use helyim_proto::{
+    VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
+    VacuumVolumeCompactRequest,
+};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     errors::{Error, Result},
@@ -16,87 +20,15 @@ use crate::{
         needle_map::{index_entry, walk_index_file},
         volume::{
             read_index_entry_at_offset, scan_volume_file, verify_index_file_integrity, SuperBlock,
-            Volume, COMPACT_DATA_FILE_SUFFIX, COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX,
-            IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
+            Volume, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
-        Needle, NeedleMapper, NeedleValue,
+        Needle, NeedleMapper, NeedleValue, VolumeId,
     },
+    topology::{volume_layout::VolumeLayout, DataNodeEventTx},
     util::time::now,
 };
 
 impl Volume {
-    pub fn garbage_level(&self) -> f64 {
-        if self.content_size() == 0 {
-            return 0.0;
-        }
-        self.deleted_bytes() as f64 / self.content_size() as f64
-    }
-
-    pub fn compact(&mut self) -> Result<()> {
-        let filename = self.filename();
-        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
-        self.last_compact_revision = self.super_block.compact_revision;
-        self.readonly = true;
-        self.copy_data_and_generate_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
-        info!("compact {filename} success");
-        Ok(())
-    }
-
-    pub fn compact2(&mut self, _preallocate: i64) -> Result<()> {
-        let filename = self.filename();
-        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
-        self.last_compact_revision = self.super_block.compact_revision;
-        self.readonly = true;
-        self.copy_data_based_on_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
-        info!("compact {filename} success");
-        Ok(())
-    }
-
-    pub fn commit_compact(&mut self) -> Result<()> {
-        let filename = self.filename();
-        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
-        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
-        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
-        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
-        info!("starting to commit compaction, filename: {compact_data_filename}");
-        match self.makeup_diff(
-            &compact_data_filename,
-            &compact_index_filename,
-            &data_filename,
-            &index_filename,
-        ) {
-            Ok(()) => {
-                fs::rename(&compact_data_filename, data_filename)?;
-                fs::rename(compact_index_filename, index_filename)?;
-                info!(
-                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
-                );
-            }
-            Err(err) => {
-                error!("makeup diff in commit compaction failed, {err}");
-                fs::remove_file(compact_data_filename)?;
-                fs::remove_file(compact_index_filename)?;
-            }
-        }
-        self.data_file = None;
-        self.readonly = false;
-        self.load(false, true)
-    }
-
-    pub fn cleanup_compact(&mut self) -> Result<()> {
-        let filename = self.filename();
-        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
-        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
-        info!("cleanup compaction success, filename: {filename}");
-        Ok(())
-    }
-
     pub fn makeup_diff(
         &self,
         new_data_filename: &str,
@@ -169,7 +101,7 @@ impl Volume {
                 );
                 (&mut index_entry_buf[0..8]).put_u64(key);
                 (&mut index_entry_buf[8..12]).put_u32(value.offset);
-                (&mut index_entry_buf[12..16]).put_u32(value.size);
+                (&mut index_entry_buf[12..16]).put_i32(value.size.0);
 
                 let mut offset = new_data_file.seek(SeekFrom::End(0))?;
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
@@ -204,30 +136,30 @@ impl Volume {
 
     pub fn copy_data_and_generate_index_file(
         &mut self,
-        dst_name: String,
-        idx_name: String,
+        compact_data_filename: String,
+        compact_index_filename: String,
     ) -> Result<()> {
-        let mut dst_file = fs::OpenOptions::new()
+        let mut compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .read(true)
             .mode(0o644)
-            .open(dst_name)?;
-        let idx_file = fs::OpenOptions::new()
+            .open(compact_data_filename)?;
+        let compact_index_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(idx_name)?;
+            .open(compact_index_filename)?;
 
-        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
-        nm.load_idx_file(idx_file)?;
+        let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
+        compact_nm.load_idx_file(compact_index_file)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
         let now = now().as_millis() as u64;
         let version = self.version();
 
-        let mut dst = dst_file.try_clone()?;
+        let mut dst = compact_data_file.try_clone()?;
         scan_volume_file(
             self.dir.clone(),
             self.collection.clone(),
@@ -236,7 +168,7 @@ impl Volume {
             true,
             |super_block| -> Result<()> {
                 super_block.compact_revision += 1;
-                dst_file.write_all(&super_block.as_bytes())?;
+                compact_data_file.write_all(&super_block.as_bytes())?;
                 Ok(())
             },
             |needle, offset| -> Result<()> {
@@ -251,49 +183,47 @@ impl Volume {
                             offset: new_offset / NEEDLE_PADDING_SIZE,
                             size: needle.size,
                         };
-                        nm.set(needle.id, nv)?;
+                        compact_nm.set(needle.id, nv)?;
                         needle.append(&mut dst, version)?;
-                        new_offset += needle.disk_size();
+                        new_offset += needle.disk_size() as u32;
                     }
                 }
                 Ok(())
             },
         )?;
-
-        self.needle_mapper = nm;
         Ok(())
     }
 
     pub fn copy_data_based_on_index_file(
         &mut self,
-        dst_name: String,
-        idx_name: String,
+        compact_data_filename: String,
+        compact_index_filename: String,
     ) -> Result<()> {
-        let mut dst_file = fs::OpenOptions::new()
+        let mut compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(dst_name)?;
-        let idx_file = fs::OpenOptions::new()
+            .open(compact_data_filename)?;
+        let compact_index_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o644)
-            .open(idx_name)?;
+            .open(compact_index_filename)?;
 
         let old_idx_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
-        let mut nm = NeedleMapper::new(self.id, self.needle_map_type);
-        nm.load_idx_file(idx_file)?;
+        let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
+        compact_nm.load_idx_file(compact_index_file)?;
 
         let now = now().as_millis() as u64;
 
         self.super_block.compact_revision += 1;
-        dst_file.write_all(&self.super_block.as_bytes())?;
+        compact_data_file.write_all(&self.super_block.as_bytes())?;
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
 
         walk_index_file(&old_idx_file, |key, offset, size| -> Result<()> {
@@ -322,9 +252,9 @@ impl Volume {
                     offset: new_offset / NEEDLE_PADDING_SIZE,
                     size: needle.size,
                 };
-                nm.set(needle.id, nv)?;
-                needle.append(&mut dst_file, version)?;
-                new_offset += needle.disk_size();
+                compact_nm.set(needle.id, nv)?;
+                needle.append(&mut compact_data_file, version)?;
+                new_offset += needle.disk_size() as u32;
             }
 
             Ok(())
@@ -339,4 +269,104 @@ fn fetch_compact_revision_from_data_file(file: &mut File) -> Result<u16> {
     file.read_exact(&mut buf)?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision)
+}
+
+pub async fn batch_vacuum_volume_check(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    garbage_ratio: f64,
+) -> Result<bool> {
+    let mut check_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCheckRequest { volume_id };
+        match data_node_tx.vacuum_volume_check(request).await {
+            Ok(response) => {
+                info!("check volume {volume_id} success.");
+                check_success = response.garbage_ratio > garbage_ratio;
+            }
+            Err(err) => {
+                error!("check volume {volume_id} failed, {err}");
+                check_success = false;
+            }
+        }
+    }
+    Ok(check_success)
+}
+
+pub async fn batch_vacuum_volume_compact(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+    preallocate: u64,
+) -> Result<bool> {
+    volume_layout.remove_from_writable(volume_id);
+    let mut compact_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCompactRequest {
+            volume_id,
+            preallocate,
+        };
+        match data_node_tx.vacuum_volume_compact(request).await {
+            Ok(_) => {
+                info!("compact volume {volume_id} success.");
+                compact_success = true;
+            }
+            Err(err) => {
+                error!("compact volume {volume_id} failed, {err}");
+                compact_success = false;
+            }
+        }
+    }
+    Ok(compact_success)
+}
+
+pub async fn batch_vacuum_volume_commit(
+    volume_layout: &VolumeLayout,
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut commit_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCommitRequest { volume_id };
+        match data_node_tx.vacuum_volume_commit(request).await {
+            Ok(response) => {
+                if response.is_read_only {
+                    warn!("volume {volume_id} is read only, will not commit it.");
+                    commit_success = false;
+                } else {
+                    info!("commit volume {volume_id} success.");
+                    commit_success = true;
+                    volume_layout
+                        .set_volume_available(volume_id, data_node_tx)
+                        .await?;
+                }
+            }
+            Err(err) => {
+                error!("commit volume {volume_id} failed, {err}");
+                commit_success = false;
+            }
+        }
+    }
+    Ok(commit_success)
+}
+
+#[allow(dead_code)]
+async fn batch_vacuum_volume_cleanup(
+    volume_id: VolumeId,
+    data_nodes: &[DataNodeEventTx],
+) -> Result<bool> {
+    let mut cleanup_success = true;
+    for data_node_tx in data_nodes {
+        let request = VacuumVolumeCleanupRequest { volume_id };
+        match data_node_tx.vacuum_volume_cleanup(request).await {
+            Ok(_) => {
+                info!("cleanup volume {volume_id} success.");
+                cleanup_success = true;
+            }
+            Err(_err) => {
+                cleanup_success = false;
+            }
+        }
+    }
+    Ok(cleanup_success)
 }

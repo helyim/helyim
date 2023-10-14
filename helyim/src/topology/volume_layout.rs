@@ -3,20 +3,20 @@ use rand;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_grow::VolumeGrowOption, DataNodeEventTx},
-    errors::{Error, Result},
-    storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+    errors::Result,
+    storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
+    topology::{volume_grow::VolumeGrowOption, DataNodeEventTx},
 };
 
 #[derive(Clone, Debug, Serialize)]
 pub struct VolumeLayout {
-    pub rp: ReplicaPlacement,
-    pub ttl: Option<Ttl>,
-    pub volume_size_limit: u64,
+    rp: ReplicaPlacement,
+    ttl: Option<Ttl>,
+    volume_size_limit: u64,
 
-    pub writable_volumes: DashSet<VolumeId>,
+    writable_volumes: DashSet<VolumeId>,
     pub readonly_volumes: DashSet<VolumeId>,
-    pub oversize_volumes: DashSet<VolumeId>,
+    oversize_volumes: DashSet<VolumeId>,
     #[serde(skip)]
     pub locations: DashMap<VolumeId, Vec<DataNodeEventTx>>,
 }
@@ -34,7 +34,7 @@ impl VolumeLayout {
         }
     }
 
-    pub async fn active_volume_count(&self, option: &VolumeGrowOption) -> Result<i64> {
+    pub async fn active_volume_count(&self, option: VolumeGrowOption) -> Result<i64> {
         if option.data_center.is_empty() {
             return Ok(self.writable_volumes.len() as i64);
         }
@@ -61,7 +61,7 @@ impl VolumeLayout {
         option: &VolumeGrowOption,
     ) -> Result<(VolumeId, Vec<DataNodeEventTx>)> {
         if self.writable_volumes.is_empty() {
-            return Err(Error::NoWritableVolumes);
+            return Err(VolumeError::NoWritableVolumes.into());
         }
 
         let mut counter = 0;
@@ -90,7 +90,7 @@ impl VolumeLayout {
             return Ok(ret);
         }
 
-        Err(Error::NoWritableVolumes)
+        Err(VolumeError::NoWritableVolumes.into())
     }
 
     async fn set_node(locations: &mut Vec<DataNodeEventTx>, dn: DataNodeEventTx) -> Result<()> {

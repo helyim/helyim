@@ -1,9 +1,14 @@
 use std::fmt::{Display, Formatter};
 
-use bytes::Buf;
+use nom::{
+    branch::alt,
+    character::complete::{char as nom_char, digit1},
+    combinator::opt,
+    sequence::pair,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -32,15 +37,14 @@ impl Unit {
         }
     }
 
-    fn new(u: u8) -> Option<Unit> {
-        match char::from(u) {
-            'm' => Some(Unit::Minute),
-            'h' => Some(Unit::Hour),
-            'd' => Some(Unit::Day),
-            'w' => Some(Unit::Week),
-            'M' => Some(Unit::Month),
-            'y' => Some(Unit::Year),
-            _ => None,
+    fn new(u: char) -> Unit {
+        match u {
+            'h' => Unit::Hour,
+            'd' => Unit::Day,
+            'w' => Unit::Week,
+            'M' => Unit::Month,
+            'y' => Unit::Year,
+            _ => Unit::Minute,
         }
     }
 }
@@ -66,39 +70,16 @@ pub struct Ttl {
     pub unit: Unit,
 }
 
-// default: m
-// 3m
-// 4h
-// 5d
-// 6w
-// 7M
-// 8y
-
 impl Ttl {
     pub fn new(s: &str) -> Result<Ttl> {
         if s.is_empty() {
             return Ok(Ttl::default());
         }
-
-        let bytes = s.as_bytes();
-
-        let mut unit = bytes[bytes.len() - 1];
-        let mut count_bytes = &bytes[..bytes.len() - 1];
-
-        if unit.is_ascii_digit() {
-            unit = b'm';
-            count_bytes = bytes;
-        }
-
-        if let Some(unit) = Unit::new(unit) {
-            let ttl = Ttl {
-                count: count_bytes.get_u8(),
-                unit,
-            };
-            return Ok(ttl);
-        }
-
-        Err(Error::ParseTtl(String::from(s)))
+        let (count, unit) = parse_ttl(s)?;
+        Ok(Ttl {
+            count: count as u8,
+            unit: Unit::new(unit),
+        })
     }
 
     pub fn as_bytes(&self) -> [u8; 2] {
@@ -143,8 +124,10 @@ impl From<Ttl> for u32 {
 
 impl From<u32> for Ttl {
     fn from(u: u32) -> Self {
-        let slice = [(u % 0xff) as u8, ((u >> 8) % 0xff) as u8];
-        Ttl::from(&slice[..])
+        let mut buf = [0u8; 2];
+        buf[1] = u as u8;
+        buf[0] = (u >> 8) as u8;
+        Ttl::from(&buf[..])
     }
 }
 
@@ -154,5 +137,62 @@ impl From<&[u8]> for Ttl {
             count: u[0],
             unit: Unit::from_u8(u[1]).unwrap(),
         }
+    }
+}
+
+fn parse_ttl(input: &str) -> Result<(u32, char)> {
+    let (_, (count, unit)) = pair(
+        digit1,
+        opt(alt((
+            nom_char('m'),
+            nom_char('h'),
+            nom_char('d'),
+            nom_char('w'),
+            nom_char('M'),
+            nom_char('y'),
+        ))),
+    )(input)?;
+    Ok((count.parse()?, unit.unwrap_or('m')))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::Ttl;
+
+    #[test]
+    pub fn test_ttl() {
+        let ttl = Ttl::new("").unwrap();
+        assert_eq!(ttl.minutes(), 0);
+
+        let ttl = Ttl::new("9").unwrap();
+        assert_eq!(ttl.minutes(), 9);
+
+        let ttl = Ttl::new("8m").unwrap();
+        assert_eq!(ttl.minutes(), 8);
+
+        let ttl = Ttl::new("5h").unwrap();
+        assert_eq!(ttl.minutes(), 300);
+
+        let ttl = Ttl::new("5d").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 24 * 60);
+
+        let ttl = Ttl::new("50d").unwrap();
+        assert_eq!(ttl.minutes(), 50 * 24 * 60);
+
+        let ttl = Ttl::new("5w").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 7 * 24 * 60);
+
+        let ttl = Ttl::new("5M").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 60 * 24 * 31);
+
+        let ttl = Ttl::new("5y").unwrap();
+        assert_eq!(ttl.minutes(), 5 * 60 * 24 * 365);
+
+        let ttl_bytes = ttl.as_bytes();
+        let ttl2 = Ttl::from(&ttl_bytes[..]);
+        assert_eq!(ttl.minutes(), ttl2.minutes());
+
+        let ttl3 = Ttl::from(Into::<u32>::into(ttl));
+        assert_eq!(ttl.minutes(), ttl3.minutes());
     }
 }

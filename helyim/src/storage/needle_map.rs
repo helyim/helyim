@@ -11,7 +11,8 @@ use crate::{
     storage::{
         needle::NeedleValue,
         needle_value_map::{MemoryNeedleValueMap, NeedleValueMap},
-        VolumeId,
+        types::{Offset, Size},
+        NeedleId, VolumeId,
     },
 };
 
@@ -23,7 +24,7 @@ pub enum NeedleMapType {
 
 #[derive(Default)]
 struct Metric {
-    maximum_file_key: u64,
+    maximum_file_key: NeedleId,
     file_count: u64,
     deleted_count: u64,
     deleted_bytes: u64,
@@ -62,18 +63,11 @@ impl NeedleMapper {
     }
 
     pub fn load_idx_file(&mut self, index_file: File) -> Result<()> {
-        let mut last_offset = 0;
-        let mut last_size = 0;
         walk_index_file(&index_file, |key, offset, size| -> Result<()> {
-            if offset > last_offset {
-                last_offset = offset;
-                last_size = size;
-            }
-
-            if offset > 0 {
-                self.set(key, NeedleValue { offset, size })?;
-            } else {
+            if offset == 0 || size.is_deleted() {
                 self.delete(key)?;
+            } else {
+                self.set(key, NeedleValue { offset, size })?;
             }
             Ok(())
         })?;
@@ -81,18 +75,18 @@ impl NeedleMapper {
         Ok(())
     }
 
-    pub fn set(&mut self, key: u64, index: NeedleValue) -> Result<Option<NeedleValue>> {
-        debug!("needle map set key: {}, {:?}", key, index);
+    pub fn set(&mut self, key: NeedleId, index: NeedleValue) -> Result<Option<NeedleValue>> {
+        debug!("needle map set key: {}, {}", key, index);
         if key > self.metric.maximum_file_key {
             self.metric.maximum_file_key = key;
         }
         self.metric.file_count += 1;
-        self.metric.file_bytes += index.size as u64;
+        self.metric.file_bytes += index.size.0 as u64;
         let old = self.needle_value_map.set(key, index);
 
         if let Some(n) = old {
             self.metric.deleted_count += 1;
-            self.metric.deleted_bytes += n.size as u64;
+            self.metric.deleted_bytes += n.size.0 as u64;
         }
 
         self.append_to_index_file(key, index)?;
@@ -100,20 +94,20 @@ impl NeedleMapper {
         Ok(old)
     }
 
-    pub fn delete(&mut self, key: u64) -> Result<Option<NeedleValue>> {
+    pub fn delete(&mut self, key: NeedleId) -> Result<Option<NeedleValue>> {
         let deleted = self.needle_value_map.delete(key);
 
-        if let Some(needle) = deleted {
+        if let Some(index) = deleted {
             self.metric.deleted_count += 1;
-            self.metric.deleted_bytes += needle.size as u64;
-            self.append_to_index_file(key, needle)?;
+            self.metric.deleted_bytes += index.size.0 as u64;
+            self.append_to_index_file(key, index)?;
+            debug!("needle map delete key: {} {}", key, index);
         }
 
-        debug!("needle map delete key: {} {:?}", key, deleted);
         Ok(deleted)
     }
 
-    pub fn get(&self, key: u64) -> Option<NeedleValue> {
+    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
         self.needle_value_map.get(key)
     }
 
@@ -129,7 +123,7 @@ impl NeedleMapper {
         self.metric.deleted_bytes
     }
 
-    pub fn max_file_key(&self) -> u64 {
+    pub fn max_file_key(&self) -> NeedleId {
         self.metric.maximum_file_key
     }
 
@@ -145,12 +139,12 @@ impl NeedleMapper {
         Ok(size)
     }
 
-    pub fn append_to_index_file(&mut self, key: u64, value: NeedleValue) -> Result<()> {
+    pub fn append_to_index_file(&mut self, key: NeedleId, value: NeedleValue) -> Result<()> {
         if let Some(file) = self.index_file.as_mut() {
             let mut buf = vec![];
             buf.put_u64(key);
             buf.put_u32(value.offset);
-            buf.put_u32(value.size);
+            buf.put_i32(value.size.0);
 
             if let Err(err) = file.write_all(&buf) {
                 error!(
@@ -164,18 +158,19 @@ impl NeedleMapper {
     }
 }
 
-pub fn index_entry(mut buf: &[u8]) -> (u64, u32, u32) {
+pub fn index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
     let key = buf.get_u64();
     let offset = buf.get_u32();
-    let size = buf.get_u32();
+    let size = Size(buf.get_i32());
 
+    debug!("index entry: key: {key}, offset: {offset}, size: {size}");
     (key, offset, size)
 }
 
 // walks through index file, call fn(key, offset, size), stop with error returned by fn
 pub fn walk_index_file<T>(f: &File, mut walk: T) -> Result<()>
 where
-    T: FnMut(u64, u32, u32) -> Result<()>,
+    T: FnMut(NeedleId, Offset, Size) -> Result<()>,
 {
     let mut reader = BufReader::new(f.try_clone()?);
     let mut buf: Vec<u8> = vec![0; 16];

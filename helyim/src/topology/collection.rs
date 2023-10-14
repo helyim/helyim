@@ -4,14 +4,14 @@ use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
-    directory::topology::{volume_layout::VolumeLayout, DataNodeEventTx},
     storage::{ReplicaPlacement, Ttl, VolumeId},
+    topology::{volume_layout::VolumeLayout, DataNodeEventTx},
 };
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Collection {
-    pub name: FastStr,
-    pub volume_size_limit: u64,
+    name: FastStr,
+    volume_size_limit: u64,
     pub volume_layouts: HashMap<FastStr, VolumeLayout>,
 }
 

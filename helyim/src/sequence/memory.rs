@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::directory::Sequencer;
+use crate::{directory::Sequence, errors::Result};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MemorySequencer {
     counter: Arc<Mutex<u64>>,
 }
@@ -23,12 +23,12 @@ impl Default for MemorySequencer {
     }
 }
 
-impl Sequencer for MemorySequencer {
-    fn next_file_id(&self, count: u64) -> (u64, u64) {
+impl Sequence for MemorySequencer {
+    fn next_file_id(&self, count: u64) -> Result<u64> {
         let mut counter = self.counter.lock();
-        let ret = *counter;
+        let file_id = *counter;
         *counter += count;
-        (ret, count)
+        Ok(file_id)
     }
 
     fn set_max(&self, seen_value: u64) {
@@ -38,9 +38,8 @@ impl Sequencer for MemorySequencer {
         }
     }
 
-    fn peek(&self) -> u64 {
+    fn peek(&self) -> Result<u64> {
         let counter = self.counter.lock();
-
-        *counter
+        Ok(*counter)
     }
 }

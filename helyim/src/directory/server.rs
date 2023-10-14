@@ -6,7 +6,8 @@ use futures::{channel::mpsc::unbounded, Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     lookup_volume_response::VolumeLocation,
-    HeartbeatRequest, HeartbeatResponse, Location, LookupVolumeRequest, LookupVolumeResponse,
+    HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
+    LookupVolumeRequest, LookupVolumeResponse,
 };
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -14,18 +15,18 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status, Streami
 use tracing::{debug, error, info};
 
 use crate::{
-    directory::{
-        api::{assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext},
-        topology::{
-            topology::{topology_loop, topology_vacuum_loop, TopologyEventTx},
-            volume_grow::{volume_growth_loop, VolumeGrowthEventTx},
-        },
-        Topology, VolumeGrowth,
+    directory::api::{
+        assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext,
     },
     errors::Result,
     rt_spawn,
-    sequence::MemorySequencer,
+    sequence::Sequencer,
     storage::{ReplicaPlacement, VolumeInfo},
+    topology::{
+        topology_loop, topology_vacuum_loop,
+        volume_grow::{volume_growth_loop, VolumeGrowth, VolumeGrowthEventTx},
+        Topology, TopologyEventTx,
+    },
     util::get_or_default,
     PHRASE, STOP_INTERVAL,
 };
@@ -37,8 +38,7 @@ pub struct DirectoryServer {
     pub meta_folder: FastStr,
     pub default_replica_placement: ReplicaPlacement,
     pub volume_size_limit_mb: u64,
-    // pub preallocate: i64,
-    // pub pulse_seconds: i64,
+    pub pulse_seconds: u64,
     pub garbage_threshold: f64,
     pub topology: TopologyEventTx,
     pub volume_grow: VolumeGrowthEventTx,
@@ -57,32 +57,31 @@ impl DirectoryServer {
         pulse_seconds: u64,
         default_replica_placement: ReplicaPlacement,
         garbage_threshold: f64,
-        seq: MemorySequencer,
+        sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         // topology event loop
         let topology = Topology::new(
-            seq,
+            sequencer,
             volume_size_limit_mb * 1024 * 1024,
             pulse_seconds,
             shutdown_rx.clone(),
         );
         let (tx, rx) = unbounded();
-        let topology_handle = rt_spawn(topology_loop(topology, rx));
+        let topology_handle = rt_spawn(topology_loop(topology, rx, shutdown_rx.clone()));
         let topology = TopologyEventTx::new(tx);
-        let preallocate = (volume_size_limit_mb * (1 << 20)) as i64;
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
-            preallocate,
+            volume_size_limit_mb * (1 << 20),
             shutdown_rx.clone(),
         ));
 
         // volume growth event loop
-        let volume_grow = VolumeGrowth::new(shutdown_rx.clone());
         let (tx, rx) = unbounded();
-        let volume_grow_handle = rt_spawn(volume_growth_loop(volume_grow, rx));
+        let volume_grow_handle =
+            rt_spawn(volume_growth_loop(VolumeGrowth, rx, shutdown_rx.clone()));
         let volume_grow = VolumeGrowthEventTx::new(tx);
 
         let dir = DirectoryServer {
@@ -91,6 +90,7 @@ impl DirectoryServer {
             volume_size_limit_mb,
             port,
             garbage_threshold,
+            pulse_seconds,
             default_replica_placement,
             meta_folder: FastStr::new(meta_folder),
             volume_grow,
@@ -123,8 +123,6 @@ impl DirectoryServer {
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
 
-        self.topology.close();
-        self.volume_grow.close();
         let mut interval = tokio::time::interval(STOP_INTERVAL);
 
         loop {
@@ -210,7 +208,7 @@ impl Helyim for DirectoryGrpcServer {
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(heartbeat) => {
-                        debug!("received {:?}", heartbeat);
+                        debug!("receive {:?}", heartbeat);
                         match handle_heartbeat(heartbeat, &topology, volume_size_limit, addr).await
                         {
                             Ok(resp) => {
@@ -281,6 +279,13 @@ impl Helyim for DirectoryGrpcServer {
 
         Ok(Response::new(LookupVolumeResponse { volume_locations }))
     }
+
+    async fn lookup_ec_volume(
+        &self,
+        _request: Request<LookupEcVolumeRequest>,
+    ) -> StdResult<Response<LookupEcVolumeResponse>, Status> {
+        todo!()
+    }
 }
 
 async fn handle_heartbeat(
@@ -312,7 +317,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as i64,
         )
         .await?;
-    node.set_rack(rack).await?;
+    node.set_rack(rack)?;
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {

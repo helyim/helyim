@@ -1,15 +1,18 @@
+#![allow(unused_attributes)]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::mutable_key_type)]
 use std::time::Duration;
 
 pub mod directory;
 
 mod errors;
+mod filer;
 mod images;
 mod operation;
-
 pub mod storage;
 
 mod sequence;
+mod topology;
 mod util;
 
 const PHRASE: &str = "<h1>Hello, World!</h1>";

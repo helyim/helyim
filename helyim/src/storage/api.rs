@@ -1,6 +1,6 @@
 use std::{
-    collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add, path::Path,
-    result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
+    collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add,
+    result::Result as StdResult, str::FromStr, time, time::Duration,
 };
 
 use axum::{
@@ -13,7 +13,7 @@ use axum::{
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
-use futures::{lock::Mutex, stream::once};
+use futures::stream::once;
 use hyper::{
     header::{
         HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -25,21 +25,30 @@ use hyper::{
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
+use nom::{
+    branch::alt,
+    bytes::complete::take_till,
+    character::complete::{alphanumeric1, char, digit1},
+    combinator::opt,
+    sequence::{pair, tuple},
+    IResult,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     anyhow,
-    errors::{Error, Result},
+    errors::Result,
     images::FAVICON_ICO,
     operation::{LookerEventTx, Upload},
     storage::{
         crc,
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
-        store::Store,
-        Ttl, VolumeId, VolumeInfo,
+        store::StoreEventTx,
+        types::Size,
+        NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::time::now,
@@ -48,7 +57,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct StorageContext {
-    pub store: Arc<Mutex<Store>>,
+    pub store: StoreEventTx,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
@@ -56,12 +65,10 @@ pub struct StorageContext {
 }
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
-    let store = ctx.store.lock().await;
-
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in store.locations.iter() {
-        for (_, volume) in location.volumes.iter() {
-            let volume_info = volume.volume_info().await?;
+    for location in ctx.store.locations().await?.iter() {
+        for entry in location.volumes.iter() {
+            let volume_info = entry.get_volume_info().await?;
             infos.push(volume_info);
         }
     }
@@ -72,32 +79,6 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     });
 
     Ok(Json(stat))
-}
-
-pub async fn volume_clean_handler(State(ctx): State<StorageContext>) -> Result<()> {
-    let mut store = ctx.store.lock().await;
-    for location in store.locations.iter_mut() {
-        for (vid, volume) in location.volumes.iter() {
-            info!("start compacting volume {vid}.");
-            volume.compact(0).await?;
-            info!("compact volume {vid} success.");
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn volume_commit_compact_handler(State(ctx): State<StorageContext>) -> Result<()> {
-    let mut store = ctx.store.lock().await;
-    for location in store.locations.iter_mut() {
-        for (vid, volume) in location.volumes.iter() {
-            info!("start committing compacted volume {vid}.");
-            volume.commit_compact().await?;
-            info!("commit compacted volume {vid} success.");
-        }
-    }
-
-    Ok(())
 }
 
 pub async fn fallback_handler(
@@ -165,28 +146,27 @@ pub async fn delete_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, _, _, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = Needle::default();
-    needle.parse_path(&fid)?;
+    needle.parse_path(fid)?;
 
     let cookie = needle.cookie;
 
     {
-        let mut store = ctx.store.lock().await;
-        needle = store.read_volume_needle(vid, needle).await?;
+        needle = ctx.store.read_volume_needle(vid, needle).await?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
                 extractor.host, cookie, needle.cookie
             );
-            return Err(Error::CookieNotMatch(needle.cookie, cookie));
+            return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
         }
     }
 
     let size = replicate_delete(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
-    let size = json!({ "size": size });
+    let size = json!({ "size": size.0 });
 
     Ok(FallbackResponse::Delete(Json(size)))
 }
@@ -197,15 +177,14 @@ async fn replicate_delete(
     vid: VolumeId,
     needle: Needle,
     is_replicate: bool,
-) -> Result<u32> {
-    let mut store = ctx.store.lock().await;
-    let local_url = format!("{}:{}", store.ip, store.port);
-    let size = store.delete_volume_needle(vid, needle).await?;
+) -> Result<Size> {
+    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = store.find_volume(vid) {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate().await? {
             return Ok(size);
         }
@@ -242,7 +221,7 @@ pub async fn post_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, _, _, _, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = if !is_replicate {
@@ -271,14 +250,13 @@ async fn replicate_write(
     mut needle: Needle,
     is_replicate: bool,
 ) -> Result<Needle> {
-    let mut store = ctx.store.lock().await;
-    let local_url = format!("{}:{}", store.ip, store.port);
-    needle = store.write_volume_needle(vid, needle).await?;
+    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    needle = ctx.store.write_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(needle);
     }
 
-    if let Some(volume) = store.find_volume(vid) {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate().await? {
             return Ok(needle);
         }
@@ -486,15 +464,14 @@ pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
-    let (vid, fid, mut _filename, _ext, _) = parse_url_path(extractor.uri.path())?;
+    let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
     let mut needle = Needle::default();
-    needle.parse_path(&fid)?;
+    needle.parse_path(fid)?;
     let cookie = needle.cookie;
 
-    let mut store = ctx.store.lock().await;
     let mut response = Response::new(Body::empty());
 
-    if !store.has_volume(vid) {
+    if !ctx.store.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
@@ -503,9 +480,9 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = store.read_volume_needle(vid, needle).await?;
+    needle = ctx.store.read_volume_needle(vid, needle).await?;
     if needle.cookie != cookie {
-        return Err(Error::CookieNotMatch(needle.cookie, cookie));
+        return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
     if needle.last_modified != 0 {
@@ -549,10 +526,6 @@ pub async fn get_or_head_handler(
         }
     }
 
-    if !needle.name.is_empty() && _filename.is_empty() {
-        _filename = String::from_utf8(needle.name.to_vec())?;
-    }
-
     let mut _mtype = String::new();
     if !needle.mime.is_empty() && !needle.mime.starts_with(b"application/octet-stream") {
         _mtype = String::from_utf8(needle.mime.to_vec())?;
@@ -590,72 +563,108 @@ pub async fn get_or_head_handler(
     Ok(FallbackResponse::GetOrHead(response))
 }
 
-// support following format
-// http://localhost:8080/3/01637037d6/my_preferred_name.jpg
-// http://localhost:8080/3/01637037d6.jpg
-// http://localhost:8080/3,01637037d6.jpg
-// http://localhost:8080/3/01637037d6
-// http://localhost:8080/3,01637037d6
-// @return vid, fid, filename, ext, is_volume_id_only
-// /3/01637037d6/my_preferred_name.jpg -> (3,01637037d6,my_preferred_name.jpg,jpg,false)
-fn parse_url_path(path: &str) -> Result<(VolumeId, String, String, String, bool)> {
-    let vid: String;
-    let mut fid;
-    let filename;
-    let mut ext = String::default();
-    let mut is_volume_id_only = false;
+fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str)> {
+    let (vid, fid, filename, ext) = tuple((
+        char('/'),
+        parse_vid_fid,
+        opt(pair(char('/'), parse_filename)),
+    ))(input)
+    .map(|(input, (_, (vid, fid), filename))| {
+        (vid, fid, filename.map(|(_, filename)| filename), input)
+    })?;
+    Ok((vid.parse()?, fid, filename, ext))
+}
 
-    let parts: Vec<&str> = path.split('/').collect();
-    debug!("parse url path: {}", path);
-    match parts.len() {
-        4 => {
-            vid = parts[1].to_string();
-            fid = parts[2].to_string();
-            filename = parts[3].to_string();
+fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
+    let (input, (vid, _, fid)) =
+        tuple((digit1, alt((char('/'), char(','))), alphanumeric1))(input)?;
+    Ok((input, (vid, fid)))
+}
 
-            // must be valid utf8
-            ext = Path::new(&filename)
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-        }
-        3 => {
-            filename = String::default();
+fn parse_filename(input: &str) -> IResult<&str, &str> {
+    let (input, filename) = take_till(|c| c == '.')(input)?;
+    Ok((input, filename))
+}
 
-            vid = parts[1].to_string();
-            fid = parts[2].to_string();
-            if let Some(idx) = parts[2].rfind('.') {
-                let (fid_str, ext_str) = parts[2].split_at(idx);
-                fid = fid_str.to_string();
-                ext = ext_str.to_string();
-            }
-        }
-        _ => {
-            filename = String::default();
-            let mut end = path.len();
+#[cfg(test)]
+mod tests {
+    use crate::storage::api::{parse_filename, parse_url_path, parse_vid_fid};
 
-            if let Some(dot) = path.rfind('.') {
-                let start = dot + 1;
-                ext = path[start..].to_string();
-                end = start - 1;
-            }
+    #[test]
+    pub fn test_parse_vid_fid() {
+        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "");
 
-            match path.rfind(',') {
-                Some(sep) => {
-                    let start = sep + 1;
-                    fid = path[start..end].to_string();
-                    end = start - 1;
-                }
-                None => {
-                    fid = String::default();
-                    is_volume_id_only = true;
-                }
-            }
+        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6/").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "/");
 
-            vid = path[1..end].to_string();
-        }
-    };
+        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "");
 
-    Ok((vid.parse()?, fid, filename, ext, is_volume_id_only))
+        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6/").unwrap();
+        assert_eq!(vid, "3");
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(input, "/");
+    }
+
+    #[test]
+    pub fn test_parse_filename() {
+        let (input, filename) = parse_filename("my_preferred_name.jpg").unwrap();
+        assert_eq!(filename, "my_preferred_name");
+        assert_eq!(input, ".jpg");
+
+        let (input, filename) = parse_filename("my_preferred_name").unwrap();
+        assert_eq!(filename, "my_preferred_name");
+        assert_eq!(input, "");
+
+        let (input, filename) = parse_filename("").unwrap();
+        assert_eq!(filename, "");
+        assert_eq!(input, "");
+    }
+
+    #[test]
+    pub fn test_parse_path() {
+        let (vid, fid, filename, ext) =
+            parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(ext, ".jpg");
+
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(ext, "");
+
+        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6.jpg").unwrap();
+        assert_eq!(vid, 3);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, ".jpg");
+
+        let (vid, fid, filename, ext) = parse_url_path("/30,01637037d6.jpg").unwrap();
+        assert_eq!(vid, 30);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, ".jpg");
+
+        let (vid, fid, filename, ext) = parse_url_path("/300/01637037d6").unwrap();
+        assert_eq!(vid, 300);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, "");
+
+        let (vid, fid, filename, ext) = parse_url_path("/300,01637037d6").unwrap();
+        assert_eq!(vid, 300);
+        assert_eq!(fid, "01637037d6");
+        assert_eq!(filename, None);
+        assert_eq!(ext, "");
+    }
 }

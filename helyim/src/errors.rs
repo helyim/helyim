@@ -10,24 +10,21 @@ use hyper::{
     StatusCode,
 };
 use serde_json::json;
-use tonic::Status;
 use tracing::error;
 
-use crate::storage::VolumeId;
+use crate::storage::{NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// directory errors
     #[error("No free space: {0}")]
     NoFreeSpace(String),
-    #[error("No writable volumes")]
-    NoWritableVolumes,
-    #[error("Volume {0} is not found")]
-    MissingVolume(VolumeId),
-    #[error("Data integrity error: {0}")]
-    DataIntegrity(String),
-    #[error("Cookie not match, needle cookie is {0} but got {1}")]
-    CookieNotMatch(u32, u32),
+    // volume error
+    #[error("Volume error: {0}")]
+    Volume(#[from] VolumeError),
+    // needle error
+    #[error("Needle error: {0}")]
+    Needle(#[from] NeedleError),
 
     /// storage errors
     #[error("Invalid replica placement: {0}")]
@@ -60,12 +57,16 @@ pub enum Error {
     Crc(u32, u32),
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(u8),
-
+    #[error("Nom error: {0}")]
+    Nom(String),
     #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
 
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
+
+    #[error("Snowflake error: {0}")]
+    Snowflake(#[from] sonyflake::Error),
 
     // http
     #[error("Invalid header value: {0}")]
@@ -95,6 +96,8 @@ pub enum Error {
     BroadcastSendError(#[from] async_broadcast::SendError<()>),
     #[error("Oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
+    #[error("JoinHandle error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -124,8 +127,14 @@ impl<T> From<TrySendError<T>> for Error {
     }
 }
 
-impl From<Error> for Status {
+impl From<Error> for tonic::Status {
     fn from(value: Error) -> Self {
-        Status::internal(value.to_string())
+        tonic::Status::internal(value.to_string())
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for Error {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::Nom(value.to_string())
     }
 }

@@ -17,6 +17,7 @@ keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-scoped = { version = "0.7", features = ["use-tokio"]}
 async-broadcast.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
@@ -30,21 +31,24 @@ crc.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
+helyim-macros = { path = "../helyim-macros" }
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
 libflate.workspace = true
 lru.workspace = true
 mime_guess.workspace = true
 multer.workspace = true
+nom.workspace = true
+once_cell.workspace = true
 parking_lot.workspace = true
-pin-project-lite.workspace = true
 rand.workspace = true
+regex.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sonyflake.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["full", "tracing"] }
+tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
 tokio-uring = { workspace = true, optional = true }
 tracing.workspace = true

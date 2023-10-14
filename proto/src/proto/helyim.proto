@@ -7,6 +7,7 @@ package helyim;
 service Helyim {
   rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse) {}
   rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {}
+  rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {}
 }
 
 //////////////////////////////////////////////////
@@ -21,6 +22,17 @@ message HeartbeatRequest {
   string rack = 7;
   uint32 admin_port = 8;
   repeated VolumeInformationMessage volumes = 9;
+  // delta volumes
+  repeated VolumeShortInformationMessage new_volumes = 10;
+  repeated VolumeShortInformationMessage deleted_volumes = 11;
+  bool has_no_volumes = 12;
+
+  // erasure coding
+  repeated VolumeEcShardInformationMessage ec_shards = 13;
+  // delta erasure coding shards
+  repeated VolumeEcShardInformationMessage new_ec_shards = 14;
+  repeated VolumeEcShardInformationMessage deleted_ec_shards = 15;
+  bool has_no_ec_shards = 16;
 }
 message HeartbeatResponse {
   uint64 volume_size_limit = 1;
@@ -41,6 +53,20 @@ message VolumeInformationMessage {
   uint32 ttl = 10;
 }
 
+message VolumeShortInformationMessage {
+  uint32 id = 1;
+  string collection = 2;
+  uint32 replica_placement = 3;
+  uint32 version = 4;
+  uint32 ttl = 5;
+}
+
+message VolumeEcShardInformationMessage {
+  uint32 id = 1;
+  string collection = 2;
+  uint32 ec_index_bits = 3;
+}
+
 message LookupVolumeRequest {
   repeated string volumes = 1;
   string collection = 2;
@@ -58,4 +84,16 @@ message LookupVolumeResponse {
 message Location {
   string url = 1;
   string public_url = 2;
+}
+
+message LookupEcVolumeRequest {
+  uint32 volume_id = 1;
+}
+message LookupEcVolumeResponse {
+  uint32 volume_id = 1;
+  message EcShardIdLocation {
+    uint32 shard_id = 1;
+    repeated Location locations = 2;
+  }
+  repeated EcShardIdLocation shard_id_locations = 2;
 }

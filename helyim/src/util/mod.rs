@@ -1,20 +1,21 @@
 #![allow(dead_code)]
+use faststr::FastStr;
 
 #[macro_use]
 pub mod macros;
 
+mod file;
+pub use file::{check_file, file_exists};
+
 mod http;
 
-use faststr::FastStr;
 pub use http::{delete, get, post};
-
-use crate::DEFAULT;
 
 pub mod time;
 
 pub fn get_or_default(s: String) -> FastStr {
     if s.is_empty() {
-        FastStr::from_static_str(DEFAULT)
+        FastStr::from_static_str(crate::DEFAULT)
     } else {
         FastStr::new(s)
     }
