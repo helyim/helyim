@@ -1,6 +1,6 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, path::Path};
 
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::DashMap;
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
@@ -13,7 +13,6 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{
-        erasure_coding::{ec_volume_loop, EcVolume, EcVolumeEventTx, EcVolumeShard, ShardId},
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
@@ -28,7 +27,6 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: DashMap<VolumeId, VolumeEventTx>,
-    pub ec_volumes: DashMap<VolumeId, EcVolumeEventTx>,
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
@@ -45,7 +43,6 @@ impl DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: DashMap::new(),
-            ec_volumes: DashMap::new(),
             shutdown: shutdown_rx,
         }
     }
@@ -90,126 +87,6 @@ impl DiskLocation {
                 "remove volume {vid} success, where disk location is {}",
                 self.directory
             );
-        }
-        Ok(())
-    }
-
-    // erasure coding
-    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolumeEventTx>> {
-        self.ec_volumes.get(&vid)
-    }
-
-    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<()> {
-        if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
-            volume.destroy().await?;
-        }
-        Ok(())
-    }
-
-    pub async fn find_ec_shard(
-        &self,
-        vid: VolumeId,
-        shard_id: ShardId,
-    ) -> Result<Option<Arc<EcVolumeShard>>> {
-        if let Some(ec_volume) = self.ec_volumes.get(&vid) {
-            return ec_volume.find_shard(shard_id).await;
-        }
-        Ok(None)
-    }
-
-    pub async fn load_ec_shard(
-        &self,
-        collection: &str,
-        vid: VolumeId,
-        shard_id: ShardId,
-    ) -> Result<()> {
-        let collection = FastStr::new(collection);
-        let shard = EcVolumeShard::new(self.directory.clone(), collection.clone(), vid, shard_id)?;
-        let volume = match self.ec_volumes.get_mut(&vid) {
-            Some(volume) => volume,
-            None => {
-                let (tx, rx) = unbounded();
-                let volume = EcVolume::new(self.directory.clone(), collection, vid)?;
-                rt_spawn(ec_volume_loop(volume, rx, self.shutdown.clone()));
-                self.ec_volumes
-                    .entry(vid)
-                    .or_insert(EcVolumeEventTx::new(tx))
-            }
-        };
-        volume.add_shard(shard).await?;
-        Ok(())
-    }
-
-    pub async fn unload_ec_shard(&self, vid: VolumeId, shard_id: ShardId) -> Result<bool> {
-        match self.ec_volumes.get(&vid) {
-            Some(volume) => {
-                if volume.delete_shard(shard_id).await?.is_some() && volume.shards_len().await? == 0
-                {
-                    self.ec_volumes.remove(&vid);
-                }
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    pub async fn load_ec_shards(
-        &mut self,
-        shards: &[String],
-        collection: &str,
-        vid: VolumeId,
-    ) -> Result<()> {
-        for shard in shards {
-            let shard_id = u64::from_str_radix(&shard[3..], 16)?;
-            self.load_ec_shard(collection, vid, shard_id as ShardId)
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub async fn load_all_shards(&mut self) -> Result<()> {
-        let dir = fs::read_dir(self.directory.to_string())?;
-        let mut entries = Vec::new();
-        for entry in dir {
-            entries.push(entry?);
-        }
-        entries.sort_by_key(|entry| entry.file_name());
-
-        let mut same_volume_shards = Vec::new();
-        let mut pre_volume_id = 0 as VolumeId;
-
-        for entry in entries.iter() {
-            if entry.path().is_dir() {
-                continue;
-            }
-            if let Some(filename) = entry.path().file_name() {
-                let file_path = Path::new(filename);
-                if let Some(ext) = file_path.extension() {
-                    let filename = filename.to_string_lossy().to_string();
-                    let base_name = &filename[..filename.len() - ext.len() - 1];
-                    match parse_volume_id(base_name) {
-                        Ok((vid, collection)) => {
-                            if let Some(m) = REGEX.find(&ext.to_string_lossy()) {
-                                if pre_volume_id == 0 || vid == pre_volume_id {
-                                    same_volume_shards.push(filename);
-                                } else {
-                                    same_volume_shards = vec![filename];
-                                }
-                                pre_volume_id = vid;
-                                continue;
-                            }
-
-                            if ext.eq_ignore_ascii_case("ecx") && vid == pre_volume_id {
-                                self.load_ec_shards(&same_volume_shards, collection, vid)
-                                    .await?;
-                                pre_volume_id = vid;
-                                continue;
-                            }
-                        }
-                        Err(err) => continue,
-                    }
-                }
-            }
         }
         Ok(())
     }

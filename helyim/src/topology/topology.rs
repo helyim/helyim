@@ -16,9 +16,8 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center_loop, erasure_coding::EcShardLocations,
-        volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataCenter, DataCenterEventTx,
-        DataNodeEventTx,
+        collection::Collection, data_center_loop, volume_grow::VolumeGrowOption,
+        volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNodeEventTx,
     },
 };
 
@@ -27,8 +26,6 @@ pub struct Topology {
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
-    #[serde(skip)]
-    pub ec_shards: HashMap<VolumeId, EcShardLocations>,
     pulse: u64,
     volume_size_limit: u64,
     #[serde(skip)]
@@ -46,7 +43,6 @@ impl Clone for Topology {
         Self {
             sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
-            ec_shards: self.ec_shards.clone(),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
@@ -67,7 +63,6 @@ impl Topology {
         Topology {
             sequencer,
             collections: HashMap::new(),
-            ec_shards: HashMap::new(),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),

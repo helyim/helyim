@@ -12,7 +12,7 @@ use hyper::{
 use serde_json::json;
 use tracing::error;
 
-use crate::storage::{erasure_coding::ErasureCodingError, NeedleError, VolumeError};
+use crate::storage::{NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -25,11 +25,6 @@ pub enum Error {
     // needle error
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
-
-    #[error("Erasure coding error: {0}")]
-    ErasureCoding(#[from] reed_solomon_erasure::Error),
-    #[error("Erasure coding error: {0}")]
-    ErasureCoding0(#[from] ErasureCodingError),
 
     /// storage errors
     #[error("Invalid replica placement: {0}")]

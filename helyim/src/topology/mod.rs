@@ -6,8 +6,6 @@ pub use data_center::{data_center_loop, DataCenter, DataCenterEvent, DataCenterE
 mod data_node;
 pub use data_node::{data_node_loop, DataNode, DataNodeEvent, DataNodeEventTx};
 
-mod erasure_coding;
-
 mod rack;
 pub use rack::{rack_loop, Rack, RackEvent, RackEventTx};
 

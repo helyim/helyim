@@ -19,8 +19,6 @@ pub use needle_map::{index_entry, walk_index_file, NeedleMapType, NeedleMapper};
 mod needle_value_map;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
 
-pub mod erasure_coding;
-
 mod replica_placement;
 pub use replica_placement::ReplicaPlacement;
 
