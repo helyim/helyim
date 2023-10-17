@@ -1,5 +1,4 @@
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
 
@@ -287,7 +286,6 @@ impl VolumeGrowth {
     }
 }
 
-#[event_fn]
 impl VolumeGrowth {
     pub async fn grow_by_type(
         &mut self,

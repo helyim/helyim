@@ -1,4 +1,4 @@
-use std::{pin::Pin, result::Result as StdResult, time::Duration};
+use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
@@ -28,7 +28,7 @@ use tracing::{error, info};
 
 use crate::{
     errors::Result,
-    operation::{looker_loop, Looker, LookerEventTx},
+    operation::Looker,
     rt_spawn,
     storage::{
         api::{fallback_handler, status_handler, StorageContext},
@@ -156,20 +156,13 @@ impl StorageServer {
 
         let client = HelyimClient::connect(self.grpc_addr()?).await?;
 
-        let (looker_tx, looker_rx) = unbounded();
-        let looker = Looker::new(client.clone());
-        self.handles.push(rt_spawn(looker_loop(
-            looker,
-            looker_rx,
-            self.shutdown.new_receiver(),
-        )));
-
         let ctx = StorageContext {
             store,
+            client: client.clone(),
             needle_map_type,
             read_redirect,
             pulse_seconds,
-            looker: LookerEventTx::new(looker_tx),
+            looker: Arc::new(Looker::new()),
         };
 
         self.handles.push(

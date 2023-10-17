@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add,
-    result::Result as StdResult, str::FromStr, time, time::Duration,
+    result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
 };
 
 use axum::{
@@ -14,6 +14,7 @@ use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
 use futures::stream::once;
+use helyim_proto::helyim_client::HelyimClient;
 use hyper::{
     header::{
         HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -35,13 +36,14 @@ use nom::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tonic::transport::Channel;
 use tracing::info;
 
 use crate::{
     anyhow,
     errors::Result,
     images::FAVICON_ICO,
-    operation::{LookerEventTx, Upload},
+    operation::{Looker, Upload},
     storage::{
         crc,
         needle::{Needle, PAIR_NAME_PREFIX},
@@ -58,10 +60,11 @@ use crate::{
 #[derive(Clone)]
 pub struct StorageContext {
     pub store: StoreEventTx,
+    pub client: HelyimClient<Channel>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
-    pub looker: LookerEventTx,
+    pub looker: Arc<Looker>,
 }
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
@@ -143,7 +146,7 @@ pub struct StorageQuery {
 }
 
 pub async fn delete_handler(
-    State(ctx): State<StorageContext>,
+    State(mut ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
@@ -165,14 +168,14 @@ pub async fn delete_handler(
         }
     }
 
-    let size = replicate_delete(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
+    let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let size = json!({ "size": size.0 });
 
     Ok(FallbackResponse::Delete(Json(size)))
 }
 
 async fn replicate_delete(
-    ctx: &StorageContext,
+    ctx: &mut StorageContext,
     path: &str,
     vid: VolumeId,
     needle: Needle,
@@ -191,7 +194,7 @@ async fn replicate_delete(
     }
 
     let params = vec![("type", "replicate")];
-    let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
+    let mut volume_locations = ctx.looker.lookup(&mut ctx.client, vec![vid]).await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         // TODO concurrent replicate
@@ -218,7 +221,7 @@ async fn replicate_delete(
 }
 
 pub async fn post_handler(
-    State(ctx): State<StorageContext>,
+    State(mut ctx): State<StorageContext>,
     extractor: StorageExtractor,
 ) -> Result<FallbackResponse> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
@@ -230,7 +233,7 @@ pub async fn post_handler(
         bincode::deserialize(&extractor.body)?
     };
 
-    needle = replicate_write(&ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
+    needle = replicate_write(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let mut upload = Upload {
         size: needle.data_size(),
         ..Default::default()
@@ -244,7 +247,7 @@ pub async fn post_handler(
 }
 
 async fn replicate_write(
-    ctx: &StorageContext,
+    ctx: &mut StorageContext,
     path: &str,
     vid: VolumeId,
     mut needle: Needle,
@@ -265,7 +268,7 @@ async fn replicate_write(
     let params = vec![("type", "replicate")];
     let data = bincode::serialize(&needle)?;
 
-    let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
+    let mut volume_locations = ctx.looker.lookup(&mut ctx.client, vec![vid]).await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         // TODO concurrent replicate

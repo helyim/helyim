@@ -10,7 +10,7 @@ use crate::{
     operation::{Assignment, ClusterStatus},
     storage::{ReplicaPlacement, Ttl},
     topology::{
-        volume_grow::{VolumeGrowOption, VolumeGrowthEventTx},
+        volume_grow::{VolumeGrowOption, VolumeGrowth},
         Topology, TopologyEventTx,
     },
 };
@@ -18,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub topology: TopologyEventTx,
-    pub volume_grow: VolumeGrowthEventTx,
+    pub volume_grow: VolumeGrowth,
     pub default_replica_placement: ReplicaPlacement,
     pub ip: FastStr,
     pub port: u16,
@@ -65,7 +65,7 @@ impl AssignRequest {
 }
 
 pub async fn assign_handler(
-    State(ctx): State<DirectoryContext>,
+    State(mut ctx): State<DirectoryContext>,
     Query(request): Query<AssignRequest>,
 ) -> Result<Json<Assignment>> {
     let count = match request.count {
