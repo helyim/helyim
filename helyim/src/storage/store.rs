@@ -39,7 +39,6 @@ pub struct Store {
 }
 
 unsafe impl Send for Store {}
-
 unsafe impl Sync for Store {}
 
 #[event_fn]

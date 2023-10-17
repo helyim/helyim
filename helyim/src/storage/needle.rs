@@ -62,12 +62,6 @@ pub struct NeedleValue {
 }
 
 impl NeedleValue {
-    pub fn deleted() -> Self {
-        Self {
-            offset: 0,
-            size: Size(-1),
-        }
-    }
     pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
         let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
         (&mut buf[..]).put_u64(needle_id);
@@ -250,7 +244,7 @@ impl Needle {
         let mut buf = vec![];
         buf.put_u32(self.cookie);
         buf.put_u64(self.id);
-        buf.put_i32(self.size.0);
+        buf.put_i32(*self.size);
 
         if self.data_size > 0 {
             buf.put_u32(self.data_size);
@@ -260,25 +254,25 @@ impl Needle {
             if self.has_name() {
                 buf.put_u8(self.name_size);
                 buf.put_slice(&self.name);
-                self.size.0 += 1 + self.name_size as i32;
+                self.size += 1 + self.name_size as i32;
             }
             if self.has_mime() {
                 buf.put_u8(self.mime_size);
                 buf.put_slice(&self.mime);
-                self.size.0 += 1 + self.mime_size as i32;
+                self.size += 1 + self.mime_size as i32;
             }
             if self.has_last_modified_date() {
                 buf.put_u64(self.last_modified);
-                self.size.0 += LAST_MODIFIED_BYTES_LENGTH as i32;
+                self.size += LAST_MODIFIED_BYTES_LENGTH as i32;
             }
             if self.has_ttl() {
                 buf.put_slice(&self.ttl.as_bytes());
-                self.size.0 += TTL_BYTES_LENGTH as i32;
+                self.size += TTL_BYTES_LENGTH as i32;
             }
             if self.has_pairs() {
                 buf.put_u16(self.pairs.len() as u16);
                 buf.put_slice(&self.pairs);
-                self.size.0 += 2 + self.pairs.len() as i32;
+                self.size += 2 + self.pairs.len() as i32;
             }
         }
         if self.size > 0 {

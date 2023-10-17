@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     fmt::{Display, Formatter},
+    ops::{AddAssign, Deref},
 };
 
 use crate::storage::needle::TOMBSTONE_FILE_SIZE;
@@ -25,6 +26,20 @@ macro_rules! def_needle_type {
         impl PartialOrd<$typ> for $type_name {
             fn partial_cmp(&self, other: &$typ) -> Option<Ordering> {
                 self.0.partial_cmp(other)
+            }
+        }
+
+        impl AddAssign<$typ> for $type_name {
+            fn add_assign(&mut self, rhs: $typ) {
+                self.0 += rhs;
+            }
+        }
+
+        impl Deref for $type_name {
+            type Target = $typ;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
             }
         }
     };
