@@ -1,9 +1,14 @@
-use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
+use std::{
+    pin::Pin,
+    result::Result as StdResult,
+    sync::{atomic::Ordering, Arc},
+    time::Duration,
+};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, StreamExt};
+use futures::StreamExt;
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
@@ -33,7 +38,7 @@ use crate::{
     storage::{
         api::{fallback_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
-        store::{store_loop, Store, StoreEventTx},
+        store::Store,
     },
     STOP_INTERVAL,
 };
@@ -45,7 +50,7 @@ pub struct StorageServer {
     pub pulse_seconds: i64,
     pub data_center: FastStr,
     pub rack: FastStr,
-    pub store: StoreEventTx,
+    pub store: Arc<Store>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
@@ -82,10 +87,7 @@ impl StorageServer {
             master_node.clone(),
             shutdown_rx.clone(),
         )?;
-
-        let (tx, rx) = unbounded();
-        let store_tx = StoreEventTx::new(tx);
-        rt_spawn(store_loop(store, rx, shutdown_rx.clone()));
+        let store = Arc::new(store);
 
         let storage = StorageServer {
             host: FastStr::new(host),
@@ -96,7 +98,7 @@ impl StorageServer {
             rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
-            store: store_tx.clone(),
+            store: store.clone(),
             handles: vec![],
             shutdown,
         };
@@ -107,7 +109,7 @@ impl StorageServer {
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
-                    store: store_tx,
+                    store,
                     needle_map_type,
                 }))
                 .serve_with_shutdown(addr, async {
@@ -202,7 +204,7 @@ impl StorageServer {
 }
 
 async fn start_heartbeat(
-    store: StoreEventTx,
+    store: Arc<Store>,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -222,9 +224,7 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
-                                        if let Err(err) = store.set_volume_size_limit(response.volume_size_limit) {
-                                            error!("set volume_size_limit failed, error: {err}");
-                                        }
+                                        store.volume_size_limit.store(response.volume_size_limit, Ordering::Relaxed);
                                     }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
@@ -250,7 +250,7 @@ async fn start_heartbeat(
 }
 
 async fn heartbeat_stream(
-    store: StoreEventTx,
+    store: Arc<Store>,
     client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
@@ -279,7 +279,7 @@ async fn heartbeat_stream(
 
 #[derive(Clone)]
 struct StorageGrpcServer {
-    store: StoreEventTx,
+    store: Arc<Store>,
     needle_map_type: NeedleMapType,
 }
 
@@ -290,16 +290,14 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<AllocateVolumeRequest>,
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
-        self.store
-            .add_volume(
-                request.volumes,
-                request.collection,
-                self.needle_map_type,
-                request.replication,
-                request.ttl,
-                request.preallocate,
-            )
-            .await?;
+        self.store.add_volume(
+            request.volumes,
+            request.collection,
+            self.needle_map_type,
+            request.replication,
+            request.ttl,
+            request.preallocate,
+        )?;
         Ok(Response::new(AllocateVolumeResponse {}))
     }
 

@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
-use helyim_macros::event_fn;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tracing::{debug, error, info, warn};
 
@@ -34,14 +36,13 @@ pub struct Store {
 
     pub master_addr: FastStr,
     // read from master
-    pub volume_size_limit: u64,
+    pub volume_size_limit: AtomicU64,
     pub needle_map_type: NeedleMapType,
 }
 
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
 
-#[event_fn]
 impl Store {
     pub fn new(
         ip: &str,
@@ -70,24 +71,8 @@ impl Store {
             data_center: FastStr::empty(),
             rack: FastStr::empty(),
             connected: false,
-            volume_size_limit: 0,
+            volume_size_limit: AtomicU64::default(),
         })
-    }
-
-    pub fn ip(&self) -> FastStr {
-        self.ip.clone()
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    pub fn set_volume_size_limit(&mut self, volume_size_limit: u64) {
-        self.volume_size_limit = volume_size_limit;
-    }
-
-    pub fn locations(&self) -> Vec<Arc<DiskLocation>> {
-        self.locations.clone()
     }
 
     pub fn has_volume(&self, vid: VolumeId) -> bool {
@@ -220,12 +205,12 @@ impl Store {
         Ok(())
     }
 
-    pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
+    pub async fn collect_heartbeat(&self) -> Result<HeartbeatRequest> {
         let mut heartbeat = HeartbeatRequest::default();
 
         let mut max_file_key: u64 = 0;
         let mut max_volume_count = 0;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
             for entry in location.volumes.iter() {
@@ -236,7 +221,10 @@ impl Store {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.expired(self.volume_size_limit).await? {
+                if !volume
+                    .expired(self.volume_size_limit.load(Ordering::Relaxed))
+                    .await?
+                {
                     let super_block = volume.super_block().await?;
                     let msg = VolumeInformationMessage {
                         id: *vid,

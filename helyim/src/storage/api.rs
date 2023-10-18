@@ -48,7 +48,7 @@ use crate::{
         crc,
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
-        store::StoreEventTx,
+        store::Store,
         types::Size,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
@@ -59,7 +59,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct StorageContext {
-    pub store: StoreEventTx,
+    pub store: Arc<Store>,
     pub client: HelyimClient<Channel>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -69,7 +69,7 @@ pub struct StorageContext {
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in ctx.store.locations().await?.iter() {
+    for location in ctx.store.locations.iter() {
         for entry in location.volumes.iter() {
             let volume_info = entry.get_volume_info().await?;
             infos.push(volume_info);
@@ -181,13 +181,13 @@ async fn replicate_delete(
     needle: Needle,
     is_replicate: bool,
 ) -> Result<Size> {
-    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate().await? {
             return Ok(size);
         }
@@ -253,13 +253,13 @@ async fn replicate_write(
     mut needle: Needle,
     is_replicate: bool,
 ) -> Result<Needle> {
-    let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
+    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     needle = ctx.store.write_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(needle);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate().await? {
             return Ok(needle);
         }
@@ -474,7 +474,7 @@ pub async fn get_or_head_handler(
 
     let mut response = Response::new(Body::empty());
 
-    if !ctx.store.has_volume(vid).await? {
+    if !ctx.store.has_volume(vid) {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);

@@ -261,7 +261,7 @@ impl Volume {
         Ok(needle)
     }
 
-    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
+    pub fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
         if self.readonly {
             return Err(anyhow!("volume {} is read only", self.id));
         }
