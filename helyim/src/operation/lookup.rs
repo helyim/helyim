@@ -4,7 +4,7 @@ use helyim_proto::{
     helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
     LookupVolumeResponse,
 };
-use moka::sync::{Cache, CacheBuilder};
+use moka::future::{Cache, CacheBuilder};
 use tonic::transport::Channel;
 
 use crate::{errors::Result, storage::VolumeId};
@@ -46,7 +46,7 @@ impl Looker {
         let mut volume_locations = Vec::with_capacity(vids.len());
         let mut volume_ids = vec![];
         for vid in vids {
-            match self.volumes.get(&vid) {
+            match self.volumes.get(&vid).await {
                 Some(value) => volume_locations.push(value),
                 None => volume_ids.push(vid),
             }
@@ -57,7 +57,7 @@ impl Looker {
                 for location in lookup.volume_locations {
                     volume_locations.push(location.clone());
                     if !location.error.is_empty() {
-                        self.volumes.insert(location.volume_id, location);
+                        self.volumes.insert(location.volume_id, location).await;
                     }
                 }
                 Ok(volume_locations)

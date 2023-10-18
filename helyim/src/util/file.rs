@@ -84,4 +84,23 @@ mod tests {
         let path = Path::new("/tmp/helyim.txt");
         assert_eq!(path.extension(), Some(OsStr::new("txt")));
     }
+
+    #[test]
+    pub fn test_same_file() {
+        let path = "/tmp/tmp_same_file";
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .open(path)
+            .unwrap();
+
+        let file2 = fs::OpenOptions::new().read(true).open(path).unwrap();
+
+        assert_eq!(file2.metadata().unwrap().len(), 0);
+
+        file.write_all(b"hello").unwrap();
+        assert_eq!(file2.metadata().unwrap().len(), 5);
+    }
 }

@@ -37,7 +37,7 @@ hyper = { workspace = true, features = ["full"] }
 libflate.workspace = true
 lru.workspace = true
 mime_guess.workspace = true
-moka = { workspace = true, features = ["sync"] }
+moka = { workspace = true, features = ["future"] }
 multer.workspace = true
 nom.workspace = true
 once_cell.workspace = true
