@@ -40,10 +40,8 @@ mime_guess.workspace = true
 moka = { workspace = true, features = ["future"] }
 multer.workspace = true
 nom.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-regex.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
