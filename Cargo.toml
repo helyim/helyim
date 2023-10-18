@@ -16,6 +16,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 async-broadcast = "0.6"
+async-lock = "2"
 async-stream = "0.3"
 async-trait = "0.1"
 axum = "0.6"

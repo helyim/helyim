@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use async_lock::RwLock;
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
@@ -50,7 +51,7 @@ pub struct StorageServer {
     pub pulse_seconds: i64,
     pub data_center: FastStr,
     pub rack: FastStr,
-    pub store: Arc<Store>,
+    pub store: Arc<RwLock<Store>>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
@@ -87,7 +88,7 @@ impl StorageServer {
             master_node.clone(),
             shutdown_rx.clone(),
         )?;
-        let store = Arc::new(store);
+        let store = Arc::new(RwLock::new(store));
 
         let storage = StorageServer {
             host: FastStr::new(host),
@@ -204,7 +205,7 @@ impl StorageServer {
 }
 
 async fn start_heartbeat(
-    store: Arc<Store>,
+    store: Arc<RwLock<Store>>,
     mut client: HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -224,7 +225,7 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
-                                        store.volume_size_limit.store(response.volume_size_limit, Ordering::Relaxed);
+                                        store.write().await.volume_size_limit.store(response.volume_size_limit, Ordering::Relaxed);
                                     }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
@@ -250,7 +251,7 @@ async fn start_heartbeat(
 }
 
 async fn heartbeat_stream(
-    store: Arc<Store>,
+    store: Arc<RwLock<Store>>,
     client: &mut HelyimClient<Channel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
@@ -261,7 +262,7 @@ async fn heartbeat_stream(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    match store.collect_heartbeat().await {
+                    match store.read().await.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,
                         Err(err) => error!("collect heartbeat error: {err}")
                     }
@@ -279,7 +280,7 @@ async fn heartbeat_stream(
 
 #[derive(Clone)]
 struct StorageGrpcServer {
-    store: Arc<Store>,
+    store: Arc<RwLock<Store>>,
     needle_map_type: NeedleMapType,
 }
 
@@ -290,7 +291,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<AllocateVolumeRequest>,
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
-        self.store.add_volume(
+        self.store.write().await.add_volume(
             request.volumes,
             request.collection,
             self.needle_map_type,
@@ -307,7 +308,11 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         info!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self
+            .store
+            .read()
+            .await
+            .check_compact_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -318,8 +323,9 @@ impl VolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         info!("vacuum volume {} compact", request.volume_id);
         self.store
-            .compact_volume(request.volume_id, request.preallocate)
-            .await?;
+            .write()
+            .await
+            .compact_volume(request.volume_id, request.preallocate)?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
 
@@ -329,7 +335,10 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         info!("vacuum volume {} commit compaction", request.volume_id);
-        self.store.commit_compact_volume(request.volume_id).await?;
+        self.store
+            .write()
+            .await
+            .commit_compact_volume(request.volume_id)?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -342,7 +351,10 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         info!("vacuum volume {} cleanup", request.volume_id);
-        self.store.commit_cleanup_volume(request.volume_id).await?;
+        self.store
+            .read()
+            .await
+            .commit_cleanup_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 

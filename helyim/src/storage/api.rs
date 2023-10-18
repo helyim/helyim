@@ -3,6 +3,7 @@ use std::{
     result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
 };
 
+use async_lock::RwLock;
 use axum::{
     extract::{Query, State},
     headers,
@@ -59,7 +60,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct StorageContext {
-    pub store: Arc<Store>,
+    pub store: Arc<RwLock<Store>>,
     pub client: HelyimClient<Channel>,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -69,9 +70,10 @@ pub struct StorageContext {
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in ctx.store.locations.iter() {
+    let locations = &ctx.store.read().await.locations.clone();
+    for location in locations.iter() {
         for entry in location.volumes.iter() {
-            let volume_info = entry.get_volume_info().await?;
+            let volume_info = entry.get_volume_info();
             infos.push(volume_info);
         }
     }
@@ -158,7 +160,7 @@ pub async fn delete_handler(
     let cookie = needle.cookie;
 
     {
-        needle = ctx.store.read_volume_needle(vid, needle).await?;
+        needle = ctx.store.write().await.read_volume_needle(vid, needle)?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
@@ -181,14 +183,18 @@ async fn replicate_delete(
     needle: Needle,
     is_replicate: bool,
 ) -> Result<Size> {
-    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
-    let size = ctx.store.delete_volume_needle(vid, needle).await?;
+    let local_url = format!(
+        "{}:{}",
+        ctx.store.read().await.ip,
+        ctx.store.read().await.port
+    );
+    let size = ctx.store.write().await.delete_volume_needle(vid, needle)?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid) {
-        if !volume.need_to_replicate().await? {
+    if let Some(volume) = ctx.store.read().await.find_volume(vid) {
+        if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
@@ -253,14 +259,18 @@ async fn replicate_write(
     mut needle: Needle,
     is_replicate: bool,
 ) -> Result<Needle> {
-    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
-    needle = ctx.store.write_volume_needle(vid, needle).await?;
+    let local_url = format!(
+        "{}:{}",
+        ctx.store.read().await.ip,
+        ctx.store.read().await.port
+    );
+    needle = ctx.store.write().await.write_volume_needle(vid, needle)?;
     if is_replicate {
         return Ok(needle);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid) {
-        if !volume.need_to_replicate().await? {
+    if let Some(volume) = ctx.store.read().await.find_volume(vid) {
+        if !volume.need_to_replicate() {
             return Ok(needle);
         }
     }
@@ -474,7 +484,7 @@ pub async fn get_or_head_handler(
 
     let mut response = Response::new(Body::empty());
 
-    if !ctx.store.has_volume(vid) {
+    if !ctx.store.read().await.has_volume(vid) {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
@@ -483,7 +493,7 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = ctx.store.read_volume_needle(vid, needle).await?;
+    needle = ctx.store.write().await.read_volume_needle(vid, needle)?;
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }

@@ -2,26 +2,24 @@ use std::{fs, path::Path};
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
 use tracing::info;
 
 use crate::{
     anyhow,
     errors::Result,
-    rt_spawn,
     storage::{
         needle_map::NeedleMapType,
         replica_placement::ReplicaPlacement,
         ttl::Ttl,
-        volume::{volume_loop, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
+        volume::{Volume, DATA_FILE_SUFFIX},
         VolumeId,
     },
 };
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: DashMap<VolumeId, VolumeEventTx>,
+    pub volumes: DashMap<VolumeId, Volume>,
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
@@ -64,10 +62,7 @@ impl DiskLocation {
                         Ttl::default(),
                         0,
                     )?;
-                    let (tx, rx) = unbounded();
-                    let volume_tx = VolumeEventTx::new(tx);
-                    rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
-                    entry.insert(volume_tx);
+                    entry.insert(volume);
                 }
             }
         }
@@ -75,9 +70,9 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
+    pub fn delete_volume(&self, vid: VolumeId) -> Result<()> {
         if let Some((vid, v)) = self.volumes.remove(&vid) {
-            v.destroy().await?;
+            v.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory

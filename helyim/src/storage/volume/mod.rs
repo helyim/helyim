@@ -8,7 +8,6 @@ use std::{
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use rustix::fs::ftruncate;
 use tracing::{debug, error, info};
 
@@ -92,12 +91,12 @@ impl SuperBlock {
 pub struct Volume {
     id: VolumeId,
     dir: FastStr,
-    collection: FastStr,
+    pub(crate) collection: FastStr,
     data_file: Option<File>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
     readonly: bool,
-    super_block: SuperBlock,
+    pub(crate) super_block: SuperBlock,
     last_modified: u64,
     last_compact_index_offset: u64,
     last_compact_revision: u16,
@@ -118,7 +117,7 @@ impl Display for Volume {
     }
 }
 
-#[event_fn]
+// #[event_fn]
 impl Volume {
     pub fn new(
         dir: FastStr,
@@ -223,7 +222,7 @@ impl Volume {
         Ok(())
     }
 
-    pub async fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+    pub fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
         let volume_id = self.id;
         if self.readonly {
             return Err(anyhow!("volume {volume_id} is read only"));
@@ -382,7 +381,6 @@ impl Volume {
         Ok(file.metadata()?.len())
     }
 
-    #[ignore]
     pub fn file(&self) -> Result<&File> {
         match self.data_file.as_ref() {
             Some(data_file) => Ok(data_file),
@@ -390,7 +388,6 @@ impl Volume {
         }
     }
 
-    #[ignore]
     pub fn file_mut(&mut self) -> Result<&mut File> {
         match self.data_file.as_mut() {
             Some(data_file) => Ok(data_file),
@@ -398,17 +395,14 @@ impl Volume {
         }
     }
 
-    #[ignore]
     pub fn data_filename(&self) -> String {
         format!("{}.{DATA_FILE_SUFFIX}", self.filename())
     }
 
-    #[ignore]
     pub fn index_filename(&self) -> String {
         format!("{}.{IDX_FILE_SUFFIX}", self.filename())
     }
 
-    #[ignore]
     pub fn content_size(&self) -> u64 {
         self.needle_mapper.content_size()
     }
@@ -526,7 +520,7 @@ impl Volume {
         self.load(false, true)
     }
 
-    pub fn cleanup_compact(&mut self) -> Result<()> {
+    pub fn cleanup_compact(&self) -> Result<()> {
         let filename = self.filename();
         fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
         fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
@@ -723,7 +717,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(needle).await.unwrap();
+        volume.write_needle(needle).unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)
