@@ -17,7 +17,7 @@ keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-scoped = { version = "0.7", features = ["use-tokio"]}
+async-scoped = { version = "0.7", features = ["use-tokio"] }
 async-broadcast.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
@@ -58,8 +58,14 @@ url.workspace = true
 tonic.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
 tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []
 iouring = ["tokio-uring"]
+
+[[bench]]
+name = "upload_file"
+harness = false
