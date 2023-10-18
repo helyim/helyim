@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use helyim_macros::event_fn;
 use helyim_proto::{
@@ -26,7 +27,7 @@ pub struct DataNode {
     last_seen: i64,
     #[serde(skip)]
     rack: Option<RackEventTx>,
-    volumes: HashMap<VolumeId, VolumeInfo>,
+    volumes: DashMap<VolumeId, VolumeInfo>,
     max_volumes: i64,
     max_volume_id: VolumeId,
     #[serde(skip)]
@@ -57,7 +58,7 @@ impl DataNode {
             public_url,
             last_seen: 0,
             rack: None,
-            volumes: HashMap::new(),
+            volumes: DashMap::new(),
             max_volumes,
             max_volume_id: 0,
             client: None,
@@ -113,7 +114,7 @@ impl DataNode {
     }
 
     pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
-        self.volumes.get(&vid).cloned()
+        self.volumes.get(&vid).map(|v| v.value().clone())
     }
 
     pub fn set_rack(&mut self, rack: RackEventTx) {
@@ -132,9 +133,10 @@ impl DataNode {
         let mut deleted_id = vec![];
         let mut deleted = vec![];
 
-        for (id, volume) in self.volumes.iter_mut() {
+        for entry in self.volumes.iter() {
+            let id = entry.key();
             if !volumes.contains(id) {
-                deleted_id.push(volume.id)
+                deleted_id.push(*id);
             }
         }
 
@@ -143,7 +145,7 @@ impl DataNode {
         }
 
         for id in deleted_id.iter() {
-            if let Some(volume) = self.volumes.remove(id) {
+            if let Some((_, volume)) = self.volumes.remove(id) {
                 deleted.push(volume);
             }
         }
@@ -151,8 +153,7 @@ impl DataNode {
         Ok(deleted)
     }
 
-    #[ignore]
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+    async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
@@ -164,8 +165,7 @@ impl DataNode {
         Ok(())
     }
 
-    #[ignore]
-    pub fn grpc_addr(&self) -> String {
+    fn grpc_addr(&self) -> String {
         format!("http://{}:{}", self.ip, self.port + 1)
     }
 
