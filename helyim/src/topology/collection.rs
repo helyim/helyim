@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use dashmap::{mapref::one::RefMut, DashMap};
 use faststr::FastStr;
 use serde::Serialize;
 
@@ -12,7 +11,7 @@ use crate::{
 pub struct Collection {
     name: FastStr,
     volume_size_limit: u64,
-    pub volume_layouts: HashMap<FastStr, VolumeLayout>,
+    pub volume_layouts: DashMap<FastStr, VolumeLayout>,
 }
 
 impl Collection {
@@ -20,15 +19,15 @@ impl Collection {
         Collection {
             name,
             volume_size_limit,
-            volume_layouts: HashMap::new(),
+            volume_layouts: DashMap::new(),
         }
     }
 
     pub fn get_or_create_volume_layout(
-        &mut self,
+        &self,
         rp: ReplicaPlacement,
         ttl: Option<Ttl>,
-    ) -> &mut VolumeLayout {
+    ) -> RefMut<FastStr, VolumeLayout> {
         let key = match ttl {
             Some(ttl) => format!("{}{}", rp, ttl),
             None => rp.to_string(),
@@ -42,7 +41,7 @@ impl Collection {
     }
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
-        for layout in self.volume_layouts.values() {
+        for layout in self.volume_layouts.iter() {
             let ret = layout.lookup(vid);
             if ret.is_some() {
                 return ret;

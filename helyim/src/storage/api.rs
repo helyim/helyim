@@ -160,7 +160,7 @@ pub async fn delete_handler(
     let cookie = needle.cookie;
 
     {
-        needle = ctx.store.write().await.read_volume_needle(vid, needle)?;
+        needle = ctx.store.read().await.read_volume_needle(vid, needle)?;
         if cookie != needle.cookie {
             info!(
                 "cookie not match from {:?} recv: {}, file is {}",
@@ -493,7 +493,7 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = ctx.store.write().await.read_volume_needle(vid, needle)?;
+    needle = ctx.store.read().await.read_volume_needle(vid, needle)?;
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }

@@ -27,6 +27,7 @@ pub struct DataNode {
     last_seen: i64,
     #[serde(skip)]
     rack: Option<RackEventTx>,
+    #[serde(skip)]
     volumes: DashMap<VolumeId, VolumeInfo>,
     max_volumes: i64,
     max_volume_id: VolumeId,

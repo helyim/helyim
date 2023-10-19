@@ -101,9 +101,9 @@ impl Store {
         }
     }
 
-    pub fn read_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume_mut(vid) {
-            Some(mut volume) => volume.read_needle(needle),
+    pub fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+        match self.find_volume(vid) {
+            Some(volume) => volume.read_needle(needle),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }

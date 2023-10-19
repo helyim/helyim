@@ -42,7 +42,7 @@ impl VolumeGrowth {
         let mut valid_main_counts = 0;
         let data_centers = topology.data_centers().await?;
         // find main data center
-        for (_, dc_tx) in data_centers.iter() {
+        for dc_tx in data_centers.iter() {
             if !option.data_center.is_empty() && dc_tx.id().await? != option.data_center {
                 continue;
             }
@@ -89,7 +89,9 @@ impl VolumeGrowth {
         let main_dc_tx = main_dc.unwrap();
 
         if rp.diff_data_center_count > 0 {
-            for (dc_id, dc_tx) in data_centers.iter() {
+            for entry in data_centers.iter() {
+                let dc_id = entry.key();
+                let dc_tx = entry.value();
                 if *dc_id == main_dc_tx.id().await? || dc_tx.free_volumes().await? < 1 {
                     continue;
                 }

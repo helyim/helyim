@@ -281,7 +281,7 @@ impl Volume {
         Ok(nv.size)
     }
 
-    pub fn read_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+    pub fn read_needle(&self, mut needle: Needle) -> Result<Needle> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 {
@@ -289,8 +289,8 @@ impl Volume {
                 }
 
                 let version = self.version();
-                let data_file = self.file_mut()?;
-                needle.read_data(data_file, nv.offset, nv.size, version)?;
+                let mut data_file = self.file()?.try_clone()?;
+                needle.read_data(&mut data_file, nv.offset, nv.size, version)?;
 
                 if needle.has_ttl() && needle.has_last_modified_date() {
                     let minutes = needle.ttl.minutes();
