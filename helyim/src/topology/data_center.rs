@@ -36,10 +36,6 @@ impl DataCenter {
         self.max_volume_id.load(Ordering::Relaxed)
     }
 
-    pub fn racks(&self) -> Arc<DashMap<FastStr, Arc<RwLock<Rack>>>> {
-        self.racks.clone()
-    }
-
     pub fn adjust_max_volume_id(&self, vid: VolumeId) {
         if vid > self.max_volume_id.load(Ordering::Relaxed) {
             self.max_volume_id.store(vid, Ordering::Relaxed);
@@ -93,9 +89,6 @@ impl DataCenter {
             }
         }
 
-        Err(Error::NoFreeSpace(format!(
-            "reserve_one_volume on dc {} fail",
-            self.id
-        )))
+        Err(Error::NoFreeSpace(format!("data center: {}", self.id)))
     }
 }

@@ -224,7 +224,7 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
-                                        store.write().await.volume_size_limit.store(response.volume_size_limit, Ordering::Relaxed);
+                                        store.read().await.volume_size_limit.store(response.volume_size_limit, Ordering::Relaxed);
                                     }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");

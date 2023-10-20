@@ -50,7 +50,7 @@ impl VolumeGrowth {
                 continue;
             }
 
-            let racks = data_center.racks();
+            let racks = &data_center.racks;
 
             if racks.len() < rp.diff_rack_count as usize + 1 {
                 continue;
@@ -65,7 +65,7 @@ impl VolumeGrowth {
             let mut possible_racks_count = 0;
             for rack in racks.iter() {
                 let mut possible_nodes_count = 0;
-                for dn in rack.read().await.data_nodes().iter() {
+                for dn in rack.read().await.nodes.iter() {
                     if dn.read().await.free_volumes() >= 1 {
                         possible_nodes_count += 1;
                     }
@@ -115,7 +115,7 @@ impl VolumeGrowth {
 
         // find main rack
         let mut valid_rack_count = 0;
-        for rack in main_data_center.racks().iter() {
+        for rack in main_data_center.racks.iter() {
             if !option.rack.is_empty() && option.rack != rack.read().await.id {
                 continue;
             }
@@ -124,7 +124,7 @@ impl VolumeGrowth {
                 continue;
             }
 
-            let data_nodes = rack.read().await.data_nodes();
+            let data_nodes = &rack.read().await.nodes;
 
             if data_nodes.len() < rp.same_rack_count as usize + 1 {
                 continue;
@@ -156,7 +156,7 @@ impl VolumeGrowth {
         let main_rack = main_rack.unwrap();
 
         if rp.diff_rack_count > 0 {
-            for rack in main_data_center.racks().iter() {
+            for rack in main_data_center.racks.iter() {
                 let rack_id = rack.key();
                 let rack = rack.value();
                 if *rack_id == main_rack.read().await.id
@@ -179,7 +179,7 @@ impl VolumeGrowth {
 
         // find main node
         let mut valid_node = 0;
-        for entry in main_rack.read().await.data_nodes().iter() {
+        for entry in main_rack.read().await.nodes.iter() {
             let node_id = entry.key();
             let node = entry.value();
 
@@ -202,7 +202,7 @@ impl VolumeGrowth {
         let main_data_node = main_dn.unwrap().clone();
 
         if rp.same_rack_count > 0 {
-            for entry in main_rack.read().await.data_nodes().iter() {
+            for entry in main_rack.read().await.nodes.iter() {
                 let node_id = entry.key();
                 let node = entry.value();
 

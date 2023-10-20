@@ -93,9 +93,9 @@ impl Store {
         None
     }
 
-    pub fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Size> {
+    pub async fn delete_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume_mut(vid) {
-            Some(mut volume) => volume.delete_needle(needle),
+            Some(mut volume) => volume.delete_needle(needle).await,
             None => Ok(Size(0)),
         }
     }
@@ -107,14 +107,14 @@ impl Store {
         }
     }
 
-    pub fn write_volume_needle(&mut self, vid: VolumeId, needle: Needle) -> Result<Needle> {
+    pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: &mut Needle) -> Result<()> {
         match self.find_volume_mut(vid) {
             Some(mut volume) => {
                 if volume.is_readonly() {
                     return Err(anyhow!("volume {} is read only", vid));
                 }
 
-                volume.write_needle(needle)
+                volume.write_needle(needle).await
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }

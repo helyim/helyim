@@ -6,6 +6,7 @@ use std::{
     path::Path,
 };
 
+use async_lock::Mutex;
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
@@ -92,7 +93,8 @@ pub struct Volume {
     id: VolumeId,
     dir: FastStr,
     pub(crate) collection: FastStr,
-    data_file: Option<File>,
+    readable_file: Option<File>,
+    writable_file: Option<Mutex<File>>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
     readonly: bool,
@@ -138,7 +140,8 @@ impl Volume {
             dir: dir.clone(),
             collection,
             super_block: sb,
-            data_file: None,
+            readable_file: None,
+            writable_file: None,
             needle_map_type,
             needle_mapper: NeedleMapper::new(id, needle_map_type),
             readonly: false,
@@ -153,7 +156,7 @@ impl Volume {
     }
 
     pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<()> {
-        if self.data_file.is_some() {
+        if self.readable_file.is_some() {
             return Err(anyhow!("volume {} has loaded!", self.id));
         }
 
@@ -182,7 +185,7 @@ impl Volume {
 
         if meta.permissions().readonly() {
             let file = fs::OpenOptions::new().read(true).open(&name)?;
-            self.data_file = Some(file);
+            self.readable_file = Some(file);
             self.readonly = true;
         } else {
             let file = fs::OpenOptions::new()
@@ -190,9 +193,12 @@ impl Volume {
                 .write(true)
                 .mode(0o644)
                 .open(&name)?;
+            let readable_file = file.try_clone()?;
+
+            self.readable_file = Some(readable_file);
+            self.writable_file = Some(Mutex::new(file));
 
             self.last_modified = get_time(meta.modified()?)?.as_secs();
-            self.data_file = Some(file);
         }
 
         self.write_super_block()?;
@@ -221,29 +227,33 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+    pub async fn write_needle(&mut self, needle: &mut Needle) -> Result<()> {
         let volume_id = self.id;
         if self.readonly {
             return Err(anyhow!("volume {volume_id} is read only"));
         }
 
         let version = self.version();
-        let file = self.file_mut()?;
+        let mut offset;
+        {
+            let mut file = self.writable_file()?.lock().await;
 
-        let mut offset = file.seek(SeekFrom::End(0))?;
-        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            offset = file.seek(SeekFrom::Start(offset))?;
-        }
-        offset /= NEEDLE_PADDING_SIZE as u64;
+            offset = file.seek(SeekFrom::End(0))?;
+            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+                offset =
+                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+                offset = file.seek(SeekFrom::Start(offset))?;
+            }
+            offset /= NEEDLE_PADDING_SIZE as u64;
 
-        if let Err(err) = needle.append(file, version) {
-            error!(
-                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                needle.id
-            );
-            ftruncate(file, offset)?;
-            return Err(err);
+            if let Err(err) = needle.append(&mut *file, version) {
+                error!(
+                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                    needle.id
+                );
+                ftruncate(&mut *file, offset)?;
+                return Err(err);
+            }
         }
 
         let nv = NeedleValue {
@@ -256,10 +266,10 @@ impl Volume {
             self.last_modified = needle.last_modified;
         }
 
-        Ok(needle)
+        Ok(())
     }
 
-    pub fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
+    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
         if self.readonly {
             return Err(anyhow!("volume {} is read only", self.id));
         }
@@ -275,8 +285,10 @@ impl Volume {
         needle.data.clear();
 
         let version = self.version();
-        let file = self.file_mut()?;
-        needle.append(file, version)?;
+        {
+            let mut file = self.writable_file()?.lock().await;
+            needle.append(&mut *file, version)?;
+        }
         Ok(nv.size)
     }
 
@@ -288,7 +300,7 @@ impl Volume {
                 }
 
                 let version = self.version();
-                let mut data_file = self.file()?.try_clone()?;
+                let mut data_file = self.readable_file()?.try_clone()?;
                 needle.read_data(&mut data_file, nv.offset, nv.size, version)?;
 
                 if needle.has_ttl() && needle.has_last_modified_date() {
@@ -376,19 +388,19 @@ impl Volume {
     }
 
     pub fn size(&self) -> Result<u64> {
-        let file = self.file()?;
+        let file = self.readable_file()?;
         Ok(file.metadata()?.len())
     }
 
-    pub fn file(&self) -> Result<&File> {
-        match self.data_file.as_ref() {
+    pub fn readable_file(&self) -> Result<&File> {
+        match self.readable_file.as_ref() {
             Some(data_file) => Ok(data_file),
             None => Err(anyhow!("volume {} not load", self.id)),
         }
     }
 
-    pub fn file_mut(&mut self) -> Result<&mut File> {
-        match self.data_file.as_mut() {
+    pub fn writable_file(&self) -> Result<&Mutex<File>> {
+        match self.writable_file.as_ref() {
             Some(data_file) => Ok(data_file),
             None => Err(anyhow!("volume {} not load", self.id)),
         }
@@ -453,84 +465,11 @@ impl Volume {
 
         false
     }
-
-    // vacuum
-    pub fn garbage_level(&self) -> f64 {
-        if self.content_size() == 0 {
-            return 0.0;
-        }
-        self.deleted_bytes() as f64 / self.content_size() as f64
-    }
-
-    pub fn compact(&mut self) -> Result<()> {
-        let filename = self.filename();
-        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
-        self.last_compact_revision = self.super_block.compact_revision;
-        self.readonly = true;
-        self.copy_data_and_generate_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
-        info!("compact {filename} success");
-        Ok(())
-    }
-
-    pub fn compact2(&mut self) -> Result<()> {
-        let filename = self.filename();
-        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
-        self.last_compact_revision = self.super_block.compact_revision;
-        self.readonly = true;
-        self.copy_data_based_on_index_file(
-            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
-            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
-        info!("compact {filename} success");
-        Ok(())
-    }
-
-    pub fn commit_compact(&mut self) -> Result<()> {
-        let filename = self.filename();
-        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
-        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
-        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
-        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
-        info!("starting to commit compaction, filename: {compact_data_filename}");
-        match self.makeup_diff(
-            &compact_data_filename,
-            &compact_index_filename,
-            &data_filename,
-            &index_filename,
-        ) {
-            Ok(()) => {
-                fs::rename(&compact_data_filename, data_filename)?;
-                fs::rename(compact_index_filename, index_filename)?;
-                info!(
-                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
-                );
-            }
-            Err(err) => {
-                error!("makeup diff in commit compaction failed, {err}");
-                fs::remove_file(compact_data_filename)?;
-                fs::remove_file(compact_index_filename)?;
-            }
-        }
-        self.data_file = None;
-        self.readonly = false;
-        self.load(false, true)
-    }
-
-    pub fn cleanup_compact(&self) -> Result<()> {
-        let filename = self.filename();
-        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
-        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
-        info!("cleanup compaction success, filename: {filename}");
-        Ok(())
-    }
 }
 
 impl Volume {
     fn write_super_block(&mut self) -> Result<()> {
-        let mut file = self.file()?;
+        let mut file = self.readable_file()?;
         let meta = file.metadata()?;
 
         if meta.len() != 0 {
@@ -546,7 +485,7 @@ impl Volume {
     fn read_super_block(&mut self) -> Result<()> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let file = self.file_mut()?;
+            let mut file = self.readable_file()?;
             file.seek(SeekFrom::Start(0))?;
             file.read_exact(&mut buf)?;
         }
@@ -592,16 +531,14 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u32;
 
-    let (mut needle, mut rest) = read_needle_header(volume.file()?, version, offset)?;
+    let volume_file = volume.readable_file()?;
+    let (mut needle, mut rest) = read_needle_header(volume_file, version, offset)?;
 
     loop {
         if read_needle_body {
-            if let Err(err) = needle.read_needle_body(
-                volume.file_mut()?,
-                offset + NEEDLE_HEADER_SIZE,
-                rest,
-                version,
-            ) {
+            if let Err(err) =
+                needle.read_needle_body(volume_file, offset + NEEDLE_HEADER_SIZE, rest, version)
+            {
                 error!("cannot read needle body when scanning volume file, {err}");
             }
         }
@@ -609,7 +546,7 @@ where
         visit_needle(&mut needle, offset)?;
         offset += NEEDLE_HEADER_SIZE + rest;
 
-        match read_needle_header(volume.file()?, version, offset) {
+        match read_needle_header(volume_file, version, offset) {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;
@@ -628,7 +565,6 @@ where
 }
 
 // volume checking start
-
 pub fn verify_index_file_integrity(index_file: &File) -> Result<u64> {
     let meta = index_file.metadata()?;
     let size = meta.len();
@@ -653,7 +589,8 @@ pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Re
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.file_mut()?, version, key, offset, size)
+    let mut file = volume.readable_file()?.try_clone()?;
+    verify_needle_integrity(&mut file, version, key, offset, size)
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>> {
@@ -716,7 +653,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(needle).unwrap();
+        volume.write_needle(&mut needle).unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)

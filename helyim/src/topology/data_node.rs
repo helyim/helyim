@@ -160,7 +160,9 @@ impl DataNode {
     fn grpc_addr(&self) -> String {
         format!("http://{}:{}", self.ip, self.port + 1)
     }
+}
 
+impl DataNode {
     pub async fn allocate_volume(
         &mut self,
         request: AllocateVolumeRequest,

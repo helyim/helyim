@@ -86,6 +86,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     Ok(Json(stat))
 }
 
+#[axum_macros::debug_handler]
 pub async fn fallback_handler(
     State(ctx): State<StorageContext>,
     extractor: StorageExtractor,
@@ -188,7 +189,12 @@ async fn replicate_delete(
         ctx.store.read().await.ip,
         ctx.store.read().await.port
     );
-    let size = ctx.store.write().await.delete_volume_needle(vid, needle)?;
+    let size = ctx
+        .store
+        .write()
+        .await
+        .delete_volume_needle(vid, needle)
+        .await?;
     if is_replicate {
         return Ok(size);
     }
@@ -239,7 +245,15 @@ pub async fn post_handler(
         bincode::deserialize(&extractor.body)?
     };
 
-    needle = replicate_write(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
+    replicate_write(
+        &mut ctx,
+        extractor.uri.path(),
+        vid,
+        &mut needle,
+        is_replicate,
+    )
+    .await?;
+
     let mut upload = Upload {
         size: needle.data_size(),
         ..Default::default()
@@ -256,22 +270,27 @@ async fn replicate_write(
     ctx: &mut StorageContext,
     path: &str,
     vid: VolumeId,
-    mut needle: Needle,
+    needle: &mut Needle,
     is_replicate: bool,
-) -> Result<Needle> {
+) -> Result<()> {
     let local_url = format!(
         "{}:{}",
         ctx.store.read().await.ip,
         ctx.store.read().await.port
     );
-    needle = ctx.store.write().await.write_volume_needle(vid, needle)?;
+
+    ctx.store
+        .write()
+        .await
+        .write_volume_needle(vid, needle)
+        .await?;
     if is_replicate {
-        return Ok(needle);
+        return Ok(());
     }
 
     if let Some(volume) = ctx.store.read().await.find_volume(vid) {
         if !volume.need_to_replicate() {
-            return Ok(needle);
+            return Ok(());
         }
     }
 
@@ -301,7 +320,7 @@ async fn replicate_write(
         }
     }
 
-    Ok(needle)
+    Ok(())
 }
 
 async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle> {

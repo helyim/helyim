@@ -11,7 +11,7 @@ use crate::{
 
 type Visit = Box<dyn FnMut(&NeedleId, &NeedleValue) -> Result<()>>;
 
-pub trait NeedleValueMap: Send {
+pub trait NeedleValueMap: Send + Sync {
     fn set(&mut self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue>;
     fn delete(&mut self, key: NeedleId) -> Option<NeedleValue>;
     fn get(&self, key: NeedleId) -> Option<NeedleValue>;

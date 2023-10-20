@@ -19,7 +19,7 @@ use crate::{
 pub struct Rack {
     pub id: FastStr,
     #[serde(skip)]
-    nodes: Arc<DashMap<FastStr, Arc<RwLock<DataNode>>>>,
+    pub nodes: Arc<DashMap<FastStr, Arc<RwLock<DataNode>>>>,
     max_volume_id: AtomicU32,
     #[serde(skip)]
     pub data_center: Weak<DataCenter>,
@@ -37,9 +37,6 @@ impl Rack {
 
     pub fn set_data_center(&mut self, data_center: Weak<DataCenter>) {
         self.data_center = data_center;
-    }
-    pub fn data_nodes(&self) -> Arc<DashMap<FastStr, Arc<RwLock<DataNode>>>> {
-        self.nodes.clone()
     }
 
     pub fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
