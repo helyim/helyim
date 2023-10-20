@@ -87,8 +87,8 @@ pub async fn assign_handler(
     let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
-        url: node.url().await?,
-        public_url: node.public_url().await?,
+        url: node.read().await.url(),
+        public_url: node.read().await.public_url.clone(),
         count,
         error: String::default(),
     };

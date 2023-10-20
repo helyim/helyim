@@ -1,8 +1,14 @@
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Weak,
+    },
+};
 
+use async_lock::RwLock;
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use helyim_proto::{
     volume_server_client::VolumeServerClient, AllocateVolumeRequest, AllocateVolumeResponse,
     VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
@@ -15,22 +21,22 @@ use tonic::transport::Channel;
 use crate::{
     errors::Result,
     storage::{VolumeId, VolumeInfo},
-    topology::RackEventTx,
+    topology::Rack,
 };
 
 #[derive(Debug, Serialize)]
 pub struct DataNode {
-    id: FastStr,
-    ip: FastStr,
-    port: u16,
-    public_url: FastStr,
+    pub id: FastStr,
+    pub ip: FastStr,
+    pub port: u16,
+    pub public_url: FastStr,
     last_seen: i64,
     #[serde(skip)]
-    rack: Option<RackEventTx>,
+    pub rack: Weak<RwLock<Rack>>,
     #[serde(skip)]
     volumes: DashMap<VolumeId, VolumeInfo>,
     max_volumes: i64,
-    max_volume_id: VolumeId,
+    max_volume_id: AtomicU32,
     #[serde(skip)]
     client: Option<VolumeServerClient<Channel>>,
 }
@@ -43,7 +49,6 @@ impl std::fmt::Display for DataNode {
     }
 }
 
-#[event_fn]
 impl DataNode {
     pub fn new(
         id: FastStr,
@@ -58,12 +63,16 @@ impl DataNode {
             port,
             public_url,
             last_seen: 0,
-            rack: None,
+            rack: Weak::new(),
             volumes: DashMap::new(),
             max_volumes,
-            max_volume_id: 0,
+            max_volume_id: AtomicU32::new(0),
             client: None,
         }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://{}:{}", self.ip, self.port)
     }
 
     pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
@@ -84,42 +93,22 @@ impl DataNode {
         self.max_volumes() - self.has_volumes()
     }
 
-    pub async fn rack_id(&self) -> Result<FastStr> {
-        match self.rack.as_ref() {
-            Some(rack) => rack.id().await,
-            None => Ok(FastStr::empty()),
+    pub async fn rack_id(&self) -> FastStr {
+        match self.rack.upgrade() {
+            Some(rack) => rack.read().await.id.clone(),
+            None => FastStr::empty(),
         }
     }
 
-    pub fn public_url(&self) -> FastStr {
-        self.public_url.clone()
-    }
-
-    pub fn id(&self) -> FastStr {
-        self.id.clone()
-    }
-
-    pub fn ip(&self) -> FastStr {
-        self.ip.clone()
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    pub async fn data_center_id(&self) -> Result<FastStr> {
-        match self.rack.as_ref() {
-            Some(rack) => rack.data_center_id().await,
-            None => Ok(FastStr::empty()),
+    pub async fn data_center_id(&self) -> FastStr {
+        match self.rack.upgrade() {
+            Some(rack) => rack.read().await.data_center_id(),
+            None => FastStr::empty(),
         }
     }
 
     pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
         self.volumes.get(&vid).map(|v| v.value().clone())
-    }
-
-    pub fn set_rack(&mut self, rack: RackEventTx) {
-        self.rack = Some(rack);
     }
 
     pub async fn update_volumes(
@@ -154,13 +143,15 @@ impl DataNode {
         Ok(deleted)
     }
 
-    async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
-        if vid > self.max_volume_id {
-            self.max_volume_id = vid;
+    async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+        if vid > self.max_volume_id.load(Ordering::Relaxed) {
+            self.max_volume_id.store(vid, Ordering::Relaxed);
         }
 
-        if let Some(rack) = self.rack.as_ref() {
-            rack.adjust_max_volume_id(self.max_volume_id).await?;
+        if let Some(rack) = self.rack.upgrade() {
+            rack.read()
+                .await
+                .adjust_max_volume_id(self.max_volume_id.load(Ordering::Relaxed))?;
         }
 
         Ok(())
@@ -223,15 +214,5 @@ impl DataNode {
             .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
         let response = client.vacuum_volume_cleanup(request).await?;
         Ok(response.into_inner())
-    }
-}
-
-impl DataNodeEventTx {
-    pub async fn url(&self) -> Result<String> {
-        Ok(format!(
-            "http://{}:{}",
-            self.ip().await?,
-            self.port().await?
-        ))
     }
 }

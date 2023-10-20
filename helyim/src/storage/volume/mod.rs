@@ -117,7 +117,6 @@ impl Display for Volume {
     }
 }
 
-// #[event_fn]
 impl Volume {
     pub fn new(
         dir: FastStr,

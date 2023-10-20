@@ -4,8 +4,10 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
+    sync::Arc,
 };
 
+use async_lock::RwLock;
 use bytes::BufMut;
 use helyim_proto::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
@@ -24,7 +26,7 @@ use crate::{
         },
         Needle, NeedleMapper, NeedleValue, VolumeId,
     },
-    topology::{volume_layout::VolumeLayout, DataNodeEventTx},
+    topology::{volume_layout::VolumeLayout, DataNode},
     util::time::now,
 };
 
@@ -273,13 +275,18 @@ fn fetch_compact_revision_from_data_file(file: &mut File) -> Result<u16> {
 
 pub async fn batch_vacuum_volume_check(
     volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
+    data_nodes: &[Arc<RwLock<DataNode>>],
     garbage_ratio: f64,
 ) -> Result<bool> {
     let mut check_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
-        match data_node_tx.vacuum_volume_check(request).await {
+        match data_node_tx
+            .write()
+            .await
+            .vacuum_volume_check(request)
+            .await
+        {
             Ok(response) => {
                 info!("check volume {volume_id} success.");
                 check_success = response.garbage_ratio > garbage_ratio;
@@ -296,7 +303,7 @@ pub async fn batch_vacuum_volume_check(
 pub async fn batch_vacuum_volume_compact(
     volume_layout: &VolumeLayout,
     volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
+    data_nodes: &[Arc<RwLock<DataNode>>],
     preallocate: u64,
 ) -> Result<bool> {
     volume_layout.remove_from_writable(volume_id);
@@ -306,7 +313,12 @@ pub async fn batch_vacuum_volume_compact(
             volume_id,
             preallocate,
         };
-        match data_node_tx.vacuum_volume_compact(request).await {
+        match data_node_tx
+            .write()
+            .await
+            .vacuum_volume_compact(request)
+            .await
+        {
             Ok(_) => {
                 info!("compact volume {volume_id} success.");
                 compact_success = true;
@@ -323,12 +335,17 @@ pub async fn batch_vacuum_volume_compact(
 pub async fn batch_vacuum_volume_commit(
     volume_layout: &VolumeLayout,
     volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
+    data_nodes: &[Arc<RwLock<DataNode>>],
 ) -> Result<bool> {
     let mut commit_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
-        match data_node_tx.vacuum_volume_commit(request).await {
+        match data_node_tx
+            .write()
+            .await
+            .vacuum_volume_commit(request)
+            .await
+        {
             Ok(response) => {
                 if response.is_read_only {
                     warn!("volume {volume_id} is read only, will not commit it.");
@@ -353,12 +370,17 @@ pub async fn batch_vacuum_volume_commit(
 #[allow(dead_code)]
 async fn batch_vacuum_volume_cleanup(
     volume_id: VolumeId,
-    data_nodes: &[DataNodeEventTx],
+    data_nodes: &[Arc<RwLock<DataNode>>],
 ) -> Result<bool> {
     let mut cleanup_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };
-        match data_node_tx.vacuum_volume_cleanup(request).await {
+        match data_node_tx
+            .write()
+            .await
+            .vacuum_volume_cleanup(request)
+            .await
+        {
             Ok(_) => {
                 info!("cleanup volume {volume_id} success.");
                 cleanup_success = true;

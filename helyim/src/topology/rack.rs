@@ -3,52 +3,42 @@ use std::sync::{
     Arc, Weak,
 };
 
+use async_lock::RwLock;
 use dashmap::DashMap;
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
-use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 
 use crate::{
     errors::{Error, Result},
-    rt_spawn,
     storage::VolumeId,
-    topology::{data_node_loop, DataCenter, DataNode, DataNodeEventTx},
+    topology::{DataCenter, DataNode},
 };
 
 #[derive(Debug, Serialize)]
 pub struct Rack {
-    id: FastStr,
+    pub id: FastStr,
     #[serde(skip)]
-    nodes: Arc<DashMap<FastStr, DataNodeEventTx>>,
+    nodes: Arc<DashMap<FastStr, Arc<RwLock<DataNode>>>>,
     max_volume_id: AtomicU32,
     #[serde(skip)]
     pub data_center: Weak<DataCenter>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
 }
 
-#[event_fn]
 impl Rack {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
+    pub fn new(id: FastStr) -> Rack {
         Rack {
             id,
             nodes: Arc::new(DashMap::new()),
             max_volume_id: AtomicU32::new(0),
             data_center: Weak::new(),
-            shutdown,
         }
-    }
-
-    pub fn id(&self) -> FastStr {
-        self.id.clone()
     }
 
     pub fn set_data_center(&mut self, data_center: Weak<DataCenter>) {
         self.data_center = data_center;
     }
-    pub fn data_nodes(&self) -> Arc<DashMap<FastStr, DataNodeEventTx>> {
+    pub fn data_nodes(&self) -> Arc<DashMap<FastStr, Arc<RwLock<DataNode>>>> {
         self.nodes.clone()
     }
 
@@ -71,14 +61,17 @@ impl Rack {
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-    ) -> DataNodeEventTx {
+    ) -> Arc<RwLock<DataNode>> {
         self.nodes
             .entry(id.clone())
             .or_insert_with(|| {
-                let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
-                let (tx, rx) = unbounded();
-                rt_spawn(data_node_loop(data_node, rx, self.shutdown.clone()));
-                DataNodeEventTx::new(tx)
+                Arc::new(RwLock::new(DataNode::new(
+                    id,
+                    ip,
+                    port,
+                    public_url,
+                    max_volumes,
+                )))
             })
             .clone()
     }
@@ -93,7 +86,7 @@ impl Rack {
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut count = 0;
         for dn_tx in self.nodes.iter() {
-            count += dn_tx.has_volumes().await?;
+            count += dn_tx.read().await.has_volumes();
         }
         Ok(count)
     }
@@ -101,7 +94,7 @@ impl Rack {
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
         for dn_tx in self.nodes.iter() {
-            max_volumes += dn_tx.max_volumes().await?;
+            max_volumes += dn_tx.read().await.max_volumes();
         }
         Ok(max_volumes)
     }
@@ -109,22 +102,22 @@ impl Rack {
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
         for dn_tx in self.nodes.iter() {
-            free_volumes += dn_tx.free_volumes().await?;
+            free_volumes += dn_tx.read().await.free_volumes();
         }
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
+    pub async fn reserve_one_volume(&self) -> Result<Arc<RwLock<DataNode>>> {
         // randomly select
         let mut free_volumes = 0;
         for dn_tx in self.nodes.iter() {
-            free_volumes += dn_tx.free_volumes().await?;
+            free_volumes += dn_tx.read().await.free_volumes();
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
         for dn_tx in self.nodes.iter() {
-            free_volumes -= dn_tx.free_volumes().await?;
+            free_volumes -= dn_tx.read().await.free_volumes();
             if free_volumes == idx {
                 return Ok(dn_tx.clone());
             }

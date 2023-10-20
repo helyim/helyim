@@ -62,7 +62,6 @@ impl DirectoryServer {
             sequencer,
             volume_size_limit_mb * 1024 * 1024,
             pulse_seconds,
-            shutdown_rx.clone(),
         ));
 
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
@@ -242,10 +241,10 @@ impl Helyim for DirectoryGrpcServer {
             let mut locations = vec![];
             if let Some(nodes) = self.topology.lookup(collection.clone(), volume_id) {
                 for dn in nodes.iter() {
-                    let public_url = dn.public_url().await?;
+                    let public_url = dn.read().await.public_url.to_string();
                     locations.push(Location {
-                        url: dn.url().await?,
-                        public_url: public_url.to_string(),
+                        url: dn.read().await.url(),
+                        public_url,
                     });
                 }
             }
@@ -285,19 +284,19 @@ async fn handle_heartbeat(
 
     let data_center = topology.get_or_create_data_center(data_center);
     let rack = data_center.get_or_create_rack(rack);
-    rack.set_data_center(Arc::downgrade(&data_center))?;
+    rack.write()
+        .await
+        .set_data_center(Arc::downgrade(&data_center));
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
-    let node = rack
-        .get_or_create_data_node(
-            FastStr::new(node_addr),
-            FastStr::new(ip),
-            heartbeat.port as u16,
-            FastStr::new(heartbeat.public_url),
-            heartbeat.max_volume_count as i64,
-        )
-        .await?;
-    node.set_rack(rack)?;
+    let node = rack.read().await.get_or_create_data_node(
+        FastStr::new(node_addr),
+        FastStr::new(ip),
+        heartbeat.port as u16,
+        FastStr::new(heartbeat.public_url),
+        heartbeat.max_volume_count as i64,
+    );
+    node.write().await.rack = Arc::downgrade(&rack);
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {
@@ -307,7 +306,7 @@ async fn handle_heartbeat(
         };
     }
 
-    let deleted_volumes = node.update_volumes(infos.clone()).await?;
+    let deleted_volumes = node.write().await.update_volumes(infos.clone()).await?;
 
     for v in infos {
         topology.register_volume_layout(v, node.clone()).await?;

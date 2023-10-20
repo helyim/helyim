@@ -36,7 +36,6 @@ impl Looker {
     }
 }
 
-// #[event_fn]
 impl Looker {
     pub async fn lookup(
         &self,

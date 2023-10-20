@@ -20,23 +20,17 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: DashMap<VolumeId, Volume>,
-    pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for DiskLocation {}
 unsafe impl Sync for DiskLocation {}
 
 impl DiskLocation {
-    pub fn new(
-        dir: &str,
-        max_volume_count: i64,
-        shutdown_rx: async_broadcast::Receiver<()>,
-    ) -> DiskLocation {
+    pub fn new(dir: &str, max_volume_count: i64) -> DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: DashMap::new(),
-            shutdown: shutdown_rx,
         }
     }
 

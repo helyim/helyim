@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use async_lock::RwLock;
 use dashmap::{mapref::one::RefMut, DashMap};
 use faststr::FastStr;
 use serde::Serialize;
@@ -12,9 +13,7 @@ use crate::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
         VolumeId, VolumeInfo,
     },
-    topology::{
-        collection::Collection, volume_grow::VolumeGrowOption, DataCenter, DataNodeEventTx,
-    },
+    topology::{collection::Collection, volume_grow::VolumeGrowOption, DataCenter, DataNode},
 };
 
 #[derive(Serialize)]
@@ -27,8 +26,6 @@ pub struct Topology {
     volume_size_limit: u64,
     #[serde(skip)]
     pub data_centers: Arc<DashMap<FastStr, Arc<DataCenter>>>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for Topology {}
@@ -41,36 +38,33 @@ impl Clone for Topology {
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: Arc::new(DashMap::new()),
-            shutdown: self.shutdown.clone(),
         }
     }
 }
 
 impl Topology {
-    pub fn new(
-        sequencer: Sequencer,
-        volume_size_limit: u64,
-        pulse: u64,
-        shutdown: async_broadcast::Receiver<()>,
-    ) -> Topology {
+    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
         Topology {
             sequencer,
             collections: Arc::new(DashMap::new()),
             pulse,
             volume_size_limit,
             data_centers: Arc::new(DashMap::new()),
-            shutdown,
         }
     }
 
     pub fn get_or_create_data_center(&self, name: FastStr) -> Arc<DataCenter> {
         self.data_centers
             .entry(name.clone())
-            .or_insert_with(|| Arc::new(DataCenter::new(name, self.shutdown.clone())))
+            .or_insert_with(|| Arc::new(DataCenter::new(name)))
             .clone()
     }
 
-    pub fn lookup(&self, collection: FastStr, volume_id: VolumeId) -> Option<Vec<DataNodeEventTx>> {
+    pub fn lookup(
+        &self,
+        collection: FastStr,
+        volume_id: VolumeId,
+    ) -> Option<Vec<Arc<RwLock<DataNode>>>> {
         if collection.is_empty() {
             for c in self.collections.iter() {
                 let data_node = c.lookup(volume_id);
@@ -106,7 +100,7 @@ impl Topology {
         &self,
         count: u64,
         option: VolumeGrowOption,
-    ) -> Result<(FileId, u64, DataNodeEventTx)> {
+    ) -> Result<(FileId, u64, Arc<RwLock<DataNode>>)> {
         let (volume_id, nodes) = {
             let collection = self.get_collection(option.collection.clone());
             let layout =
@@ -127,7 +121,7 @@ impl Topology {
     pub async fn register_volume_layout(
         &self,
         volume: VolumeInfo,
-        data_node: DataNodeEventTx,
+        data_node: Arc<RwLock<DataNode>>,
     ) -> Result<()> {
         let collection = self.get_collection(volume.collection.clone());
         let mut layout =
