@@ -85,24 +85,24 @@ impl Rack {
 
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut count = 0;
-        for dn_tx in self.nodes.iter() {
-            count += dn_tx.read().await.has_volumes();
+        for data_node in self.nodes.iter() {
+            count += data_node.read().await.has_volumes();
         }
         Ok(count)
     }
 
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
-        for dn_tx in self.nodes.iter() {
-            max_volumes += dn_tx.read().await.max_volumes();
+        for data_node in self.nodes.iter() {
+            max_volumes += data_node.read().await.max_volumes();
         }
         Ok(max_volumes)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for dn_tx in self.nodes.iter() {
-            free_volumes += dn_tx.read().await.free_volumes();
+        for data_node in self.nodes.iter() {
+            free_volumes += data_node.read().await.free_volumes();
         }
         Ok(free_volumes)
     }
@@ -110,16 +110,16 @@ impl Rack {
     pub async fn reserve_one_volume(&self) -> Result<Arc<RwLock<DataNode>>> {
         // randomly select
         let mut free_volumes = 0;
-        for dn_tx in self.nodes.iter() {
-            free_volumes += dn_tx.read().await.free_volumes();
+        for data_node in self.nodes.iter() {
+            free_volumes += data_node.read().await.free_volumes();
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
-        for dn_tx in self.nodes.iter() {
-            free_volumes -= dn_tx.read().await.free_volumes();
+        for data_node in self.nodes.iter() {
+            free_volumes -= data_node.read().await.free_volumes();
             if free_volumes == idx {
-                return Ok(dn_tx.clone());
+                return Ok(data_node.clone());
             }
         }
 

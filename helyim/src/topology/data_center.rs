@@ -55,24 +55,24 @@ impl DataCenter {
 
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack_tx in self.racks.iter() {
-            ret += rack_tx.read().await.has_volumes().await?;
+        for rack in self.racks.iter() {
+            ret += rack.read().await.has_volumes().await?;
         }
         Ok(ret)
     }
 
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack_tx in self.racks.iter() {
-            ret += rack_tx.read().await.max_volumes().await?;
+        for rack in self.racks.iter() {
+            ret += rack.read().await.max_volumes().await?;
         }
         Ok(ret)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for rack_tx in self.racks.iter() {
-            free_volumes += rack_tx.read().await.free_volumes().await?;
+        for rack in self.racks.iter() {
+            free_volumes += rack.read().await.free_volumes().await?;
         }
         Ok(free_volumes)
     }

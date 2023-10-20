@@ -45,27 +45,27 @@ impl VolumeGrowth {
         let rp = option.replica_placement;
         let mut valid_main_counts = 0;
         // find main data center
-        for dc_tx in data_centers.iter() {
-            if !option.data_center.is_empty() && dc_tx.id != option.data_center {
+        for data_center in data_centers.iter() {
+            if !option.data_center.is_empty() && data_center.id != option.data_center {
                 continue;
             }
 
-            let racks = dc_tx.racks();
+            let racks = data_center.racks();
 
             if racks.len() < rp.diff_rack_count as usize + 1 {
                 continue;
             }
 
-            if dc_tx.free_volumes().await?
+            if data_center.free_volumes().await?
                 < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
             {
                 continue;
             }
 
             let mut possible_racks_count = 0;
-            for rack_tx in racks.iter() {
+            for rack in racks.iter() {
                 let mut possible_nodes_count = 0;
-                for dn in rack_tx.read().await.data_nodes().iter() {
+                for dn in rack.read().await.data_nodes().iter() {
                     if dn.read().await.free_volumes() >= 1 {
                         possible_nodes_count += 1;
                     }
@@ -82,23 +82,23 @@ impl VolumeGrowth {
 
             valid_main_counts += 1;
             if random::<u32>() % valid_main_counts == 0 {
-                main_dc = Some(dc_tx.clone());
+                main_dc = Some(data_center.clone());
             }
         }
 
         if main_dc.is_none() {
             return Err(Error::NoFreeSpace("find main dc fail".to_string()));
         }
-        let main_dc_tx = main_dc.unwrap();
+        let main_data_center = main_dc.unwrap();
 
         if rp.diff_data_center_count > 0 {
             for entry in data_centers.iter() {
                 let dc_id = entry.key();
-                let dc_tx = entry.value();
-                if *dc_id == main_dc_tx.id || dc_tx.free_volumes().await? < 1 {
+                let data_center = entry.value();
+                if *dc_id == main_data_center.id || data_center.free_volumes().await? < 1 {
                     continue;
                 }
-                other_centers.push(dc_tx.clone());
+                other_centers.push(data_center.clone());
             }
         }
         if other_centers.len() < rp.diff_data_center_count as usize {
@@ -115,16 +115,16 @@ impl VolumeGrowth {
 
         // find main rack
         let mut valid_rack_count = 0;
-        for rack_tx in main_dc_tx.racks().iter() {
-            if !option.rack.is_empty() && option.rack != rack_tx.read().await.id {
+        for rack in main_data_center.racks().iter() {
+            if !option.rack.is_empty() && option.rack != rack.read().await.id {
                 continue;
             }
 
-            if rack_tx.read().await.free_volumes().await? < rp.same_rack_count as i64 + 1 {
+            if rack.read().await.free_volumes().await? < rp.same_rack_count as i64 + 1 {
                 continue;
             }
 
-            let data_nodes = rack_tx.read().await.data_nodes();
+            let data_nodes = rack.read().await.data_nodes();
 
             if data_nodes.len() < rp.same_rack_count as usize + 1 {
                 continue;
@@ -145,7 +145,7 @@ impl VolumeGrowth {
             valid_rack_count += 1;
 
             if random::<u32>() % valid_rack_count == 0 {
-                main_rack = Some(rack_tx.clone());
+                main_rack = Some(rack.clone());
             }
         }
 
@@ -153,18 +153,18 @@ impl VolumeGrowth {
             return Err(Error::NoFreeSpace("find main rack fail".to_string()));
         }
 
-        let main_rack_tx = main_rack.unwrap();
+        let main_rack = main_rack.unwrap();
 
         if rp.diff_rack_count > 0 {
-            for rack in main_dc_tx.racks().iter() {
+            for rack in main_data_center.racks().iter() {
                 let rack_id = rack.key();
-                let rack_tx = rack.value();
-                if *rack_id == main_rack_tx.read().await.id
-                    || rack_tx.read().await.free_volumes().await? < 1
+                let rack = rack.value();
+                if *rack_id == main_rack.read().await.id
+                    || rack.read().await.free_volumes().await? < 1
                 {
                     continue;
                 }
-                other_racks.push(rack_tx.clone());
+                other_racks.push(rack.clone());
             }
         }
 
@@ -179,7 +179,7 @@ impl VolumeGrowth {
 
         // find main node
         let mut valid_node = 0;
-        for entry in main_rack_tx.read().await.data_nodes().iter() {
+        for entry in main_rack.read().await.data_nodes().iter() {
             let node_id = entry.key();
             let node = entry.value();
 
@@ -199,14 +199,16 @@ impl VolumeGrowth {
         if main_dn.is_none() {
             return Err(Error::NoFreeSpace("find main node fail".to_string()));
         }
-        let main_dn_tx = main_dn.unwrap().clone();
+        let main_data_node = main_dn.unwrap().clone();
 
         if rp.same_rack_count > 0 {
-            for entry in main_rack_tx.read().await.data_nodes().iter() {
+            for entry in main_rack.read().await.data_nodes().iter() {
                 let node_id = entry.key();
                 let node = entry.value();
 
-                if *node_id == main_dn_tx.read().await.id || node.read().await.free_volumes() < 1 {
+                if *node_id == main_data_node.read().await.id
+                    || node.read().await.free_volumes() < 1
+                {
                     continue;
                 }
                 other_nodes.push(node.clone());
@@ -221,7 +223,7 @@ impl VolumeGrowth {
         other_nodes = tmp_nodes;
 
         let mut ret = vec![];
-        ret.push(main_dn_tx.clone());
+        ret.push(main_data_node.clone());
 
         for nd in other_nodes {
             ret.push(nd.clone());

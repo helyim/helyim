@@ -90,8 +90,8 @@ impl Topology {
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for dc_tx in self.data_centers.iter() {
-            free += dc_tx.max_volumes().await? - dc_tx.has_volumes().await?;
+        for data_center in self.data_centers.iter() {
+            free += data_center.max_volumes().await? - data_center.has_volumes().await?;
         }
         Ok(free)
     }
