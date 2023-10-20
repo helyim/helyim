@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
-use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
-use tokio::task::JoinHandle;
 
 use crate::{
     errors::{Error, Result},
@@ -16,56 +18,48 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct DataCenter {
-    id: FastStr,
-    max_volume_id: VolumeId,
+    pub id: FastStr,
+    max_volume_id: AtomicU32,
     #[serde(skip)]
-    racks: HashMap<FastStr, RackEventTx>,
-    #[serde(skip)]
-    handles: Vec<JoinHandle<()>>,
+    pub racks: Arc<DashMap<FastStr, RackEventTx>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
 
-#[event_fn]
 impl DataCenter {
     pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> DataCenter {
         DataCenter {
             id,
-            racks: HashMap::new(),
-            max_volume_id: 0,
-            handles: Vec::new(),
+            racks: Arc::new(DashMap::new()),
+            max_volume_id: AtomicU32::new(0),
             shutdown,
         }
     }
-    pub fn id(&self) -> FastStr {
-        self.id.clone()
-    }
 
     pub fn max_volume_id(&self) -> VolumeId {
-        self.max_volume_id
+        self.max_volume_id.load(Ordering::Relaxed)
     }
 
-    pub fn racks(&self) -> HashMap<FastStr, RackEventTx> {
+    pub fn racks(&self) -> Arc<DashMap<FastStr, RackEventTx>> {
         self.racks.clone()
     }
 
-    pub fn adjust_max_volume_id(&mut self, vid: VolumeId) {
-        if vid > self.max_volume_id {
-            self.max_volume_id = vid;
+    pub fn adjust_max_volume_id(&self, vid: VolumeId) {
+        if vid > self.max_volume_id.load(Ordering::Relaxed) {
+            self.max_volume_id.store(vid, Ordering::Relaxed);
         }
     }
 
-    pub fn get_or_create_rack(&mut self, id: FastStr) -> RackEventTx {
+    pub fn get_or_create_rack(&self, id: FastStr) -> RackEventTx {
         self.racks
             .entry(id.clone())
             .or_insert_with(|| {
                 let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(rack_loop(
+                rt_spawn(rack_loop(
                     Rack::new(id, self.shutdown.clone()),
                     rx,
                     self.shutdown.clone(),
-                )));
-
+                ));
                 RackEventTx::new(tx)
             })
             .clone()
@@ -73,7 +67,7 @@ impl DataCenter {
 
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack_tx in self.racks.values() {
+        for rack_tx in self.racks.iter() {
             ret += rack_tx.has_volumes().await?;
         }
         Ok(ret)
@@ -81,7 +75,7 @@ impl DataCenter {
 
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut ret = 0;
-        for rack_tx in self.racks.values() {
+        for rack_tx in self.racks.iter() {
             ret += rack_tx.max_volumes().await?;
         }
         Ok(ret)
@@ -89,7 +83,7 @@ impl DataCenter {
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for rack_tx in self.racks.values() {
+        for rack_tx in self.racks.iter() {
             free_volumes += rack_tx.free_volumes().await?;
         }
         Ok(free_volumes)
@@ -98,13 +92,13 @@ impl DataCenter {
     pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
         // randomly select one
         let mut free_volumes = 0;
-        for (_, rack) in self.racks.iter() {
+        for rack in self.racks.iter() {
             free_volumes += rack.free_volumes().await?;
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
-        for (_, rack) in self.racks.iter() {
+        for rack in self.racks.iter() {
             free_volumes -= rack.free_volumes().await?;
             if free_volumes == idx {
                 return rack.reserve_one_volume().await;

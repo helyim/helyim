@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
+use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc};
 
 use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     lookup_volume_response::VolumeLocation,
@@ -22,9 +22,7 @@ use crate::{
     rt_spawn,
     sequence::Sequencer,
     storage::{ReplicaPlacement, VolumeInfo},
-    topology::{
-        topology_loop, topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyEventTx,
-    },
+    topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, Topology},
     util::get_or_default,
     PHRASE, STOP_INTERVAL,
 };
@@ -38,7 +36,7 @@ pub struct DirectoryServer {
     pub volume_size_limit_mb: u64,
     pub pulse_seconds: u64,
     pub garbage_threshold: f64,
-    pub topology: TopologyEventTx,
+    pub topology: Arc<Topology>,
     pub volume_grow: VolumeGrowth,
     handles: Vec<JoinHandle<()>>,
 
@@ -60,15 +58,13 @@ impl DirectoryServer {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         // topology event loop
-        let topology = Topology::new(
+        let topology = Arc::new(Topology::new(
             sequencer,
             volume_size_limit_mb * 1024 * 1024,
             pulse_seconds,
             shutdown_rx.clone(),
-        );
-        let (tx, rx) = unbounded();
-        let topology_handle = rt_spawn(topology_loop(topology, rx, shutdown_rx.clone()));
-        let topology = TopologyEventTx::new(tx);
+        ));
+
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
@@ -88,7 +84,7 @@ impl DirectoryServer {
             volume_grow: VolumeGrowth,
             topology: topology.clone(),
             shutdown,
-            handles: vec![topology_handle, topology_vacuum_handle],
+            handles: vec![topology_vacuum_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1);
@@ -178,7 +174,7 @@ impl DirectoryServer {
 #[derive(Clone)]
 struct DirectoryGrpcServer {
     pub volume_size_limit_mb: u64,
-    pub topology: TopologyEventTx,
+    pub topology: Arc<Topology>,
 }
 
 #[tonic::async_trait]
@@ -244,28 +240,20 @@ impl Helyim for DirectoryGrpcServer {
             })?;
 
             let mut locations = vec![];
-            let mut error = String::default();
-            match self.topology.lookup(collection.clone(), volume_id).await {
-                Ok(Some(nodes)) => {
-                    for dn in nodes.iter() {
-                        let public_url = dn.public_url().await?;
-                        locations.push(Location {
-                            url: dn.url().await?,
-                            public_url: public_url.to_string(),
-                        });
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    error!("lookup volumes error: {err}");
-                    error = err.to_string();
+            if let Some(nodes) = self.topology.lookup(collection.clone(), volume_id) {
+                for dn in nodes.iter() {
+                    let public_url = dn.public_url().await?;
+                    locations.push(Location {
+                        url: dn.url().await?,
+                        public_url: public_url.to_string(),
+                    });
                 }
             }
 
             volume_locations.push(VolumeLocation {
                 volume_id,
                 locations,
-                error,
+                error: String::new(),
             });
         }
 
@@ -282,11 +270,11 @@ impl Helyim for DirectoryGrpcServer {
 
 async fn handle_heartbeat(
     heartbeat: HeartbeatRequest,
-    topology: &TopologyEventTx,
+    topology: &Arc<Topology>,
     volume_size_limit: u64,
     addr: SocketAddr,
 ) -> Result<HeartbeatResponse> {
-    topology.set_max_sequence(heartbeat.max_file_key)?;
+    topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
         ip = addr.ip().to_string();
@@ -295,9 +283,9 @@ async fn handle_heartbeat(
     let data_center = get_or_default(heartbeat.data_center);
     let rack = get_or_default(heartbeat.rack);
 
-    let data_center = topology.get_or_create_data_center(data_center).await?;
-    let rack = data_center.get_or_create_rack(rack).await?;
-    rack.set_data_center(data_center)?;
+    let data_center = topology.get_or_create_data_center(data_center);
+    let rack = data_center.get_or_create_rack(rack);
+    rack.set_data_center(Arc::downgrade(&data_center))?;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
@@ -326,7 +314,7 @@ async fn handle_heartbeat(
     }
 
     for v in deleted_volumes.iter() {
-        topology.unregister_volume_layout(v.clone())?;
+        topology.unregister_volume_layout(v.clone());
     }
 
     Ok(HeartbeatResponse {

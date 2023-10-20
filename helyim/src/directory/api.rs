@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     Json,
@@ -11,13 +13,13 @@ use crate::{
     storage::{ReplicaPlacement, Ttl},
     topology::{
         volume_grow::{VolumeGrowOption, VolumeGrowth},
-        Topology, TopologyEventTx,
+        Topology,
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DirectoryContext {
-    pub topology: TopologyEventTx,
+    pub topology: Arc<Topology>,
     pub volume_grow: VolumeGrowth,
     pub default_replica_placement: ReplicaPlacement,
     pub ip: FastStr,
@@ -94,7 +96,7 @@ pub async fn assign_handler(
 }
 
 pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
-    let topology = ctx.topology.topology().await?;
+    let topology = ctx.topology.topology();
     Ok(Json(topology))
 }
 

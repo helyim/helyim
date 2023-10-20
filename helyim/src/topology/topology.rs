@@ -2,22 +2,18 @@ use std::{sync::Arc, time::Duration};
 
 use dashmap::{mapref::one::RefMut, DashMap};
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
-use helyim_macros::event_fn;
 use serde::Serialize;
 use tracing::{error, info};
 
 use crate::{
     errors::Result,
-    rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
         VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center_loop, volume_grow::VolumeGrowOption, DataCenter,
-        DataCenterEventTx, DataNodeEventTx,
+        collection::Collection, volume_grow::VolumeGrowOption, DataCenter, DataNodeEventTx,
     },
 };
 
@@ -30,7 +26,7 @@ pub struct Topology {
     pulse: u64,
     volume_size_limit: u64,
     #[serde(skip)]
-    data_centers: Arc<DashMap<FastStr, DataCenterEventTx>>,
+    pub data_centers: Arc<DashMap<FastStr, Arc<DataCenter>>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -50,7 +46,6 @@ impl Clone for Topology {
     }
 }
 
-#[event_fn]
 impl Topology {
     pub fn new(
         sequencer: Sequencer,
@@ -68,18 +63,10 @@ impl Topology {
         }
     }
 
-    pub fn get_or_create_data_center(&self, name: FastStr) -> DataCenterEventTx {
+    pub fn get_or_create_data_center(&self, name: FastStr) -> Arc<DataCenter> {
         self.data_centers
             .entry(name.clone())
-            .or_insert_with(|| {
-                let (tx, rx) = unbounded();
-                rt_spawn(data_center_loop(
-                    DataCenter::new(name, self.shutdown.clone()),
-                    rx,
-                    self.shutdown.clone(),
-                ));
-                DataCenterEventTx::new(tx)
-            })
+            .or_insert_with(|| Arc::new(DataCenter::new(name, self.shutdown.clone())))
             .clone()
     }
 
@@ -148,7 +135,7 @@ impl Topology {
         layout.register_volume(&volume, data_node).await
     }
 
-    pub async fn unregister_volume_layout(&self, volume: VolumeInfo) {
+    pub fn unregister_volume_layout(&self, volume: VolumeInfo) {
         let collection = self.get_collection(volume.collection.clone());
         let mut layout =
             collection.get_or_create_volume_layout(volume.replica_placement, Some(volume.ttl));
@@ -165,10 +152,6 @@ impl Topology {
         self.sequencer.set_max(seq);
     }
 
-    pub fn data_centers(&self) -> Arc<DashMap<FastStr, DataCenterEventTx>> {
-        self.data_centers.clone()
-    }
-
     pub fn topology(&self) -> Topology {
         self.clone()
     }
@@ -176,22 +159,31 @@ impl Topology {
     pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
         for entry in self.collections.iter() {
             for volume_layout in entry.volume_layouts.iter() {
-                let location = volume_layout.locations.clone();
-                for (vid, data_nodes) in location {
-                    if volume_layout.readonly_volumes.contains(&vid) {
+                for location in volume_layout.locations.iter() {
+                    if volume_layout.readonly_volumes.contains(location.key()) {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
+                    if batch_vacuum_volume_check(
+                        *location.key(),
+                        location.value(),
+                        garbage_threshold,
+                    )
+                    .await?
                         && batch_vacuum_volume_compact(
                             volume_layout.value(),
-                            vid,
-                            &data_nodes,
+                            *location.key(),
+                            location.value(),
                             preallocate,
                         )
                         .await?
                     {
-                        batch_vacuum_volume_commit(volume_layout.value(), vid, &data_nodes).await?;
+                        batch_vacuum_volume_commit(
+                            volume_layout.value(),
+                            *location.key(),
+                            location.value(),
+                        )
+                        .await?;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
@@ -212,7 +204,7 @@ impl Topology {
     async fn get_max_volume_id(&self) -> Result<VolumeId> {
         let mut vid = 0;
         for entry in self.data_centers.iter() {
-            let other = entry.max_volume_id().await?;
+            let other = entry.max_volume_id();
             if other > vid {
                 vid = other;
             }
@@ -223,7 +215,7 @@ impl Topology {
 }
 
 pub async fn topology_vacuum_loop(
-    topology: TopologyEventTx,
+    topology: Arc<Topology>,
     garbage_threshold: f64,
     preallocate: u64,
     mut shutdown: async_broadcast::Receiver<()>,

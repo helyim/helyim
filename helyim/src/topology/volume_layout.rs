@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::{DashMap, DashSet};
 use rand;
 use serde::Serialize;
@@ -14,11 +16,14 @@ pub struct VolumeLayout {
     ttl: Option<Ttl>,
     volume_size_limit: u64,
 
-    writable_volumes: DashSet<VolumeId>,
-    pub readonly_volumes: DashSet<VolumeId>,
-    oversize_volumes: DashSet<VolumeId>,
     #[serde(skip)]
-    pub locations: DashMap<VolumeId, Vec<DataNodeEventTx>>,
+    writable_volumes: Arc<DashSet<VolumeId>>,
+    #[serde(skip)]
+    pub readonly_volumes: Arc<DashSet<VolumeId>>,
+    #[serde(skip)]
+    oversize_volumes: Arc<DashSet<VolumeId>>,
+    #[serde(skip)]
+    pub locations: Arc<DashMap<VolumeId, Vec<DataNodeEventTx>>>,
 }
 
 impl VolumeLayout {
@@ -27,10 +32,10 @@ impl VolumeLayout {
             rp,
             ttl,
             volume_size_limit,
-            writable_volumes: DashSet::new(),
-            readonly_volumes: DashSet::new(),
-            oversize_volumes: DashSet::new(),
-            locations: DashMap::new(),
+            writable_volumes: Arc::new(DashSet::new()),
+            readonly_volumes: Arc::new(DashSet::new()),
+            oversize_volumes: Arc::new(DashSet::new()),
+            locations: Arc::new(DashMap::new()),
         }
     }
 
