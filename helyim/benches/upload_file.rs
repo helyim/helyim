@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use reqwest::blocking::Client;
+use reqwest::blocking::multipart::Form;
 use serde_json::Value;
 
 fn get_file_id(client: &Client) -> Result<HashMap<String, Value>, Box<dyn std::error::Error>> {
@@ -12,24 +13,23 @@ fn get_file_id(client: &Client) -> Result<HashMap<String, Value>, Box<dyn std::e
     Ok(response)
 }
 
-fn upload(client: &Client, map: HashMap<String, Value>) -> Result<(), Box<dyn std::error::Error>> {
+fn upload(client: &Client, map: &HashMap<String, Value>) -> Result<(), Box<dyn std::error::Error>> {
     if let Value::String(fid) = map.get("fid").unwrap() {
-        let form = reqwest::blocking::multipart::Form::new().file("Cargo.toml", "Cargo.toml")?;
+        let form = Form::new().file("Cargo.toml", "Cargo.toml")?;
         client
             .post(format!("http://localhost:8080/{}", fid))
             .multipart(form)
-            .send()?
-            .json::<HashMap<String, Value>>()?;
+            .send()?;
     }
     Ok(())
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
     let client = Client::new();
+    let params = get_file_id(&client).unwrap();
     c.bench_function("upload", |b| {
         b.iter(|| {
-            let params = get_file_id(&client).unwrap();
-            upload(&client, params).unwrap();
+            upload(&client, &params).unwrap();
         })
     });
 }
