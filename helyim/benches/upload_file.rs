@@ -1,8 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use reqwest::blocking::Client;
-use reqwest::blocking::multipart::Form;
+use reqwest::blocking::{multipart::Form, Client};
 use serde_json::Value;
 
 fn get_file_id(client: &Client) -> Result<HashMap<String, Value>, Box<dyn std::error::Error>> {
