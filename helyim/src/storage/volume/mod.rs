@@ -97,7 +97,7 @@ pub struct Volume {
     writable_file: Option<Mutex<File>>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
-    readonly: bool,
+    pub readonly: bool,
     pub(crate) super_block: SuperBlock,
     last_modified: u64,
     last_compact_index_offset: u64,
@@ -346,10 +346,6 @@ impl Volume {
             delete_bytes: self.needle_mapper.deleted_bytes(),
             read_only: self.readonly,
         }
-    }
-
-    pub fn collection(&self) -> FastStr {
-        self.collection.clone()
     }
 
     pub fn super_block(&self) -> SuperBlock {
@@ -653,7 +649,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(&mut needle).unwrap();
+        volume.write_needle(&mut needle).await.unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)

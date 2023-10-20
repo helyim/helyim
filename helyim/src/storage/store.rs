@@ -110,7 +110,7 @@ impl Store {
     pub async fn write_volume_needle(&mut self, vid: VolumeId, needle: &mut Needle) -> Result<()> {
         match self.find_volume_mut(vid) {
             Some(mut volume) => {
-                if volume.is_readonly() {
+                if volume.readonly {
                     return Err(anyhow!("volume {} is read only", vid));
                 }
 
@@ -231,7 +231,7 @@ impl Store {
                         file_count: volume.file_count(),
                         delete_count: volume.deleted_count(),
                         deleted_bytes: volume.deleted_bytes(),
-                        read_only: volume.is_readonly(),
+                        read_only: volume.readonly,
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.version() as u32,
                         ttl: super_block.ttl.into(),
