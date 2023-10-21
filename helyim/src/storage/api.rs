@@ -73,8 +73,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     let locations = &ctx.store.read().await.locations.clone();
     for location in locations.iter() {
         for entry in location.volumes.iter() {
-            let volume_info = entry.get_volume_info();
-            infos.push(volume_info);
+            infos.push(entry.get_volume_info());
         }
     }
 

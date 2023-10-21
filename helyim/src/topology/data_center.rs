@@ -49,41 +49,41 @@ impl DataCenter {
             .clone()
     }
 
-    pub async fn has_volumes(&self) -> Result<i64> {
+    pub async fn has_volumes(&self) -> i64 {
         let mut ret = 0;
         for rack in self.racks.iter() {
-            ret += rack.read().await.has_volumes().await?;
+            ret += rack.read().await.has_volumes().await;
         }
-        Ok(ret)
+        ret
     }
 
-    pub async fn max_volumes(&self) -> Result<i64> {
+    pub async fn max_volumes(&self) -> i64 {
         let mut ret = 0;
         for rack in self.racks.iter() {
-            ret += rack.read().await.max_volumes().await?;
+            ret += rack.read().await.max_volumes().await;
         }
-        Ok(ret)
+        ret
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.read().await.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await;
         }
-        Ok(free_volumes)
+        free_volumes
     }
 
     pub async fn reserve_one_volume(&self) -> Result<Arc<RwLock<DataNode>>> {
         // randomly select one
         let mut free_volumes = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.read().await.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await;
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
         for rack in self.racks.iter() {
-            free_volumes -= rack.read().await.free_volumes().await?;
+            free_volumes -= rack.read().await.free_volumes().await;
             if free_volumes == idx {
                 return rack.read().await.reserve_one_volume().await;
             }

@@ -56,7 +56,7 @@ impl VolumeGrowth {
                 continue;
             }
 
-            if data_center.free_volumes().await?
+            if data_center.free_volumes().await
                 < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
             {
                 continue;
@@ -95,7 +95,7 @@ impl VolumeGrowth {
             for entry in data_centers.iter() {
                 let dc_id = entry.key();
                 let data_center = entry.value();
-                if *dc_id == main_data_center.id || data_center.free_volumes().await? < 1 {
+                if *dc_id == main_data_center.id || data_center.free_volumes().await < 1 {
                     continue;
                 }
                 other_centers.push(data_center.clone());
@@ -120,7 +120,7 @@ impl VolumeGrowth {
                 continue;
             }
 
-            if rack.read().await.free_volumes().await? < rp.same_rack_count as i64 + 1 {
+            if rack.read().await.free_volumes().await < rp.same_rack_count as i64 + 1 {
                 continue;
             }
 
@@ -160,7 +160,7 @@ impl VolumeGrowth {
                 let rack_id = rack.key();
                 let rack = rack.value();
                 if *rack_id == main_rack.read().await.id
-                    || rack.read().await.free_volumes().await? < 1
+                    || rack.read().await.free_volumes().await < 1
                 {
                     continue;
                 }
@@ -302,7 +302,7 @@ impl VolumeGrowth {
             dn.write()
                 .await
                 .add_or_update_volume(volume_info.clone())
-                .await?;
+                .await;
 
             topology.register_volume_layout(volume_info, dn).await?;
         }

@@ -67,3 +67,6 @@ iouring = ["tokio-uring"]
 [[bench]]
 name = "upload_file"
 harness = false
+
+[profile.release]
+debug = true

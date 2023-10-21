@@ -39,7 +39,7 @@ impl Rack {
         self.data_center = data_center;
     }
 
-    pub fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+    pub fn adjust_max_volume_id(&self, vid: VolumeId) {
         if vid > self.max_volume_id.load(Ordering::Relaxed) {
             self.max_volume_id.store(vid, Ordering::Relaxed);
         }
@@ -47,8 +47,6 @@ impl Rack {
         if let Some(dc) = self.data_center.upgrade() {
             dc.adjust_max_volume_id(self.max_volume_id.load(Ordering::Relaxed));
         }
-
-        Ok(())
     }
 
     pub fn get_or_create_data_node(
@@ -80,28 +78,28 @@ impl Rack {
         }
     }
 
-    pub async fn has_volumes(&self) -> Result<i64> {
+    pub async fn has_volumes(&self) -> i64 {
         let mut count = 0;
         for data_node in self.nodes.iter() {
             count += data_node.read().await.has_volumes();
         }
-        Ok(count)
+        count
     }
 
-    pub async fn max_volumes(&self) -> Result<i64> {
+    pub async fn max_volumes(&self) -> i64 {
         let mut max_volumes = 0;
         for data_node in self.nodes.iter() {
             max_volumes += data_node.read().await.max_volumes();
         }
-        Ok(max_volumes)
+        max_volumes
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for data_node in self.nodes.iter() {
             free_volumes += data_node.read().await.free_volumes();
         }
-        Ok(free_volumes)
+        free_volumes
     }
 
     pub async fn reserve_one_volume(&self) -> Result<Arc<RwLock<DataNode>>> {

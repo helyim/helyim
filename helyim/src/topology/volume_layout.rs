@@ -40,9 +40,9 @@ impl VolumeLayout {
         }
     }
 
-    pub async fn active_volume_count(&self, option: VolumeGrowOption) -> Result<i64> {
+    pub async fn active_volume_count(&self, option: VolumeGrowOption) -> i64 {
         if option.data_center.is_empty() {
-            return Ok(self.writable_volumes.len() as i64);
+            return self.writable_volumes.len() as i64;
         }
         let mut count = 0;
 
@@ -59,7 +59,7 @@ impl VolumeLayout {
             }
         }
 
-        Ok(count)
+        count
     }
 
     pub async fn pick_for_write(

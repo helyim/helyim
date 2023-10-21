@@ -75,10 +75,9 @@ impl DataNode {
         format!("http://{}:{}", self.ip, self.port)
     }
 
-    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
-        self.adjust_max_volume_id(v.id).await?;
+    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) {
+        self.adjust_max_volume_id(v.id).await;
         self.volumes.insert(v.id, v);
-        Ok(())
     }
 
     pub fn has_volumes(&self) -> i64 {
@@ -131,7 +130,7 @@ impl DataNode {
         }
 
         for vi in volume_infos {
-            self.add_or_update_volume(vi).await?;
+            self.add_or_update_volume(vi).await;
         }
 
         for id in deleted_id.iter() {
@@ -143,7 +142,7 @@ impl DataNode {
         Ok(deleted)
     }
 
-    async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+    async fn adjust_max_volume_id(&self, vid: VolumeId) {
         if vid > self.max_volume_id.load(Ordering::Relaxed) {
             self.max_volume_id.store(vid, Ordering::Relaxed);
         }
@@ -151,10 +150,8 @@ impl DataNode {
         if let Some(rack) = self.rack.upgrade() {
             rack.read()
                 .await
-                .adjust_max_volume_id(self.max_volume_id.load(Ordering::Relaxed))?;
+                .adjust_max_volume_id(self.max_volume_id.load(Ordering::Relaxed));
         }
-
-        Ok(())
     }
 
     fn grpc_addr(&self) -> String {

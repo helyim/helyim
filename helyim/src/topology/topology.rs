@@ -78,18 +78,18 @@ impl Topology {
         None
     }
 
-    pub async fn has_writable_volume(&self, option: VolumeGrowOption) -> Result<bool> {
+    pub async fn has_writable_volume(&self, option: VolumeGrowOption) -> bool {
         let collection = self.get_collection(option.collection.clone());
         let vl = collection.get_or_create_volume_layout(option.replica_placement, Some(option.ttl));
-        Ok(vl.active_volume_count(option).await? > 0)
+        vl.active_volume_count(option).await > 0
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free = 0;
         for data_center in self.data_centers.iter() {
-            free += data_center.max_volumes().await? - data_center.has_volumes().await?;
+            free += data_center.max_volumes().await - data_center.has_volumes().await;
         }
-        Ok(free)
+        free
     }
 
     pub async fn pick_for_write(

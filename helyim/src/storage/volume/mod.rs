@@ -92,13 +92,13 @@ impl SuperBlock {
 pub struct Volume {
     id: VolumeId,
     dir: FastStr,
-    pub(crate) collection: FastStr,
+    pub collection: FastStr,
     readable_file: Option<File>,
     writable_file: Option<Mutex<File>>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
     pub readonly: bool,
-    pub(crate) super_block: SuperBlock,
+    pub super_block: SuperBlock,
     last_modified: u64,
     last_compact_index_offset: u64,
     last_compact_revision: u16,
@@ -346,14 +346,6 @@ impl Volume {
             delete_bytes: self.needle_mapper.deleted_bytes(),
             read_only: self.readonly,
         }
-    }
-
-    pub fn super_block(&self) -> SuperBlock {
-        self.super_block
-    }
-
-    pub fn is_readonly(&self) -> bool {
-        self.readonly
     }
 
     pub fn destroy(self) -> Result<()> {
