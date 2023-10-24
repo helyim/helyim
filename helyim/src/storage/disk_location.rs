@@ -4,8 +4,6 @@ use dashmap::DashMap;
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
-use once_cell::sync::Lazy;
-use regex::Regex;
 use tracing::info;
 
 use crate::{
@@ -20,9 +18,6 @@ use crate::{
         VolumeId,
     },
 };
-
-static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\.ec[0-9][0-9]").unwrap());
-
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,

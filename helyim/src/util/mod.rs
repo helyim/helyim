@@ -5,11 +5,9 @@ use faststr::FastStr;
 pub mod macros;
 
 mod file;
-pub use file::{check_file, file_exists};
-
 mod http;
 
-pub use http::{delete, get, post};
+pub use http::{delete, post};
 
 pub mod time;
 

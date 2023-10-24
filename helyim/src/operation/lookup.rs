@@ -1,30 +1,27 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime},
-};
+use std::time::Duration;
 
 use helyim_macros::event_fn;
 use helyim_proto::{
     helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
     LookupVolumeResponse,
 };
+use moka::sync::{Cache, CacheBuilder};
 use tonic::transport::Channel;
 
 use crate::{errors::Result, storage::VolumeId};
 
 pub struct Looker {
     client: HelyimClient<Channel>,
-    volumes: HashMap<VolumeId, (VolumeLocation, SystemTime)>,
-    timeout: Duration,
+    volumes: Cache<VolumeId, VolumeLocation>,
 }
 
 impl Looker {
     pub fn new(client: HelyimClient<Channel>) -> Looker {
         Looker {
             client,
-            // should bigger than volume number
-            volumes: HashMap::new(),
-            timeout: Duration::from_secs(600),
+            volumes: CacheBuilder::new(u64::MAX)
+                .time_to_live(Duration::from_secs(600))
+                .build(),
         }
     }
 
@@ -41,18 +38,11 @@ impl Looker {
 #[event_fn]
 impl Looker {
     pub async fn lookup(&mut self, vids: Vec<VolumeId>) -> Result<Vec<VolumeLocation>> {
-        let now = SystemTime::now();
         let mut volume_locations = Vec::with_capacity(vids.len());
         let mut volume_ids = vec![];
         for vid in vids {
             match self.volumes.get(&vid) {
-                Some((location, time)) => {
-                    if now.duration_since(*time)? < self.timeout {
-                        volume_locations.push(location.clone());
-                    } else {
-                        volume_ids.push(vid);
-                    }
-                }
+                Some(value) => volume_locations.push(value),
                 None => volume_ids.push(vid),
             }
         }
@@ -62,7 +52,7 @@ impl Looker {
                 for location in lookup.volume_locations {
                     volume_locations.push(location.clone());
                     if !location.error.is_empty() {
-                        self.volumes.insert(location.volume_id, (location, now));
+                        self.volumes.insert(location.volume_id, location);
                     }
                 }
                 Ok(volume_locations)
