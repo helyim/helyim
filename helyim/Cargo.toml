@@ -27,7 +27,7 @@ axum-macros.workspace = true
 bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
-crc.workspace = true
+crc32fast.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
@@ -37,12 +37,11 @@ hyper = { workspace = true, features = ["full"] }
 libflate.workspace = true
 lru.workspace = true
 mime_guess.workspace = true
+moka = { workspace = true, features = ["sync"] }
 multer.workspace = true
 nom.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-regex.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -57,8 +56,17 @@ url.workspace = true
 tonic.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
 tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []
 iouring = ["tokio-uring"]
+
+[[bench]]
+name = "upload_files"
+harness = false
+
+[profile.release]
+debug = true
