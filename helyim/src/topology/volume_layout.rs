@@ -1,4 +1,5 @@
-use dashmap::{DashMap, DashSet};
+use std::collections::{HashMap, HashSet};
+
 use rand;
 use serde::Serialize;
 
@@ -14,11 +15,11 @@ pub struct VolumeLayout {
     ttl: Option<Ttl>,
     volume_size_limit: u64,
 
-    writable_volumes: DashSet<VolumeId>,
-    pub readonly_volumes: DashSet<VolumeId>,
-    oversize_volumes: DashSet<VolumeId>,
+    writable_volumes: HashSet<VolumeId>,
+    pub readonly_volumes: HashSet<VolumeId>,
+    oversize_volumes: HashSet<VolumeId>,
     #[serde(skip)]
-    pub locations: DashMap<VolumeId, Vec<DataNodeEventTx>>,
+    pub locations: HashMap<VolumeId, Vec<DataNodeEventTx>>,
 }
 
 impl VolumeLayout {
@@ -27,10 +28,10 @@ impl VolumeLayout {
             rp,
             ttl,
             volume_size_limit,
-            writable_volumes: DashSet::new(),
-            readonly_volumes: DashSet::new(),
-            oversize_volumes: DashSet::new(),
-            locations: DashMap::new(),
+            writable_volumes: HashSet::new(),
+            readonly_volumes: HashSet::new(),
+            oversize_volumes: HashSet::new(),
+            locations: HashMap::new(),
         }
     }
 
@@ -41,8 +42,8 @@ impl VolumeLayout {
         let mut count = 0;
 
         for vid in self.writable_volumes.iter() {
-            if let Some(nodes) = self.locations.get(vid.key()) {
-                for node in nodes.value() {
+            if let Some(nodes) = self.locations.get(vid) {
+                for node in nodes.iter() {
                     if node.id().await? == option.data_node
                         && node.rack_id().await? == option.rack
                         && node.data_center_id().await? == option.data_center
@@ -68,7 +69,7 @@ impl VolumeLayout {
         let mut ret = (0, vec![]);
 
         for vid in self.writable_volumes.iter() {
-            if let Some(locations) = self.locations.get(vid.key()) {
+            if let Some(locations) = self.locations.get(vid) {
                 for node in locations.iter() {
                     if !option.data_center.is_empty()
                         && option.data_center != node.data_center_id().await?
@@ -117,13 +118,13 @@ impl VolumeLayout {
 
     pub async fn register_volume(&mut self, v: &VolumeInfo, dn: DataNodeEventTx) -> Result<()> {
         {
-            let mut list = self.locations.entry(v.id).or_default();
-            VolumeLayout::set_node(list.value_mut(), dn).await?;
+            let list = self.locations.entry(v.id).or_default();
+            VolumeLayout::set_node(list, dn).await?;
         }
 
         let mut locations = vec![];
         if let Some(list) = self.locations.get(&v.id) {
-            locations.extend_from_slice(list.value());
+            locations.extend_from_slice(list);
         }
 
         for location in locations.iter() {
@@ -168,13 +169,13 @@ impl VolumeLayout {
     }
 
     pub async fn set_volume_available(
-        &self,
+        &mut self,
         vid: VolumeId,
         data_node: &DataNodeEventTx,
     ) -> Result<()> {
-        if let Some(mut entry) = self.locations.get_mut(&vid) {
+        if let Some(locations) = self.locations.get_mut(&vid) {
             let mut should_add = true;
-            for location in entry.value() {
+            for location in locations.iter_mut() {
                 if data_node.ip().await? == location.ip().await?
                     && data_node.port().await? == location.port().await?
                 {
@@ -182,9 +183,9 @@ impl VolumeLayout {
                 }
             }
             if should_add {
-                entry.value_mut().push(data_node.clone());
+                locations.push(data_node.clone());
             }
-            if entry.value().len() >= self.rp.copy_count() {
+            if locations.len() >= self.rp.copy_count() {
                 self.add_to_writable(vid);
             }
         }
@@ -192,11 +193,11 @@ impl VolumeLayout {
         Ok(())
     }
 
-    pub fn add_to_writable(&self, vid: VolumeId) {
+    pub fn add_to_writable(&mut self, vid: VolumeId) {
         self.writable_volumes.insert(vid);
     }
 
-    pub fn remove_from_writable(&self, vid: VolumeId) {
+    pub fn remove_from_writable(&mut self, vid: VolumeId) {
         self.writable_volumes.remove(&vid);
     }
 
@@ -205,8 +206,6 @@ impl VolumeLayout {
     }
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeEventTx>> {
-        self.locations
-            .get(&vid)
-            .map(|location| location.value().clone())
+        self.locations.get(&vid).cloned()
     }
 }

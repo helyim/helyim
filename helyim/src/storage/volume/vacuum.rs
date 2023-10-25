@@ -294,7 +294,7 @@ pub async fn batch_vacuum_volume_check(
 }
 
 pub async fn batch_vacuum_volume_compact(
-    volume_layout: &VolumeLayout,
+    volume_layout: &mut VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
     preallocate: u64,
@@ -321,7 +321,7 @@ pub async fn batch_vacuum_volume_compact(
 }
 
 pub async fn batch_vacuum_volume_commit(
-    volume_layout: &VolumeLayout,
+    volume_layout: &mut VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
 ) -> Result<bool> {

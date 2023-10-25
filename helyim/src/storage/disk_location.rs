@@ -1,8 +1,12 @@
-use std::{fs, path::Path};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    fs,
+    path::Path,
+};
 
-use dashmap::DashMap;
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
+use helyim_macros::event_fn;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
 use tracing::info;
 
@@ -18,16 +22,18 @@ use crate::{
         VolumeId,
     },
 };
+
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: DashMap<VolumeId, VolumeEventTx>,
+    pub volumes: HashMap<VolumeId, VolumeEventTx>,
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
 unsafe impl Send for DiskLocation {}
 unsafe impl Sync for DiskLocation {}
 
+#[event_fn]
 impl DiskLocation {
     pub fn new(
         dir: &str,
@@ -37,7 +43,7 @@ impl DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
-            volumes: DashMap::new(),
+            volumes: HashMap::new(),
             shutdown: shutdown_rx,
         }
     }
@@ -54,7 +60,7 @@ impl DiskLocation {
             if path.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
                 let (vid, collection) = parse_volume_id_from_path(path)?;
                 info!("load volume {}'s data file {:?}", vid, path);
-                if let dashmap::mapref::entry::Entry::Vacant(entry) = self.volumes.entry(vid) {
+                if let Entry::Vacant(entry) = self.volumes.entry(vid) {
                     let volume = Volume::new(
                         self.directory.clone(),
                         FastStr::new(collection),
@@ -75,8 +81,34 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
-        if let Some((vid, v)) = self.volumes.remove(&vid) {
+    pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeEventTx) {
+        self.volumes.insert(vid, volume);
+    }
+    pub fn shutdown_rx(&self) -> async_broadcast::Receiver<()> {
+        self.shutdown.clone()
+    }
+
+    pub fn directory(&self) -> FastStr {
+        self.directory.clone()
+    }
+
+    pub fn max_volume_count(&self) -> i64 {
+        self.max_volume_count
+    }
+    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeEventTx> {
+        self.volumes.get(&vid).cloned()
+    }
+
+    pub fn get_volumes(&self) -> HashMap<VolumeId, VolumeEventTx> {
+        self.volumes.clone()
+    }
+
+    pub fn get_volumes_len(&self) -> usize {
+        self.volumes.len()
+    }
+
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+        if let Some(v) = self.volumes.remove(&vid) {
             v.destroy().await?;
             info!(
                 "remove volume {vid} success, where disk location is {}",

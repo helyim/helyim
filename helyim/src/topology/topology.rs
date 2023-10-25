@@ -192,9 +192,9 @@ impl Topology {
         self.clone()
     }
 
-    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
-        for (_name, collection) in self.collections.iter() {
-            for (_key, volume_layout) in collection.volume_layouts.iter() {
+    pub async fn vacuum(&mut self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
+        for (_name, collection) in self.collections.iter_mut() {
+            for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
                 let location = volume_layout.locations.clone();
                 for (vid, data_nodes) in location {
                     if volume_layout.readonly_volumes.contains(&vid) {
