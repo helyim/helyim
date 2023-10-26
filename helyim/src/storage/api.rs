@@ -35,7 +35,7 @@ use nom::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     anyhow,
@@ -193,25 +193,27 @@ async fn replicate_delete(
     let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
     if let Some(volume_location) = volume_locations.pop() {
-        // TODO concurrent replicate
-        for location in volume_location.locations.iter() {
-            if location.url == local_url {
-                continue;
-            }
-            let url = format!("http://{}{}", &location.url, path);
-            util::delete(&url, &params).await.and_then(|body| {
-                let value: Value = serde_json::from_slice(&body)?;
-                if let Some(err) = value["error"].as_str() {
-                    return if err.is_empty() {
-                        Ok(())
-                    } else {
-                        Err(anyhow!("write {} err: {err}", location.url))
-                    };
+        async_scoped::TokioScope::scope_and_block(|s| {
+            for location in volume_location.locations.iter() {
+                if location.url == local_url {
+                    continue;
                 }
-
-                Ok(())
-            })?;
-        }
+                s.spawn(async {
+                    let url = format!("http://{}{}", &location.url, path);
+                    if let Err(err) = util::delete(&url, &params).await.and_then(|body| {
+                        let value: Value = serde_json::from_slice(&body)?;
+                        if let Some(err) = value["error"].as_str() {
+                            if !err.is_empty() {
+                                return Err(anyhow!("delete {} err: {err}", location.url));
+                            }
+                        }
+                        Ok(())
+                    }) {
+                        error!("replicate delete failed, error: {err}");
+                    }
+                });
+            }
+        });
     }
     Ok(size)
 }
@@ -267,24 +269,27 @@ async fn replicate_write(
     let mut volume_locations = ctx.looker.lookup(vec![vid]).await?;
 
     if let Some(volume_location) = volume_locations.pop() {
-        // TODO concurrent replicate
-        for location in volume_location.locations.iter() {
-            if location.url == local_url {
-                continue;
-            }
-            let url = format!("http://{}{}", location.url, path);
-            util::post(&url, &params, &data).await.and_then(|body| {
-                let value: Value = serde_json::from_slice(&body)?;
-                if let Some(err) = value["error"].as_str() {
-                    return if err.is_empty() {
-                        Ok(())
-                    } else {
-                        Err(anyhow!("write {} err: {err}", location.url))
-                    };
+        async_scoped::TokioScope::scope_and_block(|s| {
+            for location in volume_location.locations.iter() {
+                if location.url == local_url {
+                    continue;
                 }
-                Ok(())
-            })?;
-        }
+                s.spawn(async {
+                    let url = format!("http://{}{}", location.url, path);
+                    if let Err(err) = util::post(&url, &params, &data).await.and_then(|body| {
+                        let value: Value = serde_json::from_slice(&body)?;
+                        if let Some(err) = value["error"].as_str() {
+                            if !err.is_empty() {
+                                return Err(anyhow!("write {} err: {err}", location.url));
+                            }
+                        }
+                        Ok(())
+                    }) {
+                        error!("replicate write failed, error: {err}");
+                    }
+                });
+            }
+        });
     }
 
     Ok(needle)
