@@ -22,8 +22,8 @@ impl Sequencer {
     pub fn new(typ: &str) -> Result<Self> {
         let typ = typ.to_lowercase();
         match typ.as_str() {
-            "memory" => Ok(Sequencer::Memory(MemorySequencer::new())),
-            _ => Ok(Sequencer::Snowflake(SnowflakeSequencer::new()?)),
+            "snowflake" => Ok(Sequencer::Snowflake(SnowflakeSequencer::new()?)),
+            _ => Ok(Sequencer::Memory(MemorySequencer::new())),
         }
     }
 }
