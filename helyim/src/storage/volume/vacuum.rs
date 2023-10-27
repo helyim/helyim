@@ -19,8 +19,8 @@ use crate::{
         needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
         needle_map::{index_entry, walk_index_file},
         volume::{
-            read_index_entry_at_offset, scan_volume_file, verify_index_file_integrity, SuperBlock,
-            Volume, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
+            checking::{read_index_entry_at_offset, verify_index_file_integrity},
+            scan_volume_file, SuperBlock, Volume, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
         Needle, NeedleMapper, NeedleValue, VolumeId,
     },
