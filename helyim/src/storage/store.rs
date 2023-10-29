@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
@@ -11,7 +9,7 @@ use crate::{
     errors::{Error, Result},
     rt_spawn,
     storage::{
-        disk_location::DiskLocation,
+        disk_location::{disk_location_loop, DiskLocation, DiskLocationEventTx},
         needle::Needle,
         needle_map::NeedleMapType,
         types::Size,
@@ -26,7 +24,7 @@ pub struct Store {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    pub locations: Vec<Arc<DiskLocation>>,
+    pub locations: Vec<DiskLocationEventTx>,
 
     pub data_center: FastStr,
     pub rack: FastStr,
@@ -58,7 +56,11 @@ impl Store {
         for i in 0..folders.len() {
             let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
             location.load_existing_volumes(needle_map_type)?;
-            locations.push(Arc::new(location));
+
+            let (tx, rx) = unbounded();
+            rt_spawn(disk_location_loop(location, rx, shutdown.clone()));
+
+            locations.push(DiskLocationEventTx::new(tx));
         }
 
         Ok(Store {
@@ -87,40 +89,40 @@ impl Store {
         self.volume_size_limit = volume_size_limit;
     }
 
-    pub fn locations(&self) -> Vec<Arc<DiskLocation>> {
+    pub fn locations(&self) -> Vec<DiskLocationEventTx> {
         self.locations.clone()
     }
 
-    pub fn has_volume(&self, vid: VolumeId) -> bool {
-        self.find_volume(vid).is_some()
+    pub async fn has_volume(&self, vid: VolumeId) -> Result<bool> {
+        Ok(self.find_volume(vid).await?.is_some())
     }
 
-    pub fn find_volume(&self, vid: VolumeId) -> Option<VolumeEventTx> {
+    pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<VolumeEventTx>> {
         for location in self.locations.iter() {
-            let volume = location.volumes.get(&vid);
+            let volume = location.get_volume(vid).await?;
             if volume.is_some() {
-                return volume.map(|v| v.value().clone());
+                return Ok(volume);
             }
         }
-        None
+        Ok(None)
     }
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => volume.delete_needle(needle).await,
             None => Ok(Size(0)),
         }
     }
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => volume.read_needle(needle).await,
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
     pub async fn write_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => {
                 if volume.is_readonly().await? {
                     return Err(anyhow!("volume {} is read only", vid));
@@ -132,9 +134,9 @@ impl Store {
         }
     }
 
-    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
-        for location in self.locations.iter() {
+        for location in self.locations.iter_mut() {
             location.delete_volume(vid).await?;
             delete = true;
         }
@@ -146,21 +148,22 @@ impl Store {
         }
     }
 
-    fn find_free_location(&self) -> Option<&Arc<DiskLocation>> {
+    async fn find_free_location(&self) -> Result<Option<DiskLocationEventTx>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
         for location in self.locations.iter() {
-            let free = location.max_volume_count - location.volumes.len() as i64;
+            let free =
+                location.max_volume_count().await? - location.get_volumes_len().await? as i64;
             if free > max_free {
                 max_free = free;
-                disk_location = Some(location);
+                disk_location = Some(location.clone());
             }
         }
 
-        disk_location
+        Ok(disk_location)
     }
 
-    fn do_add_volume(
+    async fn do_add_volume(
         &self,
         vid: VolumeId,
         collection: FastStr,
@@ -170,16 +173,17 @@ impl Store {
         preallocate: i64,
     ) -> Result<()> {
         debug!("do_add_volume vid: {} collection: {}", vid, collection);
-        if self.find_volume(vid).is_some() {
+        if self.find_volume(vid).await?.is_some() {
             return Err(anyhow!("volume id {} already exists!", vid));
         }
 
         let location = self
             .find_free_location()
+            .await?
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
         let volume = Volume::new(
-            location.directory.clone(),
+            location.directory().await?,
             collection,
             vid,
             needle_map_type,
@@ -189,13 +193,13 @@ impl Store {
         )?;
         let (tx, rx) = unbounded();
         let volume_tx = VolumeEventTx::new(tx);
-        rt_spawn(volume_loop(volume, rx, location.shutdown.clone()));
-        location.volumes.insert(vid, volume_tx);
+        rt_spawn(volume_loop(volume, rx, location.shutdown_rx().await?));
+        location.add_volume(vid, volume_tx)?;
 
         Ok(())
     }
 
-    pub fn add_volume(
+    pub async fn add_volume(
         &self,
         volumes: Vec<u32>,
         collection: String,
@@ -216,7 +220,8 @@ impl Store {
                 rp,
                 ttl,
                 preallocate,
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
@@ -228,10 +233,8 @@ impl Store {
         let mut max_volume_count = 0;
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
-            max_volume_count += location.max_volume_count;
-            for entry in location.volumes.iter() {
-                let vid = entry.key();
-                let volume = entry.value();
+            max_volume_count += location.max_volume_count().await?;
+            for (vid, volume) in location.get_volumes().await?.iter() {
                 let volume_max_file_key = volume.max_file_key().await?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
@@ -281,7 +284,7 @@ impl Store {
     }
 
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => {
                 let garbage_level = volume.garbage_level().await?;
                 info!("volume {vid} garbage level: {garbage_level}");
@@ -295,7 +298,7 @@ impl Store {
     }
 
     pub async fn compact_volume(&self, vid: VolumeId, _preallocate: u64) -> Result<()> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
                 volume.compact().await?;
@@ -310,7 +313,7 @@ impl Store {
     }
 
     pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
                 volume.commit_compact().await?;
@@ -325,7 +328,7 @@ impl Store {
     }
 
     pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid) {
+        match self.find_volume(vid).await? {
             Some(volume) => {
                 volume.cleanup_compact().await?;
                 info!("volume {vid} committing cleanup success.");
