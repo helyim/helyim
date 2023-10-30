@@ -42,7 +42,7 @@ unsafe impl Sync for Store {}
 
 #[event_fn]
 impl Store {
-    pub fn new(
+    pub async fn new(
         ip: &str,
         port: u16,
         public_url: &str,
@@ -55,7 +55,7 @@ impl Store {
         let mut locations = vec![];
         for i in 0..folders.len() {
             let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
-            location.load_existing_volumes(needle_map_type)?;
+            location.load_existing_volumes(needle_map_type).await?;
 
             let (tx, rx) = unbounded();
             rt_spawn(disk_location_loop(location, rx, shutdown.clone()));

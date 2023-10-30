@@ -59,3 +59,6 @@ syn = "2"
 prettyplease = "0.2"
 proc-macro2 = "1"
 quote = "1"
+
+[profile.release]
+debug = true

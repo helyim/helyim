@@ -1,13 +1,10 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    fs,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
+use futures::{channel::mpsc::unbounded, future::join_all};
 use helyim_macros::event_fn;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
+use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
@@ -30,9 +27,6 @@ pub struct DiskLocation {
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
-unsafe impl Send for DiskLocation {}
-unsafe impl Sync for DiskLocation {}
-
 #[event_fn]
 impl DiskLocation {
     pub fn new(
@@ -48,34 +42,48 @@ impl DiskLocation {
         }
     }
 
-    pub fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
-        // TODO concurrent load volumes
+    /// concurrent loading volumes
+    pub async fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
         info!("load existing volumes dir: {}", self.directory);
+
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeEventTx)>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
 
             if path.extension().unwrap_or_default() == DATA_FILE_SUFFIX {
                 let (vid, collection) = parse_volume_id_from_path(path)?;
-                info!("load volume {}'s data file {:?}", vid, path);
-                if let Entry::Vacant(entry) = self.volumes.entry(vid) {
-                    let volume = Volume::new(
-                        self.directory.clone(),
-                        FastStr::new(collection),
-                        vid,
-                        needle_map_type,
-                        ReplicaPlacement::default(),
-                        Ttl::default(),
-                        0,
-                    )?;
-                    let (tx, rx) = unbounded();
-                    let volume_tx = VolumeEventTx::new(tx);
-                    rt_spawn(volume_loop(volume, rx, self.shutdown.clone()));
-                    entry.insert(volume_tx);
+                info!("load volume {} data file {:?}", vid, path);
+                if !self.volumes.contains_key(&vid) {
+                    let dir = self.directory.clone();
+                    let shutdown = self.shutdown.clone();
+                    let collection = FastStr::new(collection);
+
+                    let handle = rt_spawn(async move {
+                        let volume = Volume::new(
+                            dir,
+                            collection,
+                            vid,
+                            needle_map_type,
+                            ReplicaPlacement::default(),
+                            Ttl::default(),
+                            0,
+                        )?;
+                        let (tx, rx) = unbounded();
+                        let volume_tx = VolumeEventTx::new(tx);
+                        rt_spawn(volume_loop(volume, rx, shutdown));
+                        Ok((vid, volume_tx))
+                    });
+                    handles.push(handle);
                 }
             }
+        }
+
+        for join in join_all(handles).await {
+            let (vid, volume_tx) = join??;
+            self.volumes.insert(vid, volume_tx);
         }
 
         Ok(())
@@ -119,13 +127,6 @@ impl DiskLocation {
     }
 }
 
-fn parse_volume_id(name: &str) -> Result<(VolumeId, &str)> {
-    let index = name.find('_').unwrap_or_default();
-    let (collection, vid) = (&name[0..index], &name[index + 1..]);
-    let vid = u32::from_str_radix(vid, 16)?;
-    Ok((vid, collection))
-}
-
 fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
     if path.is_dir() {
         return Err(anyhow!(
@@ -144,6 +145,5 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
                 None => (input, left),
             }
         })?;
-    let vid = id.parse()?;
-    Ok((vid, collection))
+    Ok((id.parse()?, collection))
 }

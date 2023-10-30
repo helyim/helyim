@@ -121,7 +121,8 @@ async fn start_volume(host: &str, volume: VolumeOptions) -> Result<(), Box<dyn s
         &volume.data_center,
         &volume.rack,
         false,
-    )?;
+    )
+    .await?;
     server.start().await?;
     shutdown_signal().await;
     server.stop().await?;

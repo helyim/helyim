@@ -49,10 +49,10 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
 tokio-uring = { workspace = true, optional = true }
+tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
-tonic.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
@@ -66,6 +66,3 @@ iouring = ["tokio-uring"]
 [[bench]]
 name = "upload_files"
 harness = false
-
-[profile.release]
-debug = true
