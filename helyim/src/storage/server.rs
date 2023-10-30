@@ -54,7 +54,7 @@ pub struct StorageServer {
 }
 
 impl StorageServer {
-    pub fn new(
+    pub async fn new(
         host: &str,
         ip: &str,
         port: u16,
@@ -81,7 +81,8 @@ impl StorageServer {
             needle_map_type,
             master_node.clone(),
             shutdown_rx.clone(),
-        )?;
+        )
+        .await?;
 
         let (tx, rx) = unbounded();
         let store_tx = StoreEventTx::new(tx);
