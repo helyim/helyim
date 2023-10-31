@@ -5,7 +5,7 @@ mod list_master;
 pub use list_master::ClusterStatus;
 
 pub mod lookup;
-pub use lookup::{looker_loop, Looker, LookerEventTx};
+pub use lookup::Looker;
 
 mod upload_content;
 pub use upload_content::Upload;

@@ -17,7 +17,7 @@ keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-scoped = { version = "0.7", features = ["use-tokio"]}
+async-scoped = { version = "0.7", features = ["use-tokio"] }
 async-broadcast.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
@@ -41,7 +41,7 @@ multer.workspace = true
 nom.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sonyflake.workspace = true

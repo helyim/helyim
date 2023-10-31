@@ -60,13 +60,13 @@ impl VolumeLayout {
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> Result<(VolumeId, Vec<DataNodeEventTx>)> {
+    ) -> Result<(VolumeId, Option<&DataNodeEventTx>)> {
         if self.writable_volumes.is_empty() {
             return Err(VolumeError::NoWritableVolumes.into());
         }
 
         let mut counter = 0;
-        let mut ret = (0, vec![]);
+        let mut ret = (0, None);
 
         for vid in self.writable_volumes.iter() {
             if let Some(locations) = self.locations.get(vid) {
@@ -81,7 +81,7 @@ impl VolumeLayout {
 
                     counter += 1;
                     if rand::random::<i64>() % counter < 1 {
-                        ret = (*vid, locations.clone());
+                        ret = (*vid, Some(node));
                     }
                 }
             }

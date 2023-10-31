@@ -27,7 +27,7 @@ use crate::{
         volume_grow::{volume_growth_loop, VolumeGrowth, VolumeGrowthEventTx},
         Topology, TopologyEventTx,
     },
-    util::get_or_default,
+    util::{exit, get_or_default},
     PHRASE, STOP_INTERVAL,
 };
 
@@ -99,8 +99,7 @@ impl DirectoryServer {
             handles: vec![topology_handle, topology_vacuum_handle, volume_grow_handle],
         };
 
-        let addr = format!("{}:{}", host, port + 1);
-        let addr = addr.parse()?;
+        let addr = format!("{}:{}", host, port + 1).parse()?;
 
         rt_spawn(async move {
             if let Err(err) = TonicServer::builder()
@@ -114,6 +113,7 @@ impl DirectoryServer {
                 .await
             {
                 error!("grpc server starting failed, {err}");
+                exit();
             }
         });
 

@@ -8,6 +8,9 @@ mod http;
 
 pub use http::{delete, post};
 
+mod sys;
+pub use sys::exit;
+
 pub mod time;
 
 pub fn get_or_default(s: String) -> FastStr {
