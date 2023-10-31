@@ -35,6 +35,7 @@ use crate::{
         needle_map::NeedleMapType,
         store::{store_loop, Store, StoreEventTx},
     },
+    util::exit,
     STOP_INTERVAL,
 };
 
@@ -117,6 +118,7 @@ impl StorageServer {
                 .await
             {
                 error!("grpc server starting failed, {err}");
+                exit();
             }
         });
 
