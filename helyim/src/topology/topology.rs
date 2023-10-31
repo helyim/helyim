@@ -132,7 +132,9 @@ impl Topology {
         count: u64,
         option: VolumeGrowOption,
     ) -> Result<(FileId, u64, DataNodeEventTx)> {
-        let (volume_id, nodes) = {
+        let file_id = self.sequencer.next_file_id(count)?;
+
+        let (volume_id, node) = {
             let layout = self.get_volume_layout(
                 option.collection.clone(),
                 option.replica_placement,
@@ -141,14 +143,12 @@ impl Topology {
             layout.pick_for_write(&option).await?
         };
 
-        let file_id = self.sequencer.next_file_id(count)?;
-
         let file_id = FileId {
             volume_id,
             key: file_id,
             hash: rand::random::<u32>(),
         };
-        Ok((file_id, count, nodes[0].clone()))
+        Ok((file_id, count, node.unwrap().clone()))
     }
 
     pub async fn register_volume_layout(

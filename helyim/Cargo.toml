@@ -41,7 +41,7 @@ multer.workspace = true
 nom.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sonyflake.workspace = true
