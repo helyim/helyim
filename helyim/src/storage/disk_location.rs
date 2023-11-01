@@ -13,9 +13,8 @@ use crate::{
     rt_spawn,
     storage::{
         needle_map::NeedleMapType,
-        replica_placement::ReplicaPlacement,
         ttl::Ttl,
-        volume::{volume_loop, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
+        volume::{volume_loop, ReplicaPlacement, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
         VolumeId,
     },
 };

@@ -8,6 +8,8 @@ pub enum NeedleError {
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
     BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Parse integer error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 
     #[error("Volume {0}: needle {1} has deleted.")]
     Deleted(VolumeId, u64),
@@ -21,12 +23,18 @@ pub enum NeedleError {
     UnsupportedVersion(Version),
     #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
     Crc(u32, u32),
+    #[error("Invalid file id: {0}")]
+    InvalidFid(String),
+    #[error("key hash: {0} is too short or too long")]
+    InvalidKeyHash(String),
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum VolumeError {
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
     #[error("System time error: {0}")]

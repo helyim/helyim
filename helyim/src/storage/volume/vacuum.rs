@@ -15,7 +15,6 @@ use helyim_proto::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    errors::Result,
     storage::{
         needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
         needle_map::{index_entry, walk_index_file},
@@ -287,7 +286,7 @@ pub async fn batch_vacuum_volume_check(
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
     garbage_ratio: f64,
-) -> Result<bool> {
+) -> StdResult<bool, VolumeError> {
     let mut check_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
@@ -310,7 +309,7 @@ pub async fn batch_vacuum_volume_compact(
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
     preallocate: u64,
-) -> Result<bool> {
+) -> StdResult<bool, VolumeError> {
     volume_layout.remove_from_writable(volume_id);
     let mut compact_success = true;
     for data_node_tx in data_nodes {
@@ -336,7 +335,7 @@ pub async fn batch_vacuum_volume_commit(
     volume_layout: &mut VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
-) -> Result<bool> {
+) -> StdResult<bool, VolumeError> {
     let mut commit_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
@@ -350,7 +349,8 @@ pub async fn batch_vacuum_volume_commit(
                     commit_success = true;
                     volume_layout
                         .set_volume_available(volume_id, data_node_tx)
-                        .await?;
+                        .await
+                        .map_err(|err| VolumeError::BoxError(err.into()))?;
                 }
             }
             Err(err) => {
@@ -366,7 +366,7 @@ pub async fn batch_vacuum_volume_commit(
 async fn batch_vacuum_volume_cleanup(
     volume_id: VolumeId,
     data_nodes: &[DataNodeEventTx],
-) -> Result<bool> {
+) -> StdResult<bool, VolumeError> {
     let mut cleanup_success = true;
     for data_node_tx in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };

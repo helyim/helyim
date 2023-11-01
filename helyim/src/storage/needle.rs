@@ -8,20 +8,16 @@ use std::{
     result::Result as StdResult,
 };
 
-use anyhow::anyhow;
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::{
-    errors::{Error, Result},
-    storage::{
-        crc,
-        ttl::Ttl,
-        types::{Cookie, Offset, Size},
-        version::{Version, CURRENT_VERSION, VERSION2},
-        NeedleError, NeedleId,
-    },
+use crate::storage::{
+    crc,
+    ttl::Ttl,
+    types::{Cookie, Offset, Size},
+    version::{Version, CURRENT_VERSION, VERSION2},
+    NeedleError, NeedleId,
 };
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
@@ -153,9 +149,9 @@ impl Needle {
         );
     }
 
-    pub fn parse_path(&mut self, fid: &str) -> Result<()> {
+    pub fn parse_path(&mut self, fid: &str) -> StdResult<(), NeedleError> {
         if fid.len() <= 8 {
-            return Err(Error::InvalidFid(fid.to_string()));
+            return Err(NeedleError::InvalidFid(fid.to_string()));
         }
 
         let (id, delta) = match fid.find('_') {
@@ -409,9 +405,9 @@ impl Needle {
     }
 }
 
-fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), anyhow::Error> {
+fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     if hash.len() <= 8 || hash.len() > 24 {
-        return Err(anyhow!("key hash too short or too long: {}", hash));
+        return Err(NeedleError::InvalidKeyHash(hash.to_string()));
     }
 
     let key_end = hash.len() - 8;

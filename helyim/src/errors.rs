@@ -26,12 +26,6 @@ pub enum Error {
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
 
-    /// storage errors
-    #[error("Invalid ttl: {0}")]
-    ParseTtl(String),
-    #[error("Invalid file id: {0}")]
-    InvalidFid(String),
-
     /// other errors
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),

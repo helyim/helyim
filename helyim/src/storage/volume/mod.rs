@@ -20,7 +20,6 @@ use crate::{
             read_needle_header, Needle, NeedleValue, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
         },
         needle_map::{NeedleMapType, NeedleMapper},
-        replica_placement::ReplicaPlacement,
         ttl::Ttl,
         types::Size,
         version::{Version, CURRENT_VERSION},
@@ -32,8 +31,10 @@ use crate::{
 };
 
 mod checking;
+mod replica_placement;
 #[allow(dead_code)]
 pub mod vacuum;
+pub use replica_placement::ReplicaPlacement;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -130,7 +131,7 @@ impl Volume {
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
         _preallocate: i64,
-    ) -> Result<Volume> {
+    ) -> StdResult<Volume, VolumeError> {
         let sb = SuperBlock {
             replica_placement,
             ttl,
@@ -288,7 +289,7 @@ impl Volume {
         Ok(nv.size)
     }
 
-    pub fn read_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+    pub fn read_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 {
@@ -383,7 +384,7 @@ impl Volume {
         self.needle_mapper.file_count()
     }
 
-    pub fn size(&self) -> Result<u64> {
+    pub fn size(&self) -> StdResult<u64, VolumeError> {
         let file = self.file()?;
         Ok(file.metadata()?.len())
     }
@@ -475,7 +476,7 @@ impl Volume {
         self.deleted_bytes() as f64 / self.content_size() as f64
     }
 
-    pub fn compact(&mut self) -> Result<()> {
+    pub fn compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;

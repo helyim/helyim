@@ -116,7 +116,7 @@ impl Store {
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid).await? {
-            Some(volume) => volume.read_needle(needle).await,
+            Some(volume) => Ok(volume.read_needle(needle).await?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }

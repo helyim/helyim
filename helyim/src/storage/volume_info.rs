@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     errors::Result,
-    storage::{replica_placement::ReplicaPlacement, ttl::Ttl, version::Version, VolumeId},
+    storage::{ttl::Ttl, version::Version, volume::ReplicaPlacement, VolumeId},
 };
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
