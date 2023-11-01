@@ -236,7 +236,7 @@ fn parse_args(args: Punctuated<TokenStream, Token![,]>, left_comma: bool) -> Tok
 
 fn parse_result(typ: &Type) -> (TokenStream, TokenStream) {
     let type_str = typ.to_token_stream().to_string().replace(' ', "");
-    if type_str.starts_with("Result<") {
+    if type_str.starts_with("Result<") || type_str.starts_with("StdResult<") {
         (quote!(rx.await?), quote!(#typ))
     } else {
         (quote!(Ok(rx.await?)), quote!(Result<#typ>))

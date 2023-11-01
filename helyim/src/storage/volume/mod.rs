@@ -4,6 +4,7 @@ use std::{
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::Path,
+    result::Result as StdResult,
 };
 
 use bytes::{Buf, BufMut};
@@ -13,8 +14,7 @@ use rustix::fs::ftruncate;
 use tracing::{debug, error, info};
 
 use crate::{
-    anyhow,
-    errors::{Error, Result},
+    errors::Result,
     storage::{
         needle::{
             read_needle_header, Needle, NeedleValue, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
@@ -26,7 +26,7 @@ use crate::{
         version::{Version, CURRENT_VERSION},
         volume::checking::check_volume_data_integrity,
         volume_info::VolumeInfo,
-        NeedleError, VolumeId,
+        NeedleError, VolumeError, VolumeId,
     },
     util::time::{get_time, now},
 };
@@ -62,7 +62,7 @@ impl Default for SuperBlock {
 }
 
 impl SuperBlock {
-    pub fn parse(buf: [u8; SUPER_BLOCK_SIZE]) -> Result<SuperBlock> {
+    pub fn parse(buf: [u8; SUPER_BLOCK_SIZE]) -> StdResult<SuperBlock, VolumeError> {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
         let ttl = Ttl::from(&buf[2..4]);
         let compact_revision = (&buf[4..6]).get_u16();
@@ -156,9 +156,13 @@ impl Volume {
         Ok(v)
     }
 
-    pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<()> {
+    pub fn load(
+        &mut self,
+        create_if_missing: bool,
+        load_index: bool,
+    ) -> StdResult<(), VolumeError> {
         if self.data_file.is_some() {
-            return Err(anyhow!("volume {} has loaded!", self.id));
+            return Err(VolumeError::HasLoaded(self.id));
         }
 
         let name = self.data_filename();
@@ -179,7 +183,7 @@ impl Volume {
                     debug!("create volume {} data file success", self.id);
                     metadata(&name)?
                 } else {
-                    return Err(Error::Io(err));
+                    return Err(VolumeError::Io(err));
                 }
             }
         };
@@ -225,10 +229,10 @@ impl Volume {
         Ok(())
     }
 
-    pub async fn write_needle(&mut self, mut needle: Needle) -> Result<Needle> {
+    pub async fn write_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         let volume_id = self.id;
         if self.readonly {
-            return Err(anyhow!("volume {volume_id} is read only"));
+            return Err(VolumeError::Readonly(volume_id));
         }
 
         let version = self.version();
@@ -247,7 +251,7 @@ impl Volume {
                 needle.id
             );
             ftruncate(file, offset)?;
-            return Err(err);
+            return Err(err.into());
         }
 
         let nv = NeedleValue {
@@ -263,9 +267,9 @@ impl Volume {
         Ok(needle)
     }
 
-    pub async fn delete_needle(&mut self, mut needle: Needle) -> Result<Size> {
+    pub async fn delete_needle(&mut self, mut needle: Needle) -> StdResult<Size, VolumeError> {
         if self.readonly {
-            return Err(anyhow!("volume {} is read only", self.id));
+            return Err(VolumeError::Readonly(self.id));
         }
 
         let mut nv = match self.needle_mapper.get(needle.id) {
@@ -352,9 +356,9 @@ impl Volume {
         self.readonly
     }
 
-    pub fn destroy(self) -> Result<()> {
+    pub fn destroy(self) -> StdResult<(), VolumeError> {
         if self.readonly {
-            return Err(anyhow!("volume {} is read only", self.id));
+            return Err(VolumeError::Readonly(self.id));
         }
 
         fs::remove_file(Path::new(&self.data_filename()))?;
@@ -385,18 +389,18 @@ impl Volume {
     }
 
     #[ignore]
-    pub fn file(&self) -> Result<&File> {
+    pub fn file(&self) -> StdResult<&File, VolumeError> {
         match self.data_file.as_ref() {
             Some(data_file) => Ok(data_file),
-            None => Err(anyhow!("volume {} not load", self.id)),
+            None => Err(VolumeError::NotLoad(self.id)),
         }
     }
 
     #[ignore]
-    pub fn file_mut(&mut self) -> Result<&mut File> {
+    pub fn file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
         match self.data_file.as_mut() {
             Some(data_file) => Ok(data_file),
-            None => Err(anyhow!("volume {} not load", self.id)),
+            None => Err(VolumeError::NotLoad(self.id)),
         }
     }
 
@@ -484,7 +488,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn compact2(&mut self) -> Result<()> {
+    pub fn compact2(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
@@ -497,7 +501,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&mut self) -> Result<()> {
+    pub fn commit_compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -528,7 +532,7 @@ impl Volume {
         self.load(false, true)
     }
 
-    pub fn cleanup_compact(&mut self) -> Result<()> {
+    pub fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
         fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
@@ -538,7 +542,7 @@ impl Volume {
 }
 
 impl Volume {
-    fn write_super_block(&mut self) -> Result<()> {
+    fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut file = self.file()?;
         let meta = file.metadata()?;
 
@@ -552,7 +556,7 @@ impl Volume {
         Ok(())
     }
 
-    fn read_super_block(&mut self) -> Result<()> {
+    fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
             let file = self.file_mut()?;
@@ -570,7 +574,7 @@ fn load_volume_without_index(
     collection: FastStr,
     id: VolumeId,
     needle_map_type: NeedleMapType,
-) -> Result<Volume> {
+) -> StdResult<Volume, VolumeError> {
     let mut volume = Volume {
         dir: dirname,
         collection,
@@ -590,10 +594,10 @@ pub fn scan_volume_file<VSB, VN>(
     read_needle_body: bool,
     mut visit_super_block: VSB,
     mut visit_needle: VN,
-) -> Result<()>
+) -> StdResult<(), VolumeError>
 where
-    VSB: FnMut(&mut SuperBlock) -> Result<()>,
-    VN: FnMut(&mut Needle, u32) -> Result<()>,
+    VSB: FnMut(&mut SuperBlock) -> StdResult<(), VolumeError>,
+    VN: FnMut(&mut Needle, u32) -> StdResult<(), VolumeError>,
 {
     let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
     visit_super_block(&mut volume.super_block)?;
@@ -623,14 +627,13 @@ where
                 needle = n;
                 rest = body_len;
             }
-            Err(Error::Io(err)) => {
+            Err(NeedleError::Io(err)) => {
                 if err.kind() == ErrorKind::UnexpectedEof {
                     return Ok(());
                 }
             }
             Err(err) => {
-                error!("read needle header error, {err}");
-                return Err(anyhow!("read needle header error, {err}"));
+                return Err(VolumeError::Needle(err));
             }
         }
     }

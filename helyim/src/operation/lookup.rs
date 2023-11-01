@@ -1,11 +1,11 @@
 use std::time::Duration;
 
+use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
     LookupVolumeResponse,
 };
 use moka::sync::{Cache, CacheBuilder};
-use tonic::transport::Channel;
 
 use crate::{errors::Result, storage::VolumeId};
 
@@ -25,7 +25,7 @@ impl Looker {
     async fn do_lookup(
         &self,
         vids: &[VolumeId],
-        client: &mut HelyimClient<Channel>,
+        client: &mut HelyimClient<LoadBalancedChannel>,
     ) -> Result<LookupVolumeResponse> {
         let request = LookupVolumeRequest {
             volumes: vids.iter().map(|vid| vid.to_string()).collect(),
@@ -38,7 +38,7 @@ impl Looker {
     pub async fn lookup(
         &self,
         vids: Vec<VolumeId>,
-        client: &mut HelyimClient<Channel>,
+        client: &mut HelyimClient<LoadBalancedChannel>,
     ) -> Result<Vec<VolumeLocation>> {
         let mut volume_locations = Vec::with_capacity(vids.len());
         let mut volume_ids = vec![];

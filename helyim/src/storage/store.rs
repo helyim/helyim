@@ -109,7 +109,7 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume(vid).await? {
-            Some(volume) => volume.delete_needle(needle).await,
+            Some(volume) => Ok(volume.delete_needle(needle).await?),
             None => Ok(Size(0)),
         }
     }
@@ -125,10 +125,10 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 if volume.is_readonly().await? {
-                    return Err(anyhow!("volume {} is read only", vid));
+                    return Err(VolumeError::Readonly(vid).into());
                 }
 
-                volume.write_needle(needle).await
+                Ok(volume.write_needle(needle).await?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }

@@ -1,8 +1,11 @@
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    result::Result,
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{Error, Result};
+use crate::storage::VolumeError;
 
 /// The meaning of replication type
 ///
@@ -34,14 +37,14 @@ pub struct ReplicaPlacement {
 }
 
 impl ReplicaPlacement {
-    pub fn from_u8(u: u8) -> Result<ReplicaPlacement> {
+    pub fn from_u8(u: u8) -> Result<ReplicaPlacement, VolumeError> {
         let s = format!("{:03}", u);
         ReplicaPlacement::new(&s)
     }
 
-    pub fn new(s: &str) -> Result<ReplicaPlacement> {
+    pub fn new(s: &str) -> Result<ReplicaPlacement, VolumeError> {
         if s.len() != 3 {
-            return Err(Error::ParseReplicaPlacement(String::from(s)));
+            return Err(VolumeError::ReplicaPlacement(String::from(s)));
         }
 
         let bytes = s.as_bytes();
