@@ -24,17 +24,20 @@ use crate::{
         types::Size,
         version::{Version, CURRENT_VERSION},
         volume::checking::check_volume_data_integrity,
-        volume_info::VolumeInfo,
         NeedleError, VolumeError, VolumeId,
     },
     util::time::{get_time, now},
 };
 
 mod checking;
+
 mod replica_placement;
+pub use replica_placement::ReplicaPlacement;
+
 #[allow(dead_code)]
 pub mod vacuum;
-pub use replica_placement::ReplicaPlacement;
+mod volume_info;
+pub use volume_info::VolumeInfo;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
