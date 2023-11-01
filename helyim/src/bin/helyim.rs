@@ -5,6 +5,7 @@ use helyim::{
 };
 use tokio::signal;
 use tracing::{info, Level};
+use helyim::directory::SequencerType;
 
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]
@@ -77,7 +78,7 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
         master.pulse_seconds,
         ReplicaPlacement::new(&master.default_replication)?,
         0.3,
-        Sequencer::new("snowflake")?,
+        Sequencer::new(SequencerType::Memory)?,
     )
     .await?;
     dir.start().await?;

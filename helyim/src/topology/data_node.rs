@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use faststr::FastStr;
+use ginepro::LoadBalancedChannel;
 use helyim_macros::event_fn;
 use helyim_proto::{
     volume_server_client::VolumeServerClient, AllocateVolumeRequest, AllocateVolumeResponse,
@@ -9,7 +10,6 @@ use helyim_proto::{
     VacuumVolumeCompactRequest, VacuumVolumeCompactResponse,
 };
 use serde::Serialize;
-use tonic::transport::Channel;
 
 use crate::{
     errors::Result,
@@ -30,7 +30,7 @@ pub struct DataNode {
     max_volumes: i64,
     max_volume_id: VolumeId,
     #[serde(skip)]
-    client: Option<VolumeServerClient<Channel>>,
+    client: VolumeServerClient<LoadBalancedChannel>,
 }
 
 unsafe impl Send for DataNode {}
@@ -43,14 +43,17 @@ impl std::fmt::Display for DataNode {
 
 #[event_fn]
 impl DataNode {
-    pub fn new(
+    pub async fn new(
         id: FastStr,
         ip: FastStr,
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-    ) -> DataNode {
-        DataNode {
+    ) -> Result<DataNode> {
+        let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
+            .channel()
+            .await?;
+        Ok(DataNode {
             id,
             ip,
             port,
@@ -60,8 +63,8 @@ impl DataNode {
             volumes: HashMap::new(),
             max_volumes,
             max_volume_id: 0,
-            client: None,
-        }
+            client: VolumeServerClient::new(channel),
+        })
     }
 
     pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
@@ -164,19 +167,11 @@ impl DataNode {
         Ok(())
     }
 
-    #[ignore]
-    pub fn grpc_addr(&self) -> String {
-        format!("http://{}:{}", self.ip, self.port + 1)
-    }
-
     pub async fn allocate_volume(
         &mut self,
         request: AllocateVolumeRequest,
     ) -> Result<AllocateVolumeResponse> {
-        let client = self
-            .client
-            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
-        let response = client.allocate_volume(request).await?;
+        let response = self.client.allocate_volume(request).await?;
         Ok(response.into_inner())
     }
 
@@ -184,10 +179,7 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCheckRequest,
     ) -> Result<VacuumVolumeCheckResponse> {
-        let client = self
-            .client
-            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
-        let response = client.vacuum_volume_check(request).await?;
+        let response = self.client.vacuum_volume_check(request).await?;
         Ok(response.into_inner())
     }
 
@@ -195,10 +187,7 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCompactRequest,
     ) -> Result<VacuumVolumeCompactResponse> {
-        let client = self
-            .client
-            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
-        let response = client.vacuum_volume_compact(request).await?;
+        let response = self.client.vacuum_volume_compact(request).await?;
         Ok(response.into_inner())
     }
 
@@ -206,10 +195,7 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCommitRequest,
     ) -> Result<VacuumVolumeCommitResponse> {
-        let client = self
-            .client
-            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
-        let response = client.vacuum_volume_commit(request).await?;
+        let response = self.client.vacuum_volume_commit(request).await?;
         Ok(response.into_inner())
     }
 
@@ -217,10 +203,7 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCleanupRequest,
     ) -> Result<VacuumVolumeCleanupResponse> {
-        let client = self
-            .client
-            .get_or_insert(VolumeServerClient::connect(self.grpc_addr()).await?);
-        let response = client.vacuum_volume_cleanup(request).await?;
+        let response = self.client.vacuum_volume_cleanup(request).await?;
         Ok(response.into_inner())
     }
 }

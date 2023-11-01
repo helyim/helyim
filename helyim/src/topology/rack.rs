@@ -65,18 +65,19 @@ impl Rack {
         Ok(())
     }
 
-    pub fn get_or_create_data_node(
+    pub async fn get_or_create_data_node(
         &mut self,
         id: FastStr,
         ip: FastStr,
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-    ) -> DataNodeEventTx {
-        self.nodes
-            .entry(id.clone())
-            .or_insert_with(|| {
-                let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
+    ) -> Result<DataNodeEventTx> {
+        match self.nodes.get(&id) {
+            Some(data_node) => Ok(data_node.clone()),
+            None => {
+                let data_node =
+                    DataNode::new(id.clone(), ip, port, public_url, max_volumes).await?;
                 let (tx, rx) = unbounded();
                 self.handles.push(rt_spawn(data_node_loop(
                     data_node,
@@ -84,9 +85,11 @@ impl Rack {
                     self.shutdown.clone(),
                 )));
 
-                DataNodeEventTx::new(tx)
-            })
-            .clone()
+                let data_node = DataNodeEventTx::new(tx);
+                self.nodes.insert(id, data_node.clone());
+                Ok(data_node)
+            }
+        }
     }
 
     pub async fn data_center_id(&self) -> Result<FastStr> {

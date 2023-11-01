@@ -12,6 +12,12 @@ pub trait Sequence {
     fn peek(&self) -> Result<u64>;
 }
 
+#[derive(Copy, Clone)]
+pub enum SequencerType {
+    Memory,
+    Snowflake,
+}
+
 #[derive(Clone)]
 pub enum Sequencer {
     Memory(MemorySequencer),
@@ -19,11 +25,10 @@ pub enum Sequencer {
 }
 
 impl Sequencer {
-    pub fn new(typ: &str) -> Result<Self> {
-        let typ = typ.to_lowercase();
-        match typ.as_str() {
-            "snowflake" => Ok(Sequencer::Snowflake(SnowflakeSequencer::new()?)),
-            _ => Ok(Sequencer::Memory(MemorySequencer::new())),
+    pub fn new(typ: SequencerType) -> Result<Self> {
+        match typ {
+            SequencerType::Snowflake => Ok(Sequencer::Snowflake(SnowflakeSequencer::new()?)),
+            SequencerType::Memory => Ok(Sequencer::Memory(MemorySequencer::new())),
         }
     }
 }
