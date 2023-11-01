@@ -109,14 +109,14 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume(vid).await? {
-            Some(volume) => volume.delete_needle(needle).await,
+            Some(volume) => Ok(volume.delete_needle(needle).await?),
             None => Ok(Size(0)),
         }
     }
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid).await? {
-            Some(volume) => volume.read_needle(needle).await,
+            Some(volume) => Ok(volume.read_needle(needle).await?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -125,10 +125,10 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 if volume.is_readonly().await? {
-                    return Err(anyhow!("volume {} is read only", vid));
+                    return Err(VolumeError::Readonly(vid).into());
                 }
 
-                volume.write_needle(needle).await
+                Ok(volume.write_needle(needle).await?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }
@@ -172,7 +172,10 @@ impl Store {
         ttl: Ttl,
         preallocate: i64,
     ) -> Result<()> {
-        debug!("do_add_volume vid: {} collection: {}", vid, collection);
+        debug!(
+            "add volume: {}, collection: {}, ttl: {}, replica placement: {}",
+            vid, collection, ttl, replica_placement
+        );
         if self.find_volume(vid).await?.is_some() {
             return Err(anyhow!("volume id {} already exists!", vid));
         }

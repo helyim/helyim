@@ -1,4 +1,4 @@
-use std::{net::AddrParseError, time::SystemTimeError};
+use std::net::AddrParseError;
 
 use axum::{
     response::{IntoResponse, Response},
@@ -26,14 +26,6 @@ pub enum Error {
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
 
-    /// storage errors
-    #[error("Invalid replica placement: {0}")]
-    ParseReplicaPlacement(String),
-    #[error("Invalid ttl: {0}")]
-    ParseTtl(String),
-    #[error("Invalid file id: {0}")]
-    InvalidFid(String),
-
     /// other errors
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
@@ -43,6 +35,8 @@ pub enum Error {
     BincodeError(#[from] Box<bincode::ErrorKind>),
     #[error("Other error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Anyhow error: {0}")]
+    Anyhow(#[from] anyhow::Error),
     #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
     #[error("{0}")]
@@ -51,12 +45,6 @@ pub enum Error {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("Addr parse error: {0}")]
     AddrParse(#[from] AddrParseError),
-    #[error("System time error: {0}")]
-    SystemTimeError(#[from] SystemTimeError),
-    #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
-    Crc(u32, u32),
-    #[error("Unsupported version: {0}")]
-    UnsupportedVersion(u8),
     #[error("Nom error: {0}")]
     Nom(String),
     #[error("Multer error: {0}")]

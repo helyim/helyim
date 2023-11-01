@@ -5,22 +5,19 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
+    result::Result as StdResult,
 };
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::{
-    anyhow,
-    errors::{Error, Result},
-    storage::{
-        crc,
-        ttl::Ttl,
-        types::{Cookie, Offset, Size},
-        version::{Version, CURRENT_VERSION, VERSION2},
-        NeedleError, NeedleId,
-    },
+use crate::storage::{
+    crc,
+    ttl::Ttl,
+    types::{Cookie, Offset, Size},
+    version::{Version, CURRENT_VERSION, VERSION2},
+    NeedleError, NeedleId,
 };
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
@@ -126,7 +123,11 @@ pub fn actual_offset(offset: Offset) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-pub fn read_needle_blob(file: &mut File, offset: Offset, size: Size) -> Result<Bytes> {
+pub fn read_needle_blob(
+    file: &mut File,
+    offset: Offset,
+    size: Size,
+) -> StdResult<Bytes, NeedleError> {
     let size = actual_size(size);
     let mut buffer = vec![0; size as usize];
 
@@ -148,9 +149,9 @@ impl Needle {
         );
     }
 
-    pub fn parse_path(&mut self, fid: &str) -> Result<()> {
+    pub fn parse_path(&mut self, fid: &str) -> StdResult<(), NeedleError> {
         if fid.len() <= 8 {
-            return Err(Error::InvalidFid(fid.to_string()));
+            return Err(NeedleError::InvalidFid(fid.to_string()));
         }
 
         let (id, delta) = match fid.find('_') {
@@ -175,7 +176,7 @@ impl Needle {
         offset: u32,
         body_len: u32,
         version: Version,
-    ) -> Result<()> {
+    ) -> StdResult<(), NeedleError> {
         if body_len == 0 {
             return Ok(());
         }
@@ -186,7 +187,7 @@ impl Needle {
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
-            n => return Err(Error::UnsupportedVersion(n)),
+            n => return Err(NeedleError::UnsupportedVersion(n)),
         }
         Ok(())
     }
@@ -236,9 +237,9 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> Result<()> {
+    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> StdResult<(), NeedleError> {
         if version != CURRENT_VERSION {
-            return Err(anyhow!("no supported version"));
+            return Err(NeedleError::UnsupportedVersion(version));
         }
 
         self.data_size = self.data.len() as u32;
@@ -300,12 +301,12 @@ impl Needle {
         offset: Offset,
         size: Size,
         version: Version,
-    ) -> Result<()> {
+    ) -> StdResult<(), NeedleError> {
         let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
         if self.size != size {
-            return Err(NeedleError::NotFound(0, self.id).into());
+            return Err(NeedleError::NotFound(0, self.id));
         }
 
         if version == VERSION2 {
@@ -319,7 +320,7 @@ impl Needle {
         let checksum = crc::checksum(&self.data);
 
         if self.checksum != checksum {
-            return Err(Error::Crc(self.checksum, checksum));
+            return Err(NeedleError::Crc(self.checksum, checksum));
         }
 
         Ok(())
@@ -404,9 +405,9 @@ impl Needle {
     }
 }
 
-fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie)> {
+fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     if hash.len() <= 8 || hash.len() > 24 {
-        return Err(anyhow!("key hash too short or too long: {}", hash));
+        return Err(NeedleError::InvalidKeyHash(hash.to_string()));
     }
 
     let key_end = hash.len() - 8;
@@ -417,7 +418,11 @@ fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie)> {
     Ok((key, cookie))
 }
 
-pub fn read_needle_header(file: &File, version: Version, offset: Offset) -> Result<(Needle, u32)> {
+pub fn read_needle_header(
+    file: &File,
+    version: Version,
+    offset: Offset,
+) -> StdResult<(Needle, u32), NeedleError> {
     let mut needle = Needle::default();
     let mut body_len = 0;
 

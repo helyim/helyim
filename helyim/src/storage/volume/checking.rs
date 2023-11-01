@@ -1,30 +1,29 @@
-use std::{fs::File, os::unix::fs::FileExt};
+use std::{fs::File, os::unix::fs::FileExt, result::Result};
 
-use crate::{
-    errors::Result,
-    storage::{
-        index_entry,
-        needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
-        types::{Offset, Size},
-        version::Version,
-        volume::Volume,
-        Needle, NeedleId, VolumeError,
-    },
+use crate::storage::{
+    index_entry,
+    needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
+    types::{Offset, Size},
+    version::Version,
+    volume::Volume,
+    Needle, NeedleId, VolumeError,
 };
 
-pub fn verify_index_file_integrity(index_file: &File) -> Result<u64> {
+pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError> {
     let meta = index_file.metadata()?;
     let size = meta.len();
     if size % NEEDLE_PADDING_SIZE as u64 != 0 {
         return Err(VolumeError::DataIntegrity(format!(
             "index file's size is {size} bytes, maybe corrupted"
-        ))
-        .into());
+        )));
     }
     Ok(size)
 }
 
-pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Result<()> {
+pub fn check_volume_data_integrity(
+    volume: &mut Volume,
+    index_file: &File,
+) -> Result<(), VolumeError> {
     let index_size = verify_index_file_integrity(index_file)?;
     if index_size == 0 {
         return Ok(());
@@ -39,7 +38,7 @@ pub fn check_volume_data_integrity(volume: &mut Volume, index_file: &File) -> Re
     verify_needle_integrity(volume.file_mut()?, version, key, offset, size)
 }
 
-pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>> {
+pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {
     let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
     index_file.read_exact_at(&mut buf, offset)?;
     Ok(buf)
@@ -51,19 +50,17 @@ pub fn verify_needle_integrity(
     key: NeedleId,
     offset: Offset,
     size: Size,
-) -> Result<()> {
+) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
     needle.read_data(data_file, offset, size, version)?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
             needle.id
-        ))
-        .into());
+        )));
     }
     Ok(())
 }
-// volume checking end
 
 #[cfg(test)]
 mod tests {

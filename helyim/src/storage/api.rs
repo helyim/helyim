@@ -14,6 +14,7 @@ use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
 use futures::stream::once;
+use ginepro::LoadBalancedChannel;
 use helyim_proto::helyim_client::HelyimClient;
 use hyper::{
     header::{
@@ -36,7 +37,6 @@ use nom::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tonic::transport::Channel;
 use tracing::{error, info};
 
 use crate::{
@@ -63,7 +63,7 @@ pub struct StorageContext {
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
-    pub client: HelyimClient<Channel>,
+    pub client: HelyimClient<LoadBalancedChannel>,
     pub looker: Arc<Looker>,
 }
 

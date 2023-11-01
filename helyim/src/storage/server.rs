@@ -4,6 +4,7 @@ use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
 use futures::{channel::mpsc::unbounded, StreamExt};
+use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer, VolumeServerServer},
@@ -20,10 +21,7 @@ use helyim_proto::{
 };
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
-use tonic::{
-    transport::{Channel, Server as TonicServer},
-    Request, Response, Status, Streaming,
-};
+use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::{
@@ -141,13 +139,13 @@ impl StorageServer {
         Ok(())
     }
 
-    fn grpc_addr(&self) -> Result<String> {
+    fn grpc_addr(&self) -> Result<(String, u16)> {
         match self.master_node.rfind(':') {
             Some(idx) => {
                 let port = self.master_node[idx + 1..].parse::<u16>()?;
-                Ok(format!("http://{}:{}", &self.master_node[..idx], port + 1))
+                Ok((self.master_node[..idx].to_string(), port + 1))
             }
-            None => Ok(self.master_node.to_string()),
+            None => Ok((self.master_node.to_string(), 80)),
         }
     }
 
@@ -157,7 +155,10 @@ impl StorageServer {
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.pulse_seconds as u64;
 
-        let client = HelyimClient::connect(self.grpc_addr()?).await?;
+        let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
+            .channel()
+            .await?;
+        let client = HelyimClient::new(channel);
 
         let ctx = StorageContext {
             store,
@@ -206,7 +207,7 @@ impl StorageServer {
 
 async fn start_heartbeat(
     store: StoreEventTx,
-    mut client: HelyimClient<Channel>,
+    mut client: HelyimClient<LoadBalancedChannel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
@@ -254,7 +255,7 @@ async fn start_heartbeat(
 
 async fn heartbeat_stream(
     store: StoreEventTx,
-    client: &mut HelyimClient<Channel>,
+    client: &mut HelyimClient<LoadBalancedChannel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
 ) -> Result<Streaming<HeartbeatResponse>> {
