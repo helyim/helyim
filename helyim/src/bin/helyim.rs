@@ -1,11 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use helyim::{
-    directory::{DirectoryServer, Sequencer},
+    directory::{DirectoryServer, Sequencer, SequencerType},
     storage::{NeedleMapType, ReplicaPlacement, StorageServer},
 };
 use tokio::signal;
 use tracing::{info, Level};
-use helyim::directory::SequencerType;
 
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]
