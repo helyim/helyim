@@ -172,7 +172,10 @@ impl Store {
         ttl: Ttl,
         preallocate: i64,
     ) -> Result<()> {
-        debug!("do_add_volume vid: {} collection: {}", vid, collection);
+        debug!(
+            "add volume: {}, collection: {}, ttl: {}, replica placement: {}",
+            vid, collection, ttl, replica_placement
+        );
         if self.find_volume(vid).await?.is_some() {
             return Err(anyhow!("volume id {} already exists!", vid));
         }
