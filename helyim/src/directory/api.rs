@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use axum::{
     extract::{Query, State},
     Json,
@@ -72,7 +73,7 @@ pub async fn assign_handler(
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = request.volume_grow_option()?;
+    let option = Arc::new(request.volume_grow_option()?);
 
     if !ctx.topology.has_writable_volume(option.clone()).await? {
         if ctx.topology.free_volumes().await? <= 0 {
@@ -85,8 +86,8 @@ pub async fn assign_handler(
     let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
-        url: node.url().await?,
-        public_url: node.public_url().await?,
+        url: node.url(),
+        public_url: node.public_url.clone(),
         count,
         error: String::default(),
     };

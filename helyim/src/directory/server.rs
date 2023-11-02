@@ -256,10 +256,10 @@ impl Helyim for DirectoryGrpcServer {
             match self.topology.lookup(collection.clone(), volume_id).await {
                 Ok(Some(nodes)) => {
                     for dn in nodes.iter() {
-                        let public_url = dn.public_url().await?;
+                        let public_url = dn.public_url.to_string();
                         locations.push(Location {
-                            url: dn.url().await?,
-                            public_url: public_url.to_string(),
+                            url: dn.url(),
+                            public_url,
                         });
                     }
                 }

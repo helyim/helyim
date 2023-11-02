@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -17,7 +17,7 @@ use crate::{
     },
     topology::{
         collection::Collection, data_center_loop, volume_grow::VolumeGrowOption,
-        volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNodeEventTx,
+        volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNode,
     },
 };
 
@@ -91,7 +91,7 @@ impl Topology {
         &mut self,
         collection: FastStr,
         volume_id: VolumeId,
-    ) -> Option<Vec<DataNodeEventTx>> {
+    ) -> Option<Vec<Arc<DataNode>>> {
         if collection.is_empty() {
             for c in self.collections.values() {
                 let data_node = c.lookup(volume_id);
@@ -109,7 +109,7 @@ impl Topology {
         None
     }
 
-    pub async fn has_writable_volume(&mut self, option: VolumeGrowOption) -> Result<bool> {
+    pub async fn has_writable_volume(&mut self, option: Arc<VolumeGrowOption>) -> Result<bool> {
         let vl = self.get_volume_layout(
             option.collection.clone(),
             option.replica_placement,
@@ -130,8 +130,8 @@ impl Topology {
     pub async fn pick_for_write(
         &mut self,
         count: u64,
-        option: VolumeGrowOption,
-    ) -> Result<(FileId, u64, DataNodeEventTx)> {
+        option: Arc<VolumeGrowOption>,
+    ) -> Result<(FileId, u64, Arc<DataNode>)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
         let (volume_id, node) = {
@@ -140,7 +140,7 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            layout.pick_for_write(&option).await?
+            layout.pick_for_write(option.as_ref()).await?
         };
 
         let file_id = FileId {
@@ -154,7 +154,7 @@ impl Topology {
     pub async fn register_volume_layout(
         &mut self,
         volume: VolumeInfo,
-        data_node: DataNodeEventTx,
+        data_node: Arc<DataNode>,
     ) -> Result<()> {
         self.get_volume_layout(
             volume.collection.clone(),
@@ -195,8 +195,9 @@ impl Topology {
     pub async fn vacuum(&mut self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
         for (_name, collection) in self.collections.iter_mut() {
             for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
-                let location = volume_layout.locations.clone();
-                for (vid, data_nodes) in location {
+                // TODO: avoid cloning the HashMap
+                let locations = volume_layout.locations.clone();
+                for (vid, data_nodes) in locations {
                     if volume_layout.readonly_volumes.contains(&vid) {
                         continue;
                     }

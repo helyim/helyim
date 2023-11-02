@@ -4,7 +4,7 @@ mod data_center;
 pub use data_center::{data_center_loop, DataCenter, DataCenterEventTx};
 
 mod data_node;
-pub use data_node::{data_node_loop, DataNode, DataNodeEventTx};
+pub use data_node::DataNode;
 
 mod rack;
 pub use rack::{rack_loop, Rack, RackEventTx};
