@@ -1,29 +1,24 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
-use tokio::task::JoinHandle;
 
 use crate::{
     errors::{Error, Result},
-    rt_spawn,
     storage::VolumeId,
-    topology::{data_node_loop, DataCenterEventTx, DataNode, DataNodeEventTx},
+    topology::{DataCenterEventTx, DataNode},
 };
 
 #[derive(Debug, Serialize)]
 pub struct Rack {
     id: FastStr,
     #[serde(skip)]
-    nodes: HashMap<FastStr, DataNodeEventTx>,
+    nodes: HashMap<FastStr, Arc<DataNode>>,
     max_volume_id: VolumeId,
     #[serde(skip)]
     data_center: Option<DataCenterEventTx>,
-    #[serde(skip)]
-    handles: Vec<JoinHandle<()>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -36,7 +31,6 @@ impl Rack {
             nodes: HashMap::new(),
             max_volume_id: 0,
             data_center: None,
-            handles: Vec::new(),
             shutdown,
         }
     }
@@ -49,7 +43,7 @@ impl Rack {
         self.data_center = Some(data_center)
     }
 
-    pub fn data_nodes(&self) -> HashMap<FastStr, DataNodeEventTx> {
+    pub fn data_nodes(&self) -> HashMap<FastStr, Arc<DataNode>> {
         self.nodes.clone()
     }
 
@@ -65,28 +59,32 @@ impl Rack {
         Ok(())
     }
 
-    pub fn get_or_create_data_node(
+    pub async fn get_or_create_data_node(
         &mut self,
         id: FastStr,
         ip: FastStr,
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-    ) -> DataNodeEventTx {
-        self.nodes
-            .entry(id.clone())
-            .or_insert_with(|| {
-                let data_node = DataNode::new(id, ip, port, public_url, max_volumes);
-                let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(data_node_loop(
-                    data_node,
-                    rx,
+    ) -> Result<Arc<DataNode>> {
+        match self.nodes.get(&id) {
+            Some(data_node) => Ok(data_node.clone()),
+            None => {
+                let data_node = DataNode::new(
+                    id.clone(),
+                    ip,
+                    port,
+                    public_url,
+                    max_volumes,
                     self.shutdown.clone(),
-                )));
+                )
+                .await?;
 
-                DataNodeEventTx::new(tx)
-            })
-            .clone()
+                let data_node = Arc::new(data_node);
+                self.nodes.insert(id, data_node.clone());
+                Ok(data_node)
+            }
+        }
     }
 
     pub async fn data_center_id(&self) -> Result<FastStr> {
@@ -98,41 +96,41 @@ impl Rack {
 
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut count = 0;
-        for dn_tx in self.nodes.values() {
-            count += dn_tx.has_volumes().await?;
+        for data_node in self.nodes.values() {
+            count += data_node.has_volumes().await?;
         }
         Ok(count)
     }
 
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
-        for dn_tx in self.nodes.values() {
-            max_volumes += dn_tx.max_volumes().await?;
+        for data_node in self.nodes.values() {
+            max_volumes += data_node.max_volumes;
         }
         Ok(max_volumes)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for dn_tx in self.nodes.values() {
-            free_volumes += dn_tx.free_volumes().await?;
+        for data_node in self.nodes.values() {
+            free_volumes += data_node.free_volumes().await?;
         }
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
+    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
         // randomly select
         let mut free_volumes = 0;
-        for (_, dn_tx) in self.nodes.iter() {
-            free_volumes += dn_tx.free_volumes().await?;
+        for (_, data_node) in self.nodes.iter() {
+            free_volumes += data_node.free_volumes().await?;
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
-        for (_, dn_tx) in self.nodes.iter() {
-            free_volumes -= dn_tx.free_volumes().await?;
+        for (_, data_node) in self.nodes.iter() {
+            free_volumes -= data_node.free_volumes().await?;
             if free_volumes == idx {
-                return Ok(dn_tx.clone());
+                return Ok(data_node.clone());
             }
         }
 

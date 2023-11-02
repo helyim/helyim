@@ -25,9 +25,9 @@ fn upload(client: &Client, map: &HashMap<String, Value>) -> Result<(), Box<dyn s
 
 fn criterion_benchmark(c: &mut Criterion) {
     let client = Client::new();
+    let params = get_file_id(&client).unwrap();
     c.bench_function("upload", |b| {
         b.iter(|| {
-            let params = get_file_id(&client).unwrap();
             upload(&client, &params).unwrap();
         })
     });

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use faststr::FastStr;
 use helyim_macros::event_fn;
 use helyim_proto::AllocateVolumeRequest;
@@ -6,7 +8,7 @@ use rand::{prelude::SliceRandom, random};
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{DataCenterEventTx, DataNodeEventTx, RackEventTx, TopologyEventTx},
+    topology::{DataCenterEventTx, DataNode, RackEventTx, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
@@ -31,13 +33,13 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
-    ) -> Result<Vec<DataNodeEventTx>> {
+    ) -> Result<Vec<Arc<DataNode>>> {
         let mut main_dc: Option<DataCenterEventTx> = None;
         let mut main_rack: Option<RackEventTx> = None;
-        let mut main_dn: Option<DataNodeEventTx> = None;
+        let mut main_dn: Option<Arc<DataNode>> = None;
         let mut other_centers: Vec<DataCenterEventTx> = vec![];
         let mut other_racks: Vec<RackEventTx> = vec![];
-        let mut other_nodes: Vec<DataNodeEventTx> = vec![];
+        let mut other_nodes: Vec<Arc<DataNode>> = vec![];
 
         let rp = option.replica_placement;
         let mut valid_main_counts = 0;
@@ -188,11 +190,11 @@ impl VolumeGrowth {
         if main_dn.is_none() {
             return Err(Error::NoFreeSpace("find main node fail".to_string()));
         }
-        let main_dn_tx = main_dn.unwrap().clone();
+        let main_dn = main_dn.unwrap().clone();
 
         if rp.same_rack_count > 0 {
             for (node_id, node) in main_rack_tx.data_nodes().await?.iter() {
-                if *node_id == main_dn_tx.id().await? || node.free_volumes().await? < 1 {
+                if *node_id == main_dn.id || node.free_volumes().await? < 1 {
                     continue;
                 }
                 other_nodes.push(node.clone());
@@ -207,7 +209,7 @@ impl VolumeGrowth {
         other_nodes = tmp_nodes;
 
         let mut ret = vec![];
-        ret.push(main_dn_tx.clone());
+        ret.push(main_dn.clone());
 
         for nd in other_nodes {
             ret.push(nd.clone());
@@ -257,7 +259,7 @@ impl VolumeGrowth {
         vid: VolumeId,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
-        nodes: Vec<DataNodeEventTx>,
+        nodes: Vec<Arc<DataNode>>,
     ) -> Result<()> {
         for dn in nodes {
             dn.allocate_volume(AllocateVolumeRequest {
@@ -291,11 +293,12 @@ impl VolumeGrowth {
 impl VolumeGrowth {
     pub async fn grow_by_type(
         &mut self,
-        option: VolumeGrowOption,
+        option: Arc<VolumeGrowOption>,
         topology: TopologyEventTx,
     ) -> Result<usize> {
         let count = self.find_volume_count(option.replica_placement.copy_count());
-        self.grow_by_count_and_type(count, &option, topology).await
+        self.grow_by_count_and_type(count, option.as_ref(), topology)
+            .await
     }
 }
 

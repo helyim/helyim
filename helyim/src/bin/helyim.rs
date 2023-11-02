@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use helyim::{
-    directory::{DirectoryServer, Sequencer},
+    directory::{DirectoryServer, Sequencer, SequencerType},
     storage::{NeedleMapType, ReplicaPlacement, StorageServer},
 };
 use tokio::signal;
@@ -77,7 +77,7 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
         master.pulse_seconds,
         ReplicaPlacement::new(&master.default_replication)?,
         0.3,
-        Sequencer::new("snowflake")?,
+        Sequencer::new(SequencerType::Memory)?,
     )
     .await?;
     dir.start().await?;

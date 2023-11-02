@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -11,7 +11,7 @@ use crate::{
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
-    topology::{rack_loop, DataNodeEventTx, Rack, RackEventTx},
+    topology::{rack_loop, DataNode, Rack, RackEventTx},
 };
 
 #[derive(Debug, Serialize)]
@@ -95,7 +95,7 @@ impl DataCenter {
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeEventTx> {
+    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
