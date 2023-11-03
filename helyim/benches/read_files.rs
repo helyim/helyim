@@ -22,7 +22,7 @@ fn extract_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> &'a str {
 
 fn read_file(client: &Client, url: &str, fid: &str) -> Result<Bytes, Box<dyn std::error::Error>> {
     let response = client.get(format!("http://{url}/{fid}")).send()?.bytes()?;
-    assert!(response.len() > 0);
+    assert!(!response.is_empty());
     Ok(response)
 }
 
