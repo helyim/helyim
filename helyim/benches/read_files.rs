@@ -1,5 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
+use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use reqwest::blocking::{multipart::Form, Client};
 use serde_json::Value;
@@ -19,6 +20,12 @@ fn extract_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> &'a str {
     }
 }
 
+fn read_file(client: &Client, url: &str, fid: &str) -> Result<Bytes, Box<dyn std::error::Error>> {
+    let response = client.get(format!("http://{url}/{fid}")).send()?.bytes()?;
+    assert!(response.len() > 0);
+    Ok(response)
+}
+
 fn upload(client: &Client, url: &str, fid: &str) -> Result<(), Box<dyn std::error::Error>> {
     let form = Form::new().file("Cargo.toml", "Cargo.toml")?;
     client
@@ -33,9 +40,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     let params = get_file_id(&client).unwrap();
     let fid = extract_value(&params, "fid");
     let url = extract_value(&params, "public_url");
-    c.bench_function("upload files", |b| {
+    upload(&client, url, fid).unwrap();
+    c.bench_function("read files", |b| {
         b.iter(|| {
-            upload(&client, url, fid).unwrap();
+            read_file(&client, url, fid).unwrap();
         })
     });
 }

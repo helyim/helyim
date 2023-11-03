@@ -200,7 +200,7 @@ impl DataNode {
     }
 
     pub fn url(&self) -> String {
-        format!("http://{}:{}", self.ip, self.port)
+        format!("{}:{}", self.ip, self.port)
     }
 
     pub async fn add_or_update_volume(&self, v: VolumeInfo) -> Result<()> {
