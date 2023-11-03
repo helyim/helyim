@@ -130,7 +130,7 @@ impl RackInner {
         }
 
         Err(Error::NoFreeSpace(format!(
-            "no free volumes on rack {}",
+            "no free volumes found on rack {}",
             self.id
         )))
     }

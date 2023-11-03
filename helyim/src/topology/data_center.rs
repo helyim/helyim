@@ -102,7 +102,7 @@ impl DataCenter {
         }
 
         Err(Error::NoFreeSpace(format!(
-            "reserve_one_volume on dc {} fail",
+            "no free volumes found on data center {}",
             self.id
         )))
     }
