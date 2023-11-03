@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult};
+use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc};
 
 use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
@@ -23,9 +23,7 @@ use crate::{
     sequence::Sequencer,
     storage::{ReplicaPlacement, VolumeInfo},
     topology::{
-        topology_loop, topology_vacuum_loop,
-        volume_grow::{volume_growth_loop, VolumeGrowth, VolumeGrowthEventTx},
-        Topology, TopologyEventTx,
+        topology_loop, topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyEventTx,
     },
     util::{exit, get_or_default},
     PHRASE, STOP_INTERVAL,
@@ -41,7 +39,7 @@ pub struct DirectoryServer {
     pub pulse_seconds: u64,
     pub garbage_threshold: f64,
     pub topology: TopologyEventTx,
-    pub volume_grow: VolumeGrowthEventTx,
+    pub volume_grow: Arc<VolumeGrowth>,
     handles: Vec<JoinHandle<()>>,
 
     shutdown: async_broadcast::Sender<()>,
@@ -78,12 +76,6 @@ impl DirectoryServer {
             shutdown_rx.clone(),
         ));
 
-        // volume growth event loop
-        let (tx, rx) = unbounded();
-        let volume_grow_handle =
-            rt_spawn(volume_growth_loop(VolumeGrowth, rx, shutdown_rx.clone()));
-        let volume_grow = VolumeGrowthEventTx::new(tx);
-
         let dir = DirectoryServer {
             host: FastStr::new(host),
             ip: FastStr::new(ip),
@@ -93,10 +85,10 @@ impl DirectoryServer {
             pulse_seconds,
             default_replica_placement,
             meta_folder: FastStr::new(meta_folder),
-            volume_grow,
+            volume_grow: Arc::new(VolumeGrowth),
             topology: topology.clone(),
             shutdown,
-            handles: vec![topology_handle, topology_vacuum_handle, volume_grow_handle],
+            handles: vec![topology_handle, topology_vacuum_handle],
         };
 
         let addr = format!("{}:{}", host, port + 1).parse()?;
@@ -305,7 +297,7 @@ async fn handle_heartbeat(
 
     let data_center = topology.get_or_create_data_center(data_center).await?;
     let rack = data_center.get_or_create_rack(rack).await?;
-    rack.set_data_center(data_center)?;
+    rack.set_data_center(Arc::downgrade(&data_center))?;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
@@ -317,7 +309,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as i64,
         )
         .await?;
-    node.set_rack(rack)?;
+    node.set_rack(Arc::downgrade(&rack))?;
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {

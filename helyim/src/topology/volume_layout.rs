@@ -97,7 +97,7 @@ impl VolumeLayout {
         Err(VolumeError::NoWritableVolumes.into())
     }
 
-    async fn set_node(locations: &mut Vec<Arc<DataNode>>, dn: Arc<DataNode>) -> Result<()> {
+    fn set_node(locations: &mut Vec<Arc<DataNode>>, dn: Arc<DataNode>) -> Result<()> {
         let mut same: Option<usize> = None;
         let mut i = 0;
         for location in locations.iter() {
@@ -121,7 +121,7 @@ impl VolumeLayout {
     pub async fn register_volume(&mut self, v: &VolumeInfo, dn: Arc<DataNode>) -> Result<()> {
         {
             let list = self.locations.entry(v.id).or_default();
-            VolumeLayout::set_node(list, dn).await?;
+            VolumeLayout::set_node(list, dn)?;
         }
 
         let mut locations = vec![];

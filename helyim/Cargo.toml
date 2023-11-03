@@ -18,7 +18,7 @@ keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust"]
 
 [dependencies]
 anyhow.workspace = true
-async-scoped = { version = "0.7", features = ["use-tokio"] }
+async-scoped = { workspace = true, features = ["use-tokio"] }
 async-broadcast.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true

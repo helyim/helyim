@@ -1,23 +1,20 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use serde::Serialize;
-use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::{
     errors::Result,
-    rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
         ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center_loop, volume_grow::VolumeGrowOption,
-        volume_layout::VolumeLayout, DataCenter, DataCenterEventTx, DataNode,
+        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout,
+        DataCenter, DataNode,
     },
 };
 
@@ -29,9 +26,7 @@ pub struct Topology {
     pulse: u64,
     volume_size_limit: u64,
     #[serde(skip)]
-    data_centers: HashMap<FastStr, DataCenterEventTx>,
-    #[serde(skip)]
-    handles: Vec<JoinHandle<()>>,
+    data_centers: HashMap<FastStr, Arc<DataCenter>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -46,7 +41,6 @@ impl Clone for Topology {
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
-            handles: Vec::new(),
             shutdown: self.shutdown.clone(),
         }
     }
@@ -66,25 +60,21 @@ impl Topology {
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
-            handles: Vec::new(),
             shutdown,
         }
     }
 
-    pub fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterEventTx {
-        self.data_centers
-            .entry(name.clone())
-            .or_insert_with(|| {
-                let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(data_center_loop(
-                    DataCenter::new(name, self.shutdown.clone()),
-                    rx,
-                    self.shutdown.clone(),
-                )));
+    pub fn get_or_create_data_center(&mut self, name: FastStr) -> Arc<DataCenter> {
+        match self.data_centers.get(&name) {
+            Some(data_node) => data_node.clone(),
+            None => {
+                let data_center = DataCenter::new(name.clone(), self.shutdown.clone());
 
-                DataCenterEventTx::new(tx)
-            })
-            .clone()
+                let data_center = Arc::new(data_center);
+                self.data_centers.insert(name, data_center.clone());
+                data_center
+            }
+        }
     }
 
     pub fn lookup(
@@ -184,7 +174,7 @@ impl Topology {
         self.sequencer.set_max(seq);
     }
 
-    pub fn data_centers(&self) -> HashMap<FastStr, DataCenterEventTx> {
+    pub fn data_centers(&self) -> HashMap<FastStr, Arc<DataCenter>> {
         self.data_centers.clone()
     }
 

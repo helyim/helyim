@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Weak,
+};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -16,7 +19,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{VolumeId, VolumeInfo},
-    topology::RackEventTx,
+    topology::Rack,
 };
 
 #[derive(Debug, Serialize)]
@@ -25,13 +28,11 @@ pub struct DataNode {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    last_seen: i64,
+    pub last_seen: i64,
     pub max_volumes: i64,
     #[serde(skip)]
     inner: DataNodeInnerEventTx,
 }
-
-unsafe impl Send for DataNode {}
 
 impl std::fmt::Display for DataNode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -43,7 +44,7 @@ impl std::fmt::Display for DataNode {
 struct DataNodeInner {
     max_volume_id: VolumeId,
     #[serde(skip)]
-    rack: Option<RackEventTx>,
+    rack: Weak<Rack>,
     volumes: HashMap<VolumeId, VolumeInfo>,
     #[serde(skip)]
     client: VolumeServerClient<LoadBalancedChannel>,
@@ -56,9 +57,8 @@ impl DataNodeInner {
         volume_infos: Vec<VolumeInfo>,
     ) -> Result<Vec<VolumeInfo>> {
         let mut volumes = HashSet::new();
-        for info in volume_infos {
+        for info in volume_infos.iter() {
             volumes.insert(info.id);
-            self.add_or_update_volume(info).await?;
         }
 
         let mut deleted_id = vec![];
@@ -68,6 +68,10 @@ impl DataNodeInner {
             if !volumes.contains(id) {
                 deleted_id.push(volume.id)
             }
+        }
+
+        for info in volume_infos {
+            self.add_or_update_volume(info).await?;
         }
 
         for id in deleted_id.iter() {
@@ -90,7 +94,7 @@ impl DataNodeInner {
             self.max_volume_id = vid;
         }
 
-        if let Some(rack) = self.rack.as_ref() {
+        if let Some(rack) = self.rack.upgrade() {
             rack.adjust_max_volume_id(self.max_volume_id).await?;
         }
 
@@ -105,20 +109,20 @@ impl DataNodeInner {
         self.volumes.get(&vid).cloned()
     }
 
-    pub async fn rack_id(&self) -> Result<FastStr> {
-        match self.rack.as_ref() {
-            Some(rack) => rack.id().await,
-            None => Ok(FastStr::empty()),
+    pub fn rack_id(&self) -> FastStr {
+        match self.rack.upgrade() {
+            Some(rack) => rack.id.clone(),
+            None => FastStr::empty(),
         }
     }
     pub async fn data_center_id(&self) -> Result<FastStr> {
-        match self.rack.as_ref() {
+        match self.rack.upgrade() {
             Some(rack) => rack.data_center_id().await,
             None => Ok(FastStr::empty()),
         }
     }
-    pub fn set_rack(&mut self, rack: RackEventTx) {
-        self.rack = Some(rack);
+    pub fn set_rack(&mut self, rack: Weak<Rack>) {
+        self.rack = rack;
     }
 
     pub async fn allocate_volume(
@@ -177,7 +181,7 @@ impl DataNode {
             .channel()
             .await?;
         let inner = DataNodeInner {
-            rack: None,
+            rack: Weak::new(),
             max_volume_id: 0,
             volumes: HashMap::new(),
             client: VolumeServerClient::new(channel),
@@ -223,7 +227,7 @@ impl DataNode {
         self.inner.get_volume(vid).await
     }
 
-    pub fn set_rack(&self, rack: RackEventTx) -> Result<()> {
+    pub fn set_rack(&self, rack: Weak<Rack>) -> Result<()> {
         self.inner.set_rack(rack)
     }
 
