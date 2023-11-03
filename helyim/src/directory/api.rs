@@ -12,7 +12,7 @@ use crate::{
     operation::{Assignment, ClusterStatus},
     storage::{ReplicaPlacement, Ttl},
     topology::{
-        volume_grow::{VolumeGrowOption, VolumeGrowthEventTx},
+        volume_grow::{VolumeGrowOption, VolumeGrowth},
         Topology, TopologyEventTx,
     },
 };
@@ -20,7 +20,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub topology: TopologyEventTx,
-    pub volume_grow: VolumeGrowthEventTx,
+    pub volume_grow: Arc<VolumeGrowth>,
     pub default_replica_placement: ReplicaPlacement,
     pub ip: FastStr,
     pub port: u16,

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use helyim_proto::AllocateVolumeRequest;
 use rand::{prelude::SliceRandom, random};
 
@@ -229,7 +228,7 @@ impl VolumeGrowth {
     }
 
     async fn find_and_grow(
-        &mut self,
+        &self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<usize> {
@@ -241,7 +240,7 @@ impl VolumeGrowth {
     }
 
     async fn grow_by_count_and_type(
-        &mut self,
+        &self,
         count: usize,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
@@ -255,7 +254,7 @@ impl VolumeGrowth {
     }
 
     async fn grow(
-        &mut self,
+        &self,
         vid: VolumeId,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
@@ -289,10 +288,9 @@ impl VolumeGrowth {
     }
 }
 
-#[event_fn]
 impl VolumeGrowth {
     pub async fn grow_by_type(
-        &mut self,
+        &self,
         option: Arc<VolumeGrowOption>,
         topology: TopologyEventTx,
     ) -> Result<usize> {
