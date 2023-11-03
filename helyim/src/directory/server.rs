@@ -309,7 +309,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as i64,
         )
         .await?;
-    node.set_rack(rack)?;
+    node.set_rack(Arc::downgrade(&rack))?;
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {

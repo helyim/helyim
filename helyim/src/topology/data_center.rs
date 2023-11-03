@@ -1,17 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
-use tokio::task::JoinHandle;
 
 use crate::{
     errors::{Error, Result},
-    rt_spawn,
     storage::VolumeId,
-    topology::{rack_loop, DataNode, Rack, RackEventTx},
+    topology::{DataNode, Rack},
 };
 
 #[derive(Debug, Serialize)]
@@ -19,9 +16,7 @@ pub struct DataCenter {
     id: FastStr,
     max_volume_id: VolumeId,
     #[serde(skip)]
-    racks: HashMap<FastStr, RackEventTx>,
-    #[serde(skip)]
-    handles: Vec<JoinHandle<()>>,
+    racks: HashMap<FastStr, Arc<Rack>>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -33,7 +28,6 @@ impl DataCenter {
             id,
             racks: HashMap::new(),
             max_volume_id: 0,
-            handles: Vec::new(),
             shutdown,
         }
     }
@@ -45,7 +39,7 @@ impl DataCenter {
         self.max_volume_id
     }
 
-    pub fn racks(&self) -> HashMap<FastStr, RackEventTx> {
+    pub fn racks(&self) -> HashMap<FastStr, Arc<Rack>> {
         self.racks.clone()
     }
 
@@ -55,20 +49,16 @@ impl DataCenter {
         }
     }
 
-    pub fn get_or_create_rack(&mut self, id: FastStr) -> RackEventTx {
-        self.racks
-            .entry(id.clone())
-            .or_insert_with(|| {
-                let (tx, rx) = unbounded();
-                self.handles.push(rt_spawn(rack_loop(
-                    Rack::new(id, self.shutdown.clone()),
-                    rx,
-                    self.shutdown.clone(),
-                )));
-
-                RackEventTx::new(tx)
-            })
-            .clone()
+    pub fn get_or_create_rack(&mut self, id: FastStr) -> Arc<Rack> {
+        match self.racks.get(&id) {
+            Some(rack) => rack.clone(),
+            None => {
+                let rack = Rack::new(id.clone(), self.shutdown.clone());
+                let rack = Arc::new(rack);
+                self.racks.insert(id, rack.clone());
+                rack
+            }
+        }
     }
 
     pub async fn has_volumes(&self) -> Result<i64> {

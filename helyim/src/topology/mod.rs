@@ -7,7 +7,7 @@ mod data_node;
 pub use data_node::DataNode;
 
 mod rack;
-pub use rack::{rack_loop, Rack, RackEventTx};
+pub use rack::Rack;
 
 #[allow(clippy::module_inception)]
 mod topology;

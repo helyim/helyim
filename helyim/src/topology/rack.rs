@@ -1,18 +1,27 @@
 use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 
 use crate::{
     errors::{Error, Result},
+    rt_spawn,
     storage::VolumeId,
     topology::{DataCenterEventTx, DataNode},
 };
 
 #[derive(Debug, Serialize)]
 pub struct Rack {
+    pub id: FastStr,
+    #[serde(skip)]
+    inner: RackInnerEventTx,
+}
+
+#[derive(Debug, Serialize)]
+struct RackInner {
     id: FastStr,
     #[serde(skip)]
     nodes: HashMap<FastStr, Arc<DataNode>>,
@@ -24,23 +33,9 @@ pub struct Rack {
 }
 
 #[event_fn]
-impl Rack {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
-        Rack {
-            id,
-            nodes: HashMap::new(),
-            max_volume_id: 0,
-            data_center: None,
-            shutdown,
-        }
-    }
-
-    pub fn id(&self) -> FastStr {
-        self.id.clone()
-    }
-
+impl RackInner {
     pub fn set_data_center(&mut self, data_center: DataCenterEventTx) {
-        self.data_center = Some(data_center)
+        self.data_center = Some(data_center);
     }
 
     pub fn data_nodes(&self) -> HashMap<FastStr, Arc<DataNode>> {
@@ -135,8 +130,73 @@ impl Rack {
         }
 
         Err(Error::NoFreeSpace(format!(
-            "reserve one volume on rack {} fail",
+            "no free volumes on rack {}",
             self.id
         )))
+    }
+}
+
+impl Rack {
+    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
+        let (tx, rx) = unbounded();
+        let inner = RackInner {
+            id: id.clone(),
+            nodes: HashMap::new(),
+            max_volume_id: 0,
+            data_center: None,
+            shutdown: shutdown.clone(),
+        };
+        rt_spawn(rack_inner_loop(inner, rx, shutdown));
+        let inner = RackInnerEventTx::new(tx);
+        Rack { id, inner }
+    }
+
+    pub fn id(&self) -> FastStr {
+        self.id.clone()
+    }
+
+    pub fn set_data_center(&self, data_center: DataCenterEventTx) -> Result<()> {
+        self.inner.set_data_center(data_center)
+    }
+
+    pub async fn data_nodes(&self) -> Result<HashMap<FastStr, Arc<DataNode>>> {
+        self.inner.data_nodes().await
+    }
+
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+        self.inner.adjust_max_volume_id(vid).await
+    }
+
+    pub async fn get_or_create_data_node(
+        &self,
+        id: FastStr,
+        ip: FastStr,
+        port: u16,
+        public_url: FastStr,
+        max_volumes: i64,
+    ) -> Result<Arc<DataNode>> {
+        self.inner
+            .get_or_create_data_node(id, ip, port, public_url, max_volumes)
+            .await
+    }
+
+    pub async fn data_center_id(&self) -> Result<FastStr> {
+        self.inner.data_center_id().await
+    }
+
+    pub async fn has_volumes(&self) -> Result<i64> {
+        self.inner.has_volumes().await
+    }
+
+    pub async fn max_volumes(&self) -> Result<i64> {
+        self.inner.max_volumes().await
+    }
+
+    pub async fn free_volumes(&self) -> Result<i64> {
+        self.inner.free_volumes().await
+    }
+
+    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
+        self.inner.reserve_one_volume().await
     }
 }

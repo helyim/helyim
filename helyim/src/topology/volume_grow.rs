@@ -7,7 +7,7 @@ use rand::{prelude::SliceRandom, random};
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{DataCenterEventTx, DataNode, RackEventTx, TopologyEventTx},
+    topology::{DataCenterEventTx, DataNode, Rack, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
@@ -34,10 +34,10 @@ impl VolumeGrowth {
         topology: TopologyEventTx,
     ) -> Result<Vec<Arc<DataNode>>> {
         let mut main_dc: Option<DataCenterEventTx> = None;
-        let mut main_rack: Option<RackEventTx> = None;
+        let mut main_rack: Option<Arc<Rack>> = None;
         let mut main_dn: Option<Arc<DataNode>> = None;
         let mut other_centers: Vec<DataCenterEventTx> = vec![];
-        let mut other_racks: Vec<RackEventTx> = vec![];
+        let mut other_racks: Vec<Arc<Rack>> = vec![];
         let mut other_nodes: Vec<Arc<DataNode>> = vec![];
 
         let rp = option.replica_placement;
@@ -62,9 +62,9 @@ impl VolumeGrowth {
             }
 
             let mut possible_racks_count = 0;
-            for (_, rack_tx) in racks.iter() {
+            for (_, rack) in racks.iter() {
                 let mut possible_nodes_count = 0;
-                for (_, dn) in rack_tx.data_nodes().await?.iter() {
+                for (_, dn) in rack.data_nodes().await?.iter() {
                     if dn.free_volumes().await? >= 1 {
                         possible_nodes_count += 1;
                     }
@@ -112,16 +112,16 @@ impl VolumeGrowth {
 
         // find main rack
         let mut valid_rack_count = 0;
-        for (_, rack_tx) in main_dc_tx.racks().await?.iter() {
-            if !option.rack.is_empty() && option.rack != rack_tx.id().await? {
+        for (_, rack) in main_dc_tx.racks().await?.iter() {
+            if !option.rack.is_empty() && option.rack != rack.id {
                 continue;
             }
 
-            if rack_tx.free_volumes().await? < rp.same_rack_count as i64 + 1 {
+            if rack.free_volumes().await? < rp.same_rack_count as i64 + 1 {
                 continue;
             }
 
-            let data_nodes = rack_tx.data_nodes().await?;
+            let data_nodes = rack.data_nodes().await?;
 
             if data_nodes.len() < rp.same_rack_count as usize + 1 {
                 continue;
@@ -142,7 +142,7 @@ impl VolumeGrowth {
             valid_rack_count += 1;
 
             if random::<u32>() % valid_rack_count == 0 {
-                main_rack = Some(rack_tx.clone());
+                main_rack = Some(rack.clone());
             }
         }
 
@@ -150,14 +150,14 @@ impl VolumeGrowth {
             return Err(Error::NoFreeSpace("find main rack fail".to_string()));
         }
 
-        let main_rack_tx = main_rack.unwrap();
+        let main_rack = main_rack.unwrap();
 
         if rp.diff_rack_count > 0 {
-            for (rack_id, rack_tx) in main_dc_tx.racks().await?.iter() {
-                if *rack_id == main_rack_tx.id().await? || rack_tx.free_volumes().await? < 1 {
+            for (rack_id, rack) in main_dc_tx.racks().await?.iter() {
+                if *rack_id == main_rack.id || rack.free_volumes().await? < 1 {
                     continue;
                 }
-                other_racks.push(rack_tx.clone());
+                other_racks.push(rack.clone());
             }
         }
 
@@ -172,7 +172,7 @@ impl VolumeGrowth {
 
         // find main node
         let mut valid_node = 0;
-        for (node_id, node) in main_rack_tx.data_nodes().await?.iter() {
+        for (node_id, node) in main_rack.data_nodes().await?.iter() {
             if !option.data_node.is_empty() && option.data_node != *node_id {
                 continue;
             }
@@ -192,7 +192,7 @@ impl VolumeGrowth {
         let main_dn = main_dn.unwrap().clone();
 
         if rp.same_rack_count > 0 {
-            for (node_id, node) in main_rack_tx.data_nodes().await?.iter() {
+            for (node_id, node) in main_rack.data_nodes().await?.iter() {
                 if *node_id == main_dn.id || node.free_volumes().await? < 1 {
                     continue;
                 }
