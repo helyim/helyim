@@ -45,6 +45,15 @@ For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 > curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
 ```
 
+### Benchmark
+
+My laptop results on Lenovo IdeaPad Pro 16 (2023) with SSD, CPU: 14 Intel Core i9 5.4GHz.
+
+| System    | Execution<br/>times | File size | Read <br/>time elapsed | Upload<br/>time elapsed |
+|-----------|---------------------|-----------|------------------------|-------------------------|
+| Helyim    | 10,0000             | 1kb       | 3.4s                   | 12.7s                   |
+| Seaweedfs | 10,0000             | 1kb       | 11.3s                  | 24.6s                   |
+
 ### Acknowledgments
 
 - [seaweedfs](https://github.com/seaweedfs/seaweedfs) - SeaweedFS is a fast distributed storage system for blobs, objects, files, and data lake, for billions of files! Blob store has O(1) disk seek, cloud tiering. Filer supports Cloud Drive, cross-DC active-active replication, Kubernetes, POSIX FUSE mount, S3 API, S3 Gateway, Hadoop, WebDAV, encryption, Erasure Coding.
