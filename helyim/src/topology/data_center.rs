@@ -1,18 +1,27 @@
 use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
+use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use rand::random;
 use serde::Serialize;
 
 use crate::{
     errors::{Error, Result},
+    rt_spawn,
     storage::VolumeId,
     topology::{DataNode, Rack},
 };
 
 #[derive(Debug, Serialize)]
 pub struct DataCenter {
+    pub id: FastStr,
+    #[serde(skip)]
+    inner: DataCenterInnerEventTx,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DataCenterInner {
     id: FastStr,
     max_volume_id: VolumeId,
     #[serde(skip)]
@@ -22,19 +31,7 @@ pub struct DataCenter {
 }
 
 #[event_fn]
-impl DataCenter {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> DataCenter {
-        DataCenter {
-            id,
-            racks: HashMap::new(),
-            max_volume_id: 0,
-            shutdown,
-        }
-    }
-    pub fn id(&self) -> FastStr {
-        self.id.clone()
-    }
-
+impl DataCenterInner {
     pub fn max_volume_id(&self) -> VolumeId {
         self.max_volume_id
     }
@@ -105,5 +102,52 @@ impl DataCenter {
             "no free volumes found on data center {}",
             self.id
         )))
+    }
+}
+
+impl DataCenter {
+    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> DataCenter {
+        let (tx, rx) = unbounded();
+        let inner = DataCenterInner {
+            id: id.clone(),
+            racks: HashMap::new(),
+            max_volume_id: 0,
+            shutdown: shutdown.clone(),
+        };
+        rt_spawn(data_center_inner_loop(inner, rx, shutdown));
+        let inner = DataCenterInnerEventTx::new(tx);
+        DataCenter { id, inner }
+    }
+
+    pub async fn max_volume_id(&self) -> Result<VolumeId> {
+        self.inner.max_volume_id().await
+    }
+
+    pub async fn racks(&self) -> Result<HashMap<FastStr, Arc<Rack>>> {
+        self.inner.racks().await
+    }
+
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
+        self.inner.adjust_max_volume_id(vid)
+    }
+
+    pub async fn get_or_create_rack(&self, id: FastStr) -> Result<Arc<Rack>> {
+        self.inner.get_or_create_rack(id).await
+    }
+
+    pub async fn has_volumes(&self) -> Result<i64> {
+        self.inner.has_volumes().await
+    }
+
+    pub async fn max_volumes(&self) -> Result<i64> {
+        self.inner.max_volumes().await
+    }
+
+    pub async fn free_volumes(&self) -> Result<i64> {
+        self.inner.free_volumes().await
+    }
+
+    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
+        self.inner.reserve_one_volume().await
     }
 }

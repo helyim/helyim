@@ -1,7 +1,7 @@
 pub mod collection;
 
 mod data_center;
-pub use data_center::{data_center_loop, DataCenter, DataCenterEventTx};
+pub use data_center::DataCenter;
 
 mod data_node;
 pub use data_node::DataNode;

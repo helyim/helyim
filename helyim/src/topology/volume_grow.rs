@@ -7,7 +7,7 @@ use rand::{prelude::SliceRandom, random};
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{DataCenterEventTx, DataNode, Rack, TopologyEventTx},
+    topology::{DataCenter, DataNode, Rack, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
@@ -33,10 +33,10 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
     ) -> Result<Vec<Arc<DataNode>>> {
-        let mut main_dc: Option<DataCenterEventTx> = None;
+        let mut main_dc: Option<Arc<DataCenter>> = None;
         let mut main_rack: Option<Arc<Rack>> = None;
         let mut main_dn: Option<Arc<DataNode>> = None;
-        let mut other_centers: Vec<DataCenterEventTx> = vec![];
+        let mut other_centers: Vec<Arc<DataCenter>> = vec![];
         let mut other_racks: Vec<Arc<Rack>> = vec![];
         let mut other_nodes: Vec<Arc<DataNode>> = vec![];
 
@@ -45,7 +45,7 @@ impl VolumeGrowth {
         let data_centers = topology.data_centers().await?;
         // find main data center
         for (_, dc_tx) in data_centers.iter() {
-            if !option.data_center.is_empty() && dc_tx.id().await? != option.data_center {
+            if !option.data_center.is_empty() && dc_tx.id != option.data_center {
                 continue;
             }
 
@@ -92,7 +92,7 @@ impl VolumeGrowth {
 
         if rp.diff_data_center_count > 0 {
             for (dc_id, dc_tx) in data_centers.iter() {
-                if *dc_id == main_dc_tx.id().await? || dc_tx.free_volumes().await? < 1 {
+                if *dc_id == main_dc_tx.id || dc_tx.free_volumes().await? < 1 {
                     continue;
                 }
                 other_centers.push(dc_tx.clone());

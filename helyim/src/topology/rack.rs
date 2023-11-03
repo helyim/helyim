@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -10,7 +13,7 @@ use crate::{
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
-    topology::{DataCenterEventTx, DataNode},
+    topology::{DataCenter, DataNode},
 };
 
 #[derive(Debug, Serialize)]
@@ -27,28 +30,28 @@ struct RackInner {
     nodes: HashMap<FastStr, Arc<DataNode>>,
     max_volume_id: VolumeId,
     #[serde(skip)]
-    data_center: Option<DataCenterEventTx>,
+    data_center: Weak<DataCenter>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
 
 #[event_fn]
 impl RackInner {
-    pub fn set_data_center(&mut self, data_center: DataCenterEventTx) {
-        self.data_center = Some(data_center);
+    pub fn set_data_center(&mut self, data_center: Weak<DataCenter>) {
+        self.data_center = data_center;
     }
 
     pub fn data_nodes(&self) -> HashMap<FastStr, Arc<DataNode>> {
         self.nodes.clone()
     }
 
-    pub fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
 
-        if let Some(dc) = self.data_center.as_ref() {
-            dc.adjust_max_volume_id(self.max_volume_id)?;
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.adjust_max_volume_id(self.max_volume_id).await?;
         }
 
         Ok(())
@@ -82,10 +85,10 @@ impl RackInner {
         }
     }
 
-    pub async fn data_center_id(&self) -> Result<FastStr> {
-        match self.data_center.as_ref() {
-            Some(data_center) => data_center.id().await,
-            None => Ok(FastStr::empty()),
+    pub async fn data_center_id(&self) -> FastStr {
+        match self.data_center.upgrade() {
+            Some(data_center) => data_center.id.clone(),
+            None => FastStr::empty(),
         }
     }
 
@@ -143,7 +146,7 @@ impl Rack {
             id: id.clone(),
             nodes: HashMap::new(),
             max_volume_id: 0,
-            data_center: None,
+            data_center: Weak::new(),
             shutdown: shutdown.clone(),
         };
         rt_spawn(rack_inner_loop(inner, rx, shutdown));
@@ -155,7 +158,7 @@ impl Rack {
         self.id.clone()
     }
 
-    pub fn set_data_center(&self, data_center: DataCenterEventTx) -> Result<()> {
+    pub fn set_data_center(&self, data_center: Weak<DataCenter>) -> Result<()> {
         self.inner.set_data_center(data_center)
     }
 
