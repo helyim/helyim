@@ -49,6 +49,8 @@ For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
 My laptop results on Lenovo IdeaPad Pro 16 (2023) with SSD, CPU: 14 Intel Core i9 5.4GHz.
 
+##### Blocking style
+
 | System    | Execution<br/>times | File size | Read <br/>time elapsed | Upload<br/>time elapsed |
 |-----------|---------------------|-----------|------------------------|-------------------------|
 | Helyim    | 10,0000             | 1kb       | 3.4s                   | 12.7s                   |

@@ -111,8 +111,8 @@ impl Topology {
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for dc_tx in self.data_centers.values() {
-            free += dc_tx.max_volumes().await? - dc_tx.has_volumes().await?;
+        for data_node in self.data_centers.values() {
+            free += data_node.max_volumes().await? - data_node.has_volumes().await?;
         }
         Ok(free)
     }
@@ -222,8 +222,8 @@ impl Topology {
 
     async fn get_max_volume_id(&self) -> Result<VolumeId> {
         let mut vid = 0;
-        for (_, dc_tx) in self.data_centers.iter() {
-            let other = dc_tx.max_volume_id().await?;
+        for (_, data_node) in self.data_centers.iter() {
+            let other = data_node.max_volume_id().await?;
             if other > vid {
                 vid = other;
             }
