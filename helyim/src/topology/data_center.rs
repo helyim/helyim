@@ -24,6 +24,7 @@ pub struct DataCenter {
 pub struct DataCenterInner {
     id: FastStr,
     max_volume_id: VolumeId,
+    // children
     #[serde(skip)]
     racks: HashMap<FastStr, Arc<Rack>>,
     #[serde(skip)]
@@ -59,25 +60,25 @@ impl DataCenterInner {
     }
 
     pub async fn has_volumes(&self) -> Result<i64> {
-        let mut ret = 0;
-        for rack_tx in self.racks.values() {
-            ret += rack_tx.has_volumes().await?;
+        let mut has_volumes = 0;
+        for rack in self.racks.values() {
+            has_volumes += rack.has_volumes().await?;
         }
-        Ok(ret)
+        Ok(has_volumes)
     }
 
     pub async fn max_volumes(&self) -> Result<i64> {
-        let mut ret = 0;
-        for rack_tx in self.racks.values() {
-            ret += rack_tx.max_volumes().await?;
+        let mut max_volumes = 0;
+        for rack in self.racks.values() {
+            max_volumes += rack.max_volumes().await?;
         }
-        Ok(ret)
+        Ok(max_volumes)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
-        for rack_tx in self.racks.values() {
-            free_volumes += rack_tx.free_volumes().await?;
+        for rack in self.racks.values() {
+            free_volumes += rack.free_volumes().await?;
         }
         Ok(free_volumes)
     }

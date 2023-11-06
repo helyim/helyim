@@ -25,6 +25,7 @@ pub struct Topology {
     pub collections: HashMap<FastStr, Collection>,
     pulse: u64,
     volume_size_limit: u64,
+    // children
     #[serde(skip)]
     data_centers: HashMap<FastStr, Arc<DataCenter>>,
     #[serde(skip)]

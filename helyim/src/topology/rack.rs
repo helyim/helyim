@@ -26,9 +26,11 @@ pub struct Rack {
 #[derive(Debug, Serialize)]
 struct RackInner {
     id: FastStr,
+    // children
     #[serde(skip)]
     nodes: HashMap<FastStr, Arc<DataNode>>,
     max_volume_id: VolumeId,
+    // parent
     #[serde(skip)]
     data_center: Weak<DataCenter>,
     #[serde(skip)]
