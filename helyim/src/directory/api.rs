@@ -21,7 +21,7 @@ use crate::{
 pub struct DirectoryContext {
     pub topology: TopologyEventTx,
     pub volume_grow: Arc<VolumeGrowth>,
-    pub default_replica_placement: ReplicaPlacement,
+    pub default_replication: FastStr,
     pub ip: FastStr,
     pub port: u16,
 }
@@ -39,9 +39,12 @@ pub struct AssignRequest {
 }
 
 impl AssignRequest {
-    pub fn volume_grow_option(self) -> Result<VolumeGrowOption> {
+    pub fn volume_grow_option(self, ctx: &DirectoryContext) -> Result<VolumeGrowOption> {
         let mut option = VolumeGrowOption::default();
-        if let Some(replication) = self.replication {
+        if let Some(mut replication) = self.replication {
+            if replication.is_empty() {
+                replication = ctx.default_replication.clone();
+            }
             option.replica_placement = ReplicaPlacement::new(&replication)?;
         }
         if let Some(ttl) = self.ttl {
@@ -74,7 +77,7 @@ pub async fn assign_handler(
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = Arc::new(request.volume_grow_option()?);
+    let option = Arc::new(request.volume_grow_option(&ctx)?);
 
     if !ctx.topology.has_writable_volume(option.clone()).await? {
         if ctx.topology.free_volumes().await? <= 0 {

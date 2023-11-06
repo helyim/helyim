@@ -47,10 +47,13 @@ impl VolumeLayout {
         for vid in self.writable_volumes.iter() {
             if let Some(nodes) = self.locations.get(vid) {
                 for node in nodes.iter() {
-                    if node.id == option.data_node
-                        && node.rack_id().await? == option.rack
-                        && node.data_center_id().await? == option.data_center
-                    {
+                    if node.data_center_id().await? == option.data_center {
+                        if !option.rack.is_empty() && node.rack_id().await? != option.rack {
+                            continue;
+                        }
+                        if !option.data_node.is_empty() && node.id != option.data_node {
+                            continue;
+                        }
                         count += 1;
                     }
                 }
@@ -98,62 +101,56 @@ impl VolumeLayout {
     }
 
     fn set_node(locations: &mut Vec<Arc<DataNode>>, dn: Arc<DataNode>) -> Result<()> {
-        let mut same: Option<usize> = None;
-        let mut i = 0;
-        for location in locations.iter() {
-            if location.ip != dn.ip || location.port != dn.port {
-                i += 1;
-                continue;
+        for location in locations.iter_mut() {
+            if location.ip == dn.ip && location.port == dn.port {
+                *location = dn.clone();
+                return Ok(());
             }
-
-            same = Some(i);
-            break;
         }
-        if let Some(idx) = same {
-            locations[idx] = dn.clone();
-        } else {
-            locations.push(dn.clone())
-        }
-
+        locations.push(dn);
         Ok(())
     }
 
     pub async fn register_volume(&mut self, v: &VolumeInfo, dn: Arc<DataNode>) -> Result<()> {
-        {
-            let list = self.locations.entry(v.id).or_default();
-            VolumeLayout::set_node(list, dn)?;
-        }
-
-        let mut locations = vec![];
-        if let Some(list) = self.locations.get(&v.id) {
-            locations.extend_from_slice(list);
-        }
+        let locations = self.locations.entry(v.id).or_default();
+        VolumeLayout::set_node(locations, dn)?;
 
         for location in locations.iter() {
-            match location.get_volume(v.id).await? {
-                Some(v) => {
+            match location.get_volume(v.id).await {
+                Ok(Some(v)) => {
                     if v.read_only {
                         self.remove_from_writable(v.id);
                         self.readonly_volumes.insert(v.id);
+                        return Ok(());
                     }
                 }
-                None => {
-                    self.remove_from_writable(v.id);
+                Ok(None) => {
                     self.readonly_volumes.remove(&v.id);
+                }
+                Err(_) => {
+                    self.remove_from_writable(v.id);
+                    self.readonly_volumes.insert(v.id);
+                    return Ok(());
                 }
             }
         }
 
-        if locations.len() == self.rp.copy_count() && self.is_writable(v) {
-            if self.oversize_volumes.get(&v.id).is_none() {
-                self.add_to_writable(v.id);
-            }
-        } else {
-            self.remove_from_writable(v.id);
-            self.set_oversize_if_need(v);
-        }
+        self.set_oversize_if_need(v);
+        self.ensure_correct_writable(v);
 
         Ok(())
+    }
+
+    fn ensure_correct_writable(&mut self, v: &VolumeInfo) {
+        if let Some(locations) = self.locations.get(&v.id) {
+            if locations.len() == self.rp.copy_count() && self.is_writable(v) {
+                if self.oversize_volumes.get(&v.id).is_none() {
+                    self.add_to_writable(v.id);
+                }
+            } else {
+                self.remove_from_writable(v.id);
+            }
+        }
     }
 
     fn set_oversize_if_need(&mut self, v: &VolumeInfo) {
