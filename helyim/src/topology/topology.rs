@@ -189,10 +189,14 @@ impl Topology {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
-                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
-                            .await?
-                    {
+                    let batch_check =
+                        batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?;
+
+                    let batch_compact =
+                        batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
+                            .await?;
+
+                    if batch_check && batch_compact {
                         batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
