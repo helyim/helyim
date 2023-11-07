@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
-use rand;
+use anyhow::anyhow;
+use rand::{self, Rng};
 use serde::Serialize;
 
 use crate::{
@@ -18,9 +16,9 @@ pub struct VolumeLayout {
     ttl: Option<Ttl>,
     volume_size_limit: u64,
 
-    writable_volumes: HashSet<VolumeId>,
-    pub readonly_volumes: HashSet<VolumeId>,
-    oversize_volumes: HashSet<VolumeId>,
+    writable_volumes: Vec<VolumeId>,
+    pub readonly_volumes: HashMap<VolumeId, bool>,
+    oversize_volumes: HashMap<VolumeId, bool>,
     #[serde(skip)]
     pub locations: HashMap<VolumeId, Vec<Arc<DataNode>>>,
 }
@@ -31,9 +29,9 @@ impl VolumeLayout {
             rp,
             ttl,
             volume_size_limit,
-            writable_volumes: HashSet::new(),
-            readonly_volumes: HashSet::new(),
-            oversize_volumes: HashSet::new(),
+            writable_volumes: Vec::new(),
+            readonly_volumes: HashMap::new(),
+            oversize_volumes: HashMap::new(),
             locations: HashMap::new(),
         }
     }
@@ -66,38 +64,50 @@ impl VolumeLayout {
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> Result<(VolumeId, Option<&Arc<DataNode>>)> {
+    ) -> Result<(VolumeId, &Vec<Arc<DataNode>>)> {
         if self.writable_volumes.is_empty() {
             return Err(VolumeError::NoWritableVolumes.into());
         }
 
+        if option.data_center.is_empty() {
+            let len = self.writable_volumes.len();
+            let vid = self.writable_volumes[rand::thread_rng().gen_range(0..len)];
+            return match self.locations.get(&vid) {
+                Some(data_nodes) => Ok((vid, data_nodes)),
+                None => Err(anyhow!("Strangely vid {} is on no machine!", vid).into()),
+            };
+        }
+
         let mut counter = 0;
-        let mut ret = (0, None);
+
+        let mut volume_id = 0;
+        let mut location_list = None;
 
         for vid in self.writable_volumes.iter() {
             if let Some(locations) = self.locations.get(vid) {
                 for node in locations.iter() {
-                    if !option.data_center.is_empty()
-                        && option.data_center != node.data_center_id().await?
-                        || !option.rack.is_empty() && option.rack != node.rack_id().await?
-                        || !option.data_node.is_empty() && option.data_node != node.id
-                    {
-                        continue;
-                    }
+                    if node.data_center_id().await? == option.data_center {
+                        if !option.rack.is_empty() && node.rack_id().await? != option.rack {
+                            continue;
+                        }
+                        if !option.data_node.is_empty() && node.id != option.data_node {
+                            continue;
+                        }
 
-                    counter += 1;
-                    if rand::random::<i64>() % counter < 1 {
-                        ret = (*vid, Some(node));
+                        counter += 1;
+                        if rand::thread_rng().gen_range(0..counter) < 1 {
+                            volume_id = *vid;
+                            location_list = Some(locations);
+                        }
                     }
                 }
             }
         }
 
-        if counter > 0 {
-            return Ok(ret);
+        match location_list {
+            Some(locations) => Ok((volume_id, locations)),
+            None => Err(VolumeError::NoWritableVolumes.into()),
         }
-
-        Err(VolumeError::NoWritableVolumes.into())
     }
 
     fn set_node(locations: &mut Vec<Arc<DataNode>>, dn: Arc<DataNode>) -> Result<()> {
@@ -120,7 +130,7 @@ impl VolumeLayout {
                 Ok(Some(v)) => {
                     if v.read_only {
                         self.remove_from_writable(v.id);
-                        self.readonly_volumes.insert(v.id);
+                        self.readonly_volumes.insert(v.id, true);
                         return Ok(());
                     }
                 }
@@ -129,7 +139,7 @@ impl VolumeLayout {
                 }
                 Err(_) => {
                     self.remove_from_writable(v.id);
-                    self.readonly_volumes.insert(v.id);
+                    self.readonly_volumes.remove(&v.id);
                     return Ok(());
                 }
             }
@@ -144,7 +154,7 @@ impl VolumeLayout {
     fn ensure_correct_writable(&mut self, v: &VolumeInfo) {
         if let Some(locations) = self.locations.get(&v.id) {
             if locations.len() == self.rp.copy_count() && self.is_writable(v) {
-                if self.oversize_volumes.get(&v.id).is_none() {
+                if !self.oversize_volumes.contains_key(&v.id) {
                     self.add_to_writable(v.id);
                 }
             } else {
@@ -155,7 +165,7 @@ impl VolumeLayout {
 
     fn set_oversize_if_need(&mut self, v: &VolumeInfo) {
         if self.is_oversize(v) {
-            self.oversize_volumes.insert(v.id);
+            self.oversize_volumes.insert(v.id, true);
         }
     }
 
@@ -191,11 +201,21 @@ impl VolumeLayout {
     }
 
     pub fn add_to_writable(&mut self, vid: VolumeId) {
-        self.writable_volumes.insert(vid);
+        if !self.writable_volumes.contains(&vid) {
+            self.writable_volumes.push(vid);
+        }
     }
 
     pub fn remove_from_writable(&mut self, vid: VolumeId) {
-        self.writable_volumes.remove(&vid);
+        let mut idx = -1;
+        for (i, id) in self.writable_volumes.iter().enumerate() {
+            if *id == vid {
+                idx = i as i32;
+            }
+        }
+        if idx > 0 {
+            self.writable_volumes.remove(idx as usize);
+        }
     }
 
     pub fn unregister_volume(&mut self, v: &VolumeInfo) {

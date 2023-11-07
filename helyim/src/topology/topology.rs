@@ -125,7 +125,7 @@ impl Topology {
     ) -> Result<(FileId, u64, Arc<DataNode>)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
-        let (volume_id, node) = {
+        let (volume_id, nodes) = {
             let layout = self.get_volume_layout(
                 option.collection.clone(),
                 option.replica_placement,
@@ -134,12 +134,8 @@ impl Topology {
             layout.pick_for_write(option.as_ref()).await?
         };
 
-        let file_id = FileId {
-            volume_id,
-            key: file_id,
-            hash: rand::random::<u32>(),
-        };
-        Ok((file_id, count, node.unwrap().clone()))
+        let file_id = FileId::new(volume_id, file_id, rand::random::<u32>());
+        Ok((file_id, count, nodes[0].clone()))
     }
 
     pub async fn register_volume_layout(
@@ -189,7 +185,7 @@ impl Topology {
                 // TODO: avoid cloning the HashMap
                 let locations = volume_layout.locations.clone();
                 for (vid, data_nodes) in locations {
-                    if volume_layout.readonly_volumes.contains(&vid) {
+                    if volume_layout.readonly_volumes.contains_key(&vid) {
                         continue;
                     }
 

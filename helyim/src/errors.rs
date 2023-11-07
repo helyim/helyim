@@ -30,9 +30,9 @@ pub enum Error {
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Parse integer error: {0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
+    ParseInt(#[from] std::num::ParseIntError),
     #[error("Bincode error: {0}")]
-    BincodeError(#[from] Box<bincode::ErrorKind>),
+    Bincode(#[from] Box<bincode::ErrorKind>),
     #[error("Other error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Anyhow error: {0}")]
@@ -64,13 +64,13 @@ pub enum Error {
     #[error("Tostr error: {0}")]
     ToStr(#[from] ToStrError),
     #[error("Url parse error: {0}")]
-    UrlParseError(#[from] url::ParseError),
+    UrlParse(#[from] url::ParseError),
     #[error("Timeout")]
     Timeout,
     #[error("Hyper error: {0}")]
-    HyperError(#[from] hyper::Error),
+    Hyper(#[from] hyper::Error),
     #[error("Axum http error: {0}")]
-    AxumHttpError(#[from] axum::http::Error),
+    AxumHttp(#[from] axum::http::Error),
 
     // tonic
     #[error("Tonic status: {0}")]
@@ -79,13 +79,13 @@ pub enum Error {
     TonicTransport(#[from] tonic::transport::Error),
 
     #[error("Futures channel send error: {0}")]
-    SendError(#[from] futures::channel::mpsc::SendError),
+    MpscSend(#[from] futures::channel::mpsc::SendError),
     #[error("Broadcast channel closed")]
-    BroadcastSendError(#[from] async_broadcast::SendError<()>),
+    BroadcastSend(#[from] async_broadcast::SendError<()>),
     #[error("Oneshot channel canceled")]
     OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
     #[error("JoinHandle error: {0}")]
-    JoinError(#[from] tokio::task::JoinError),
+    TaskJoin(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

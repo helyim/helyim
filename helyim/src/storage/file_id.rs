@@ -3,10 +3,21 @@ use std::fmt::{Display, Formatter};
 use super::VolumeId;
 use crate::storage::NeedleId;
 
+#[derive(Copy, Clone)]
 pub struct FileId {
     pub volume_id: VolumeId,
     pub key: NeedleId,
     pub hash: u32,
+}
+
+impl FileId {
+    pub fn new(volume_id: VolumeId, key: NeedleId, hash: u32) -> Self {
+        FileId {
+            volume_id,
+            key,
+            hash,
+        }
+    }
 }
 
 impl Display for FileId {
