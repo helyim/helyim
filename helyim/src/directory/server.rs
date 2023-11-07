@@ -21,7 +21,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     sequence::Sequencer,
-    storage::{ReplicaPlacement, VolumeInfo},
+    storage::VolumeInfo,
     topology::{
         topology_loop, topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyEventTx,
     },
@@ -34,7 +34,7 @@ pub struct DirectoryServer {
     pub ip: FastStr,
     pub port: u16,
     pub meta_folder: FastStr,
-    pub default_replica_placement: ReplicaPlacement,
+    pub default_replication: FastStr,
     pub volume_size_limit_mb: u64,
     pub pulse_seconds: u64,
     pub garbage_threshold: f64,
@@ -53,7 +53,7 @@ impl DirectoryServer {
         meta_folder: &str,
         volume_size_limit_mb: u64,
         pulse_seconds: u64,
-        default_replica_placement: ReplicaPlacement,
+        default_replication: &str,
         garbage_threshold: f64,
         sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
@@ -83,7 +83,7 @@ impl DirectoryServer {
             port,
             garbage_threshold,
             pulse_seconds,
-            default_replica_placement,
+            default_replication: FastStr::new(default_replication),
             meta_folder: FastStr::new(meta_folder),
             volume_grow: Arc::new(VolumeGrowth),
             topology: topology.clone(),
@@ -131,7 +131,7 @@ impl DirectoryServer {
         let ctx = DirectoryContext {
             topology: self.topology.clone(),
             volume_grow: self.volume_grow.clone(),
-            default_replica_placement: self.default_replica_placement,
+            default_replication: self.default_replication.clone(),
             ip: self.ip.clone(),
             port: self.port,
         };

@@ -25,6 +25,7 @@ pub struct Topology {
     pub collections: HashMap<FastStr, Collection>,
     pulse: u64,
     volume_size_limit: u64,
+    // children
     #[serde(skip)]
     data_centers: HashMap<FastStr, Arc<DataCenter>>,
     #[serde(skip)]
@@ -124,7 +125,7 @@ impl Topology {
     ) -> Result<(FileId, u64, Arc<DataNode>)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
-        let (volume_id, node) = {
+        let (volume_id, nodes) = {
             let layout = self.get_volume_layout(
                 option.collection.clone(),
                 option.replica_placement,
@@ -133,12 +134,8 @@ impl Topology {
             layout.pick_for_write(option.as_ref()).await?
         };
 
-        let file_id = FileId {
-            volume_id,
-            key: file_id,
-            hash: rand::random::<u32>(),
-        };
-        Ok((file_id, count, node.unwrap().clone()))
+        let file_id = FileId::new(volume_id, file_id, rand::random::<u32>());
+        Ok((file_id, count, nodes[0].clone()))
     }
 
     pub async fn register_volume_layout(
@@ -188,14 +185,18 @@ impl Topology {
                 // TODO: avoid cloning the HashMap
                 let locations = volume_layout.locations.clone();
                 for (vid, data_nodes) in locations {
-                    if volume_layout.readonly_volumes.contains(&vid) {
+                    if volume_layout.readonly_volumes.contains_key(&vid) {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
-                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
-                            .await?
-                    {
+                    let batch_check =
+                        batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?;
+
+                    let batch_compact =
+                        batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
+                            .await?;
+
+                    if batch_check && batch_compact {
                         batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }

@@ -39,7 +39,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let client = Client::new();
     let params = get_file_id(&client).unwrap();
     let fid = extract_value(&params, "fid");
-    let url = extract_value(&params, "public_url");
+    let url = extract_value(&params, "url");
     upload(&client, url, fid).unwrap();
     c.bench_function("read files", |b| {
         b.iter(|| {

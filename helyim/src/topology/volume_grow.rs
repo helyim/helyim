@@ -114,7 +114,6 @@ impl VolumeGrowth {
             };
 
             dn.add_or_update_volume(volume_info.clone()).await?;
-
             topology.register_volume_layout(volume_info, dn).await?;
         }
         Ok(())

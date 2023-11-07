@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
-    storage::{NeedleMapType, ReplicaPlacement, StorageServer},
+    storage::{NeedleMapType, StorageServer},
 };
 use tokio::signal;
 use tracing::{info, Level};
@@ -75,7 +75,7 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
         &master.meta_dir,
         master.volume_size_limit_mb,
         master.pulse_seconds,
-        ReplicaPlacement::new(&master.default_replication)?,
+        &master.default_replication,
         0.3,
         Sequencer::new(SequencerType::Memory)?,
     )
