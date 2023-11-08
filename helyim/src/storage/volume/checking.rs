@@ -44,7 +44,7 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
     Ok(buf)
 }
 
-pub fn verify_needle_integrity(
+fn verify_needle_integrity(
     data_file: &mut File,
     version: Version,
     key: NeedleId,

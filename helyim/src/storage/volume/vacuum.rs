@@ -13,7 +13,7 @@ use helyim_proto::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{
     storage::{
@@ -25,7 +25,7 @@ use crate::{
         },
         Needle, NeedleError, NeedleMapper, NeedleValue, VolumeError, VolumeId,
     },
-    topology::{volume_layout::VolumeLayout, DataNode},
+    topology::{volume_layout::VolumeLayoutRef, DataNode},
     util::time::now,
 };
 
@@ -143,7 +143,7 @@ impl Volume {
         let mut compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .read(true)
+            .truncate(true)
             .mode(0o644)
             .open(compact_data_filename)?;
         let compact_index_file = fs::OpenOptions::new()
@@ -288,30 +288,33 @@ pub async fn batch_vacuum_volume_check(
     data_nodes: &[Arc<DataNode>],
     garbage_ratio: f64,
 ) -> StdResult<bool, VolumeError> {
-    let mut check_success = true;
+    let mut need_vacuum = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
         match data_node.vacuum_volume_check(request).await {
             Ok(response) => {
-                info!("check volume {volume_id} success.");
-                check_success = response.garbage_ratio > garbage_ratio;
+                info!(
+                    "check volume {volume_id} success. garbage ratio is {}",
+                    response.garbage_ratio
+                );
+                need_vacuum = response.garbage_ratio > garbage_ratio;
             }
             Err(err) => {
                 error!("check volume {volume_id} failed, {err}");
-                check_success = false;
+                need_vacuum = false;
             }
         }
     }
-    Ok(check_success)
+    Ok(need_vacuum)
 }
 
 pub async fn batch_vacuum_volume_compact(
-    volume_layout: &mut VolumeLayout,
+    volume_layout: &mut VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[Arc<DataNode>],
     preallocate: u64,
 ) -> StdResult<bool, VolumeError> {
-    volume_layout.remove_from_writable(volume_id);
+    volume_layout.write().await.remove_from_writable(volume_id);
     let mut compact_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCompactRequest {
@@ -333,26 +336,20 @@ pub async fn batch_vacuum_volume_compact(
 }
 
 pub async fn batch_vacuum_volume_commit(
-    volume_layout: &mut VolumeLayout,
+    volume_layout: &mut VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[Arc<DataNode>],
 ) -> StdResult<bool, VolumeError> {
     let mut commit_success = true;
+    let mut is_readonly = false;
     for data_node in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
         match data_node.vacuum_volume_commit(request).await {
             Ok(response) => {
                 if response.is_read_only {
-                    warn!("volume {volume_id} is read only, will not commit it.");
-                    commit_success = false;
-                } else {
-                    info!("commit volume {volume_id} success.");
-                    commit_success = true;
-                    volume_layout
-                        .set_volume_available(volume_id, data_node)
-                        .await
-                        .map_err(|err| VolumeError::BoxError(err.into()))?;
+                    is_readonly = true;
                 }
+                info!("commit volume {volume_id} success.");
             }
             Err(err) => {
                 error!("commit volume {volume_id} failed, {err}");
@@ -360,6 +357,17 @@ pub async fn batch_vacuum_volume_commit(
             }
         }
     }
+    if commit_success {
+        for data_node in data_nodes {
+            volume_layout
+                .write()
+                .await
+                .set_volume_available(volume_id, data_node, is_readonly)
+                .await
+                .map_err(|err| VolumeError::BoxError(err.into()))?;
+        }
+    }
+
     Ok(commit_success)
 }
 
