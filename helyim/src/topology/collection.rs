@@ -5,10 +5,7 @@ use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{
-        volume_layout::{VolumeLayout, VolumeLayoutRef},
-        DataNode,
-    },
+    topology::{volume_layout::VolumeLayoutRef, DataNode},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -42,7 +39,7 @@ impl Collection {
 
         self.volume_layouts
             .entry(FastStr::from_string(key))
-            .or_insert_with(|| VolumeLayoutRef::new(VolumeLayout::new(rp, ttl, volume_size)))
+            .or_insert_with(|| VolumeLayoutRef::new(rp, ttl, volume_size))
     }
 
     pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {

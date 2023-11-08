@@ -131,7 +131,7 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            let layout = layout.write().await;
+            let layout = layout.read().await;
             let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
             (vid, nodes[0].clone())
         };

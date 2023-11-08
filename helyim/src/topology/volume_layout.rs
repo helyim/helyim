@@ -25,7 +25,7 @@ pub struct VolumeLayout {
 }
 
 impl VolumeLayout {
-    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
+    fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
         VolumeLayout {
             rp,
             ttl,
@@ -237,8 +237,12 @@ impl VolumeLayout {
 pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
 
 impl VolumeLayoutRef {
-    pub fn new(volume_layout: VolumeLayout) -> Self {
-        Self(Arc::new(RwLock::new(volume_layout)))
+    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> Self {
+        Self(Arc::new(RwLock::new(VolumeLayout::new(
+            rp,
+            ttl,
+            volume_size_limit,
+        ))))
     }
 
     pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, VolumeLayout> {
