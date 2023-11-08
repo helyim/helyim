@@ -5,14 +5,18 @@ use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{volume_layout::VolumeLayout, DataNode},
+    topology::{
+        volume_layout::{VolumeLayout, VolumeLayoutRef},
+        DataNode,
+    },
 };
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Collection {
     name: FastStr,
     volume_size_limit: u64,
-    pub volume_layouts: HashMap<FastStr, VolumeLayout>,
+    #[serde(skip)]
+    pub volume_layouts: HashMap<FastStr, VolumeLayoutRef>,
 }
 
 impl Collection {
@@ -28,7 +32,7 @@ impl Collection {
         &mut self,
         rp: ReplicaPlacement,
         ttl: Option<Ttl>,
-    ) -> &mut VolumeLayout {
+    ) -> &mut VolumeLayoutRef {
         let key = match ttl {
             Some(ttl) => format!("{}{}", rp, ttl),
             None => rp.to_string(),
@@ -38,12 +42,12 @@ impl Collection {
 
         self.volume_layouts
             .entry(FastStr::from_string(key))
-            .or_insert_with(|| VolumeLayout::new(rp, ttl, volume_size))
+            .or_insert_with(|| VolumeLayoutRef::new(VolumeLayout::new(rp, ttl, volume_size)))
     }
 
-    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {
+    pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {
         for layout in self.volume_layouts.values() {
-            let ret = layout.lookup(vid);
+            let ret = layout.read().await.lookup(vid);
             if ret.is_some() {
                 return ret;
             }

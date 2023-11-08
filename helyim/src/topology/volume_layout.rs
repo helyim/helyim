@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::anyhow;
 use rand::{self, Rng};
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 use crate::{
     errors::Result,
@@ -132,11 +133,11 @@ impl VolumeLayout {
                         self.remove_from_writable(v.id);
                         self.readonly_volumes.insert(v.id, true);
                         return Ok(());
+                    } else {
+                        self.readonly_volumes.remove(&v.id);
                     }
                 }
-                Ok(None) => {
-                    self.readonly_volumes.remove(&v.id);
-                }
+                Ok(None) => (),
                 Err(_) => {
                     self.remove_from_writable(v.id);
                     self.readonly_volumes.remove(&v.id);
@@ -145,7 +146,7 @@ impl VolumeLayout {
             }
         }
 
-        self.set_oversize_if_need(v);
+        self.remember_oversized_volume(v);
         self.ensure_correct_writable(v);
 
         Ok(())
@@ -153,9 +154,9 @@ impl VolumeLayout {
 
     fn ensure_correct_writable(&mut self, v: &VolumeInfo) {
         if let Some(locations) = self.locations.get(&v.id) {
-            if locations.len() == self.rp.copy_count() && self.is_writable(v) {
+            if locations.len() >= self.rp.copy_count() && self.is_writable(v) {
                 if !self.oversize_volumes.contains_key(&v.id) {
-                    self.add_to_writable(v.id);
+                    self.set_volume_writable(v.id);
                 }
             } else {
                 self.remove_from_writable(v.id);
@@ -163,9 +164,11 @@ impl VolumeLayout {
         }
     }
 
-    fn set_oversize_if_need(&mut self, v: &VolumeInfo) {
+    fn remember_oversized_volume(&mut self, v: &VolumeInfo) {
         if self.is_oversize(v) {
             self.oversize_volumes.insert(v.id, true);
+        } else {
+            self.oversize_volumes.remove(&v.id);
         }
     }
 
@@ -181,29 +184,32 @@ impl VolumeLayout {
         &mut self,
         vid: VolumeId,
         data_node: &Arc<DataNode>,
-    ) -> Result<()> {
-        if let Some(locations) = self.locations.get_mut(&vid) {
-            let mut should_add = true;
-            for location in locations.iter_mut() {
-                if data_node.ip == location.ip && data_node.port == location.port {
-                    should_add = false;
+        readonly: bool,
+    ) -> Result<bool> {
+        if let Some(volume_info) = data_node.get_volume(vid).await? {
+            if let Some(locations) = self.locations.get_mut(&vid) {
+                VolumeLayout::set_node(locations, data_node.clone())?;
+            }
+
+            if volume_info.read_only || readonly {
+                return Ok(false);
+            }
+
+            if let Some(locations) = self.locations.get_mut(&vid) {
+                if locations.len() >= self.rp.copy_count() {
+                    return Ok(self.set_volume_writable(vid));
                 }
             }
-            if should_add {
-                locations.push(data_node.clone());
-            }
-            if locations.len() >= self.rp.copy_count() {
-                self.add_to_writable(vid);
-            }
         }
-
-        Ok(())
+        Ok(false)
     }
 
-    pub fn add_to_writable(&mut self, vid: VolumeId) {
-        if !self.writable_volumes.contains(&vid) {
-            self.writable_volumes.push(vid);
+    pub fn set_volume_writable(&mut self, vid: VolumeId) -> bool {
+        if self.writable_volumes.contains(&vid) {
+            return false;
         }
+        self.writable_volumes.push(vid);
+        true
     }
 
     pub fn remove_from_writable(&mut self, vid: VolumeId) {
@@ -224,5 +230,22 @@ impl VolumeLayout {
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {
         self.locations.get(&vid).cloned()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
+
+impl VolumeLayoutRef {
+    pub fn new(volume_layout: VolumeLayout) -> Self {
+        Self(Arc::new(RwLock::new(volume_layout)))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, VolumeLayout> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, VolumeLayout> {
+        self.0.write().await
     }
 }

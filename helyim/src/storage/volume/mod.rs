@@ -247,7 +247,6 @@ impl Volume {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
             offset = file.seek(SeekFrom::Start(offset))?;
         }
-        offset /= NEEDLE_PADDING_SIZE as u64;
 
         if let Err(err) = needle.append(file, version) {
             error!(
@@ -258,6 +257,7 @@ impl Volume {
             return Err(err.into());
         }
 
+        offset /= NEEDLE_PADDING_SIZE as u64;
         let nv = NeedleValue {
             offset: offset as u32,
             size: needle.size,

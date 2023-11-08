@@ -13,7 +13,7 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout,
+        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef,
         DataCenter, DataNode,
     },
 };
@@ -78,20 +78,20 @@ impl Topology {
         }
     }
 
-    pub fn lookup(
+    pub async fn lookup(
         &mut self,
         collection: FastStr,
         volume_id: VolumeId,
     ) -> Option<Vec<Arc<DataNode>>> {
         if collection.is_empty() {
             for c in self.collections.values() {
-                let data_node = c.lookup(volume_id);
+                let data_node = c.lookup(volume_id).await;
                 if data_node.is_some() {
                     return data_node;
                 }
             }
         } else if let Some(c) = self.collections.get(&collection) {
-            let data_node = c.lookup(volume_id);
+            let data_node = c.lookup(volume_id).await;
             if data_node.is_some() {
                 return data_node;
             }
@@ -107,7 +107,7 @@ impl Topology {
             option.ttl,
         );
 
-        Ok(vl.active_volume_count(option).await? > 0)
+        Ok(vl.read().await.active_volume_count(option).await? > 0)
     }
 
     pub async fn free_volumes(&self) -> Result<i64> {
@@ -125,17 +125,19 @@ impl Topology {
     ) -> Result<(FileId, u64, Arc<DataNode>)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
-        let (volume_id, nodes) = {
+        let (volume_id, node) = {
             let layout = self.get_volume_layout(
                 option.collection.clone(),
                 option.replica_placement,
                 option.ttl,
             );
-            layout.pick_for_write(option.as_ref()).await?
+            let layout = layout.write().await;
+            let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
+            (vid, nodes[0].clone())
         };
 
         let file_id = FileId::new(volume_id, file_id, rand::random::<u32>());
-        Ok((file_id, count, nodes[0].clone()))
+        Ok((file_id, count, node))
     }
 
     pub async fn register_volume_layout(
@@ -148,6 +150,8 @@ impl Topology {
             volume.replica_placement,
             volume.ttl,
         )
+        .write()
+        .await
         .register_volume(&volume, data_node)
         .await
     }
@@ -158,6 +162,8 @@ impl Topology {
             volume.replica_placement,
             volume.ttl,
         )
+        .write()
+        .await
         .unregister_volume(&volume);
     }
 
@@ -183,20 +189,21 @@ impl Topology {
         for (_name, collection) in self.collections.iter_mut() {
             for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
                 // TODO: avoid cloning the HashMap
-                let locations = volume_layout.locations.clone();
+                let locations = volume_layout.read().await.locations.clone();
                 for (vid, data_nodes) in locations {
-                    if volume_layout.readonly_volumes.contains_key(&vid) {
+                    if volume_layout
+                        .read()
+                        .await
+                        .readonly_volumes
+                        .contains_key(&vid)
+                    {
                         continue;
                     }
 
-                    let batch_check =
-                        batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?;
-
-                    let batch_compact =
-                        batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
-                            .await?;
-
-                    if batch_check && batch_compact {
+                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
+                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
+                            .await?
+                    {
                         batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
@@ -214,7 +221,7 @@ impl Topology {
         collection: FastStr,
         rp: ReplicaPlacement,
         ttl: Ttl,
-    ) -> &mut VolumeLayout {
+    ) -> &mut VolumeLayoutRef {
         self.collections
             .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))
