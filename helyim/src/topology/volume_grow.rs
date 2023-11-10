@@ -172,7 +172,7 @@ async fn find_main_data_center(
                     possible_nodes_count += 1;
                 }
             }
-            if possible_nodes_count > rp.same_rack_count + 1 {
+            if possible_nodes_count > rp.same_rack_count {
                 possible_racks_count += 1;
             }
         }
