@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use faststr::FastStr;
 use helyim_macros::event_fn;
 use serde::Serialize;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     errors::Result,
@@ -248,13 +248,13 @@ pub async fn topology_vacuum_loop(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     info!("topology vacuum loop starting");
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                info!("topology vacuum starting.");
+                debug!("topology vacuum starting.");
                 match topology.vacuum(garbage_threshold, preallocate).await {
-                    Ok(_) => info!("topology vacuum success."),
+                    Ok(_) => debug!("topology vacuum success."),
                     Err(err) => error!("topology vacuum failed, {err}")
                 }
             }

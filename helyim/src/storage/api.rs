@@ -155,16 +155,13 @@ pub async fn delete_handler(
     needle.parse_path(fid)?;
 
     let cookie = needle.cookie;
-
-    {
-        needle = ctx.store.read_volume_needle(vid, needle).await?;
-        if cookie != needle.cookie {
-            info!(
-                "cookie not match from {:?} recv: {}, file is {}",
-                extractor.host, cookie, needle.cookie
-            );
-            return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
-        }
+    needle = ctx.store.read_volume_needle(vid, needle).await?;
+    if cookie != needle.cookie {
+        info!(
+            "cookie not match from {:?} recv: {}, file is {}",
+            extractor.host, cookie, needle.cookie
+        );
+        return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
     let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
@@ -228,10 +225,10 @@ pub async fn post_handler(
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
-    let mut needle = if !is_replicate {
-        new_needle_from_request(&extractor).await?
-    } else {
+    let mut needle = if is_replicate {
         bincode::deserialize(&extractor.body)?
+    } else {
+        new_needle_from_request(&extractor).await?
     };
 
     needle = replicate_write(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
@@ -256,6 +253,7 @@ async fn replicate_write(
 ) -> Result<Needle> {
     let local_url = format!("{}:{}", ctx.store.ip().await?, ctx.store.port().await?);
     needle = ctx.store.write_volume_needle(vid, needle).await?;
+    // if the volume is replica, it will return needle directly.
     if is_replicate {
         return Ok(needle);
     }

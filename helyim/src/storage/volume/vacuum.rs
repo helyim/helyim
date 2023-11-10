@@ -293,14 +293,19 @@ pub async fn batch_vacuum_volume_check(
         let request = VacuumVolumeCheckRequest { volume_id };
         match data_node.vacuum_volume_check(request).await {
             Ok(response) => {
-                info!(
-                    "check volume {volume_id} success. garbage ratio is {}",
-                    response.garbage_ratio
-                );
+                if response.garbage_ratio > 0.0 {
+                    info!(
+                        "check volume {}:{volume_id} success. garbage ratio is {}",
+                        data_node.public_url, response.garbage_ratio
+                    );
+                }
                 need_vacuum = response.garbage_ratio > garbage_ratio;
             }
             Err(err) => {
-                error!("check volume {volume_id} failed, {err}");
+                error!(
+                    "check volume {}:{volume_id} failed, {err}",
+                    data_node.public_url
+                );
                 need_vacuum = false;
             }
         }
@@ -323,11 +328,17 @@ pub async fn batch_vacuum_volume_compact(
         };
         match data_node.vacuum_volume_compact(request).await {
             Ok(_) => {
-                info!("compact volume {volume_id} success.");
+                info!(
+                    "compact volume {}:{volume_id} success.",
+                    data_node.public_url
+                );
                 compact_success = true;
             }
             Err(err) => {
-                error!("compact volume {volume_id} failed, {err}");
+                error!(
+                    "compact volume {}:{volume_id} failed, {err}",
+                    data_node.public_url
+                );
                 compact_success = false;
             }
         }
@@ -349,10 +360,16 @@ pub async fn batch_vacuum_volume_commit(
                 if response.is_read_only {
                     is_readonly = true;
                 }
-                info!("commit volume {volume_id} success.");
+                info!(
+                    "commit volume {}:{volume_id} success.",
+                    data_node.public_url
+                );
             }
             Err(err) => {
-                error!("commit volume {volume_id} failed, {err}");
+                error!(
+                    "commit volume {}:{volume_id} failed, {err}",
+                    data_node.public_url
+                );
                 commit_success = false;
             }
         }
@@ -381,7 +398,10 @@ async fn batch_vacuum_volume_cleanup(
         let request = VacuumVolumeCleanupRequest { volume_id };
         match data_node.vacuum_volume_cleanup(request).await {
             Ok(_) => {
-                info!("cleanup volume {volume_id} success.");
+                info!(
+                    "cleanup volume {}:{volume_id} success.",
+                    data_node.public_url
+                );
                 cleanup_success = true;
             }
             Err(_err) => {

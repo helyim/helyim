@@ -41,11 +41,16 @@ pub struct AssignRequest {
 impl AssignRequest {
     pub fn volume_grow_option(self, ctx: &DirectoryContext) -> Result<VolumeGrowOption> {
         let mut option = VolumeGrowOption::default();
-        if let Some(mut replication) = self.replication {
-            if replication.is_empty() {
-                replication = ctx.default_replication.clone();
+        match self.replication {
+            Some(mut replication) => {
+                if replication.is_empty() {
+                    replication = ctx.default_replication.clone();
+                }
+                option.replica_placement = ReplicaPlacement::new(&replication)?;
             }
-            option.replica_placement = ReplicaPlacement::new(&replication)?;
+            None => {
+                option.replica_placement = ReplicaPlacement::new(&ctx.default_replication)?;
+            }
         }
         if let Some(ttl) = self.ttl {
             option.ttl = Ttl::new(&ttl)?;

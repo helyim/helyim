@@ -2,7 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
 use helyim_proto::AllocateVolumeRequest;
-use rand::{prelude::SliceRandom, random};
+use rand::Rng;
+use tracing::debug;
 
 use crate::{
     errors::{Error, Result},
@@ -148,19 +149,17 @@ async fn find_main_data_center(
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(Arc<DataCenter>, Vec<Arc<DataCenter>>)> {
-    let mut main_dc: Option<Arc<DataCenter>> = None;
-    let mut other_centers: Vec<Arc<DataCenter>> = vec![];
-    let mut valid_main_counts = 0;
+    let mut candidates = vec![];
 
-    for (_, data_node) in data_centers.iter() {
-        if !option.data_center.is_empty() && data_node.id != option.data_center {
+    for (_, data_center) in data_centers.iter() {
+        if !option.data_center.is_empty() && data_center.id != option.data_center {
             continue;
         }
-        let racks = data_node.racks().await?;
+        let racks = data_center.racks().await?;
         if racks.len() < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_node.free_volumes().await?
+        if data_center.free_volumes().await?
             < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
         {
             continue;
@@ -180,36 +179,34 @@ async fn find_main_data_center(
         if possible_racks_count < rp.diff_rack_count + 1 {
             continue;
         }
-        valid_main_counts += 1;
-        if random::<u32>() % valid_main_counts == 0 {
-            main_dc = Some(data_node.clone());
-        }
+        candidates.push(data_center.clone());
     }
-    if main_dc.is_none() {
+
+    if candidates.is_empty() {
         return Err(Error::NoFreeSpace(
             "find main data center failed".to_string(),
         ));
     }
-    let main_data_node = main_dc.unwrap();
-    if rp.diff_data_center_count > 0 {
-        for (dc_id, data_node) in data_centers.iter() {
-            if *dc_id == main_data_node.id || data_node.free_volumes().await? < 1 {
-                continue;
+
+    let first_idx = rand::thread_rng().gen_range(0..candidates.len());
+    let main_dc = candidates[first_idx].clone();
+    debug!("picked main data center: {}", main_dc.id);
+
+    let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
+    candidates.remove(first_idx);
+
+    for (i, data_center) in candidates.iter().enumerate() {
+        if i < rest_nodes.len() {
+            rest_nodes.insert(i, data_center.clone());
+        } else {
+            let r = rand::thread_rng().gen_range(0..(i + 1));
+            if r < rest_nodes.len() {
+                rest_nodes.insert(r, data_center.clone());
             }
-            other_centers.push(data_node.clone());
         }
     }
-    if other_centers.len() < rp.diff_data_center_count as usize {
-        return Err(Error::NoFreeSpace("no enough data centers".to_string()));
-    }
-    other_centers
-        .as_mut_slice()
-        .shuffle(&mut rand::thread_rng());
-    let tmp_centers = other_centers
-        .drain(0..rp.diff_data_center_count as usize)
-        .collect();
-    other_centers = tmp_centers;
-    Ok((main_data_node, other_centers))
+
+    Ok((main_dc, rest_nodes))
 }
 
 async fn find_main_rack(
@@ -217,9 +214,7 @@ async fn find_main_rack(
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(Arc<Rack>, Vec<Arc<Rack>>)> {
-    let mut main_rack: Option<Arc<Rack>> = None;
-    let mut other_racks: Vec<Arc<Rack>> = vec![];
-    let mut valid_rack_count = 0;
+    let mut candidates = vec![];
 
     for (_, rack) in racks.iter() {
         if !option.rack.is_empty() && option.rack != rack.id {
@@ -234,38 +229,38 @@ async fn find_main_rack(
         }
         let mut possible_nodes = 0;
         for (_, node) in data_nodes.iter() {
-            if node.free_volumes().await? < 1 {
-                continue;
+            if node.free_volumes().await? >= 1 {
+                possible_nodes += 1;
             }
-            possible_nodes += 1;
         }
         if possible_nodes < rp.same_rack_count as usize + 1 {
             continue;
         }
-        valid_rack_count += 1;
-        if random::<u32>() % valid_rack_count == 0 {
-            main_rack = Some(rack.clone());
-        }
+        candidates.push(rack.clone());
     }
-    if main_rack.is_none() {
+
+    if candidates.is_empty() {
         return Err(Error::NoFreeSpace("find main rack failed".to_string()));
     }
-    let main_rack = main_rack.unwrap();
-    if rp.diff_rack_count > 0 {
-        for (rack_id, rack) in racks.iter() {
-            if *rack_id == main_rack.id || rack.free_volumes().await? < 1 {
-                continue;
+
+    let first_idx = rand::thread_rng().gen_range(0..candidates.len());
+    let main_rack = candidates[first_idx].clone();
+    debug!("picked main rack: {}", main_rack.id);
+
+    let mut rest_nodes = Vec::with_capacity(rp.diff_rack_count as usize);
+    candidates.remove(first_idx);
+
+    for (i, rack) in candidates.iter().enumerate() {
+        if i < rest_nodes.len() {
+            rest_nodes.insert(i, rack.clone());
+        } else {
+            let r = rand::thread_rng().gen_range(0..(i + 1));
+            if r < rest_nodes.len() {
+                rest_nodes.insert(r, rack.clone());
             }
-            other_racks.push(rack.clone());
         }
     }
-    if other_racks.len() < rp.diff_rack_count as usize {
-        return Err(Error::NoFreeSpace("no enough racks".to_string()));
-    }
-    other_racks.as_mut_slice().shuffle(&mut rand::thread_rng());
-    let tmp_racks = other_racks.drain(0..rp.diff_rack_count as usize).collect();
-    other_racks = tmp_racks;
-    Ok((main_rack, other_racks))
+    Ok((main_rack, rest_nodes))
 }
 
 async fn find_main_node(
@@ -273,9 +268,7 @@ async fn find_main_node(
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(Arc<DataNode>, Vec<Arc<DataNode>>)> {
-    let mut main_dn: Option<Arc<DataNode>> = None;
-    let mut other_nodes: Vec<Arc<DataNode>> = vec![];
-    let mut valid_node = 0;
+    let mut candidates = vec![];
 
     for (node_id, node) in data_nodes.iter() {
         if !option.data_node.is_empty() && option.data_node != *node_id {
@@ -284,30 +277,28 @@ async fn find_main_node(
         if node.free_volumes().await? < 1 {
             continue;
         }
-
-        valid_node += 1;
-        if random::<u32>() % valid_node == 0 {
-            main_dn = Some(node.clone());
-        }
+        candidates.push(node.clone());
     }
-    if main_dn.is_none() {
+    if candidates.is_empty() {
         return Err(Error::NoFreeSpace("find main data node failed".to_string()));
     }
-    let main_dn = main_dn.unwrap();
-    if rp.same_rack_count > 0 {
-        for (node_id, node) in data_nodes.iter() {
-            if *node_id == main_dn.id || node.free_volumes().await? < 1 {
-                continue;
+    let first_idx = rand::thread_rng().gen_range(0..candidates.len());
+    let main_dn = candidates[first_idx].clone();
+    debug!("picked main data node: {}", main_dn.id);
+
+    let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
+    candidates.remove(first_idx);
+
+    for (i, data_node) in candidates.iter().enumerate() {
+        if i < rest_nodes.len() {
+            rest_nodes.insert(i, data_node.clone());
+        } else {
+            let r = rand::thread_rng().gen_range(0..(i + 1));
+            if r < rest_nodes.len() {
+                rest_nodes.insert(r, data_node.clone());
             }
-            other_nodes.push(node.clone());
         }
     }
-    if other_nodes.len() < rp.same_rack_count as usize {
-        return Err(Error::NoFreeSpace("no enough nodes".to_string()));
-    }
-    other_nodes.as_mut_slice().shuffle(&mut rand::thread_rng());
-    let tmp_nodes = other_nodes.drain(0..rp.same_rack_count as usize).collect();
-    other_nodes = tmp_nodes;
 
-    Ok((main_dn, other_nodes))
+    Ok((main_dn, candidates))
 }

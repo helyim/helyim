@@ -172,8 +172,14 @@ impl Volume {
         let name = self.data_filename();
         debug!("loading volume: {}", name);
 
+        let mut has_super_block = false;
         let meta = match metadata(&name) {
-            Ok(m) => m,
+            Ok(m) => {
+                if m.len() >= SUPER_BLOCK_SIZE as u64 {
+                    has_super_block = true;
+                }
+                m
+            }
             Err(err) => {
                 debug!("get metadata err: {err}");
                 if err.kind() == ErrorKind::NotFound && create_if_missing {
@@ -207,8 +213,11 @@ impl Volume {
             self.data_file = Some(file);
         }
 
-        self.write_super_block()?;
-        self.read_super_block()?;
+        if has_super_block {
+            self.read_super_block()?;
+        } else {
+            self.write_super_block()?;
+        }
 
         if load_index {
             let index_file = fs::OpenOptions::new()
