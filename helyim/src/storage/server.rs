@@ -22,7 +22,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     errors::Result,
@@ -321,7 +321,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} check", request.volume_id);
+        debug!("vacuum volume {} check", request.volume_id);
         let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
@@ -331,7 +331,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCompactRequest>,
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} compact", request.volume_id);
+        debug!("vacuum volume {} compact", request.volume_id);
         self.store
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
@@ -343,7 +343,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} commit compaction", request.volume_id);
+        debug!("vacuum volume {} commit compaction", request.volume_id);
         self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
@@ -356,7 +356,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} cleanup", request.volume_id);
+        debug!("vacuum volume {} cleanup", request.volume_id);
         self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }

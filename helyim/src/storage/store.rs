@@ -290,7 +290,9 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 let garbage_level = volume.garbage_level().await?;
-                info!("volume {vid} garbage level: {garbage_level}");
+                if garbage_level > 0.0 {
+                    info!("volume {vid} garbage level: {garbage_level}");
+                }
                 Ok(garbage_level)
             }
             None => {
