@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Weak,
-};
+use std::collections::{HashMap, HashSet};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -19,7 +16,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{VolumeId, VolumeInfo},
-    topology::Rack,
+    topology::rack::WeakRackRef,
 };
 
 #[derive(Debug, Serialize)]
@@ -40,11 +37,11 @@ impl std::fmt::Display for DataNode {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct DataNodeInner {
     max_volume_id: VolumeId,
     #[serde(skip)]
-    rack: Weak<Rack>,
+    rack: WeakRackRef,
     volumes: HashMap<VolumeId, VolumeInfo>,
     #[serde(skip)]
     client: VolumeServerClient<LoadBalancedChannel>,
@@ -95,7 +92,10 @@ impl DataNodeInner {
         }
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.adjust_max_volume_id(self.max_volume_id).await?;
+            rack.write()
+                .await
+                .adjust_max_volume_id(self.max_volume_id)
+                .await?;
         }
 
         Ok(())
@@ -109,19 +109,19 @@ impl DataNodeInner {
         self.volumes.get(&vid).cloned()
     }
 
-    pub fn rack_id(&self) -> FastStr {
+    pub async fn rack_id(&self) -> FastStr {
         match self.rack.upgrade() {
-            Some(rack) => rack.id.clone(),
+            Some(rack) => rack.read().await.id.clone(),
             None => FastStr::empty(),
         }
     }
-    pub async fn data_center_id(&self) -> Result<FastStr> {
+    pub async fn data_center_id(&self) -> FastStr {
         match self.rack.upgrade() {
-            Some(rack) => rack.data_center_id().await,
-            None => Ok(FastStr::empty()),
+            Some(rack) => rack.read().await.data_center_id().await,
+            None => FastStr::empty(),
         }
     }
-    pub fn set_rack(&mut self, rack: Weak<Rack>) {
+    pub fn set_rack(&mut self, rack: WeakRackRef) {
         self.rack = rack;
     }
 
@@ -181,7 +181,7 @@ impl DataNode {
             .channel()
             .await?;
         let inner = DataNodeInner {
-            rack: Weak::new(),
+            rack: WeakRackRef::new(),
             max_volume_id: 0,
             volumes: HashMap::new(),
             client: VolumeServerClient::new(channel),
@@ -227,7 +227,7 @@ impl DataNode {
         self.inner.get_volume(vid).await
     }
 
-    pub fn set_rack(&self, rack: Weak<Rack>) -> Result<()> {
+    pub fn set_rack(&self, rack: WeakRackRef) -> Result<()> {
         self.inner.set_rack(rack)
     }
 

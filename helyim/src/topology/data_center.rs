@@ -11,16 +11,16 @@ use tokio::sync::RwLock;
 use crate::{
     errors::{Error, Result},
     storage::VolumeId,
-    topology::{DataNode, Rack},
+    topology::{rack::RackRef, DataNode},
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct DataCenter {
     pub id: FastStr,
     pub max_volume_id: VolumeId,
     // children
     #[serde(skip)]
-    pub racks: HashMap<FastStr, Arc<Rack>>,
+    pub racks: HashMap<FastStr, RackRef>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -41,12 +41,11 @@ impl DataCenter {
         }
     }
 
-    pub fn get_or_create_rack(&mut self, id: FastStr) -> Arc<Rack> {
+    pub fn get_or_create_rack(&mut self, id: FastStr) -> RackRef {
         match self.racks.get(&id) {
             Some(rack) => rack.clone(),
             None => {
-                let rack = Rack::new(id.clone(), self.shutdown.clone());
-                let rack = Arc::new(rack);
+                let rack = RackRef::new(id.clone(), self.shutdown.clone());
                 self.racks.insert(id, rack.clone());
                 rack
             }
@@ -56,7 +55,7 @@ impl DataCenter {
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut has_volumes = 0;
         for rack in self.racks.values() {
-            has_volumes += rack.has_volumes().await?;
+            has_volumes += rack.read().await.has_volumes().await?;
         }
         Ok(has_volumes)
     }
@@ -64,7 +63,7 @@ impl DataCenter {
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
         for rack in self.racks.values() {
-            max_volumes += rack.max_volumes().await?;
+            max_volumes += rack.read().await.max_volumes();
         }
         Ok(max_volumes)
     }
@@ -72,7 +71,7 @@ impl DataCenter {
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
         for rack in self.racks.values() {
-            free_volumes += rack.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await?;
         }
         Ok(free_volumes)
     }
@@ -81,15 +80,15 @@ impl DataCenter {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
-            free_volumes += rack.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await?;
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
         for (_, rack) in self.racks.iter() {
-            free_volumes -= rack.free_volumes().await?;
+            free_volumes -= rack.read().await.free_volumes().await?;
             if free_volumes == idx {
-                return rack.reserve_one_volume().await;
+                return rack.read().await.reserve_one_volume().await;
             }
         }
 
