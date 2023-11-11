@@ -4,7 +4,7 @@ use std::{
 };
 
 use faststr::FastStr;
-use rand::random;
+use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -110,7 +110,7 @@ impl Rack {
             free_volumes += data_node.read().await.free_volumes();
         }
 
-        let idx = random::<u32>() as i64 % free_volumes;
+        let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for (_, data_node) in self.data_nodes.iter() {
             free_volumes -= data_node.read().await.free_volumes();

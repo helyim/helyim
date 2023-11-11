@@ -4,7 +4,7 @@ use std::{
 };
 
 use faststr::FastStr;
-use rand::random;
+use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -80,7 +80,7 @@ impl DataCenter {
             free_volumes += rack.read().await.free_volumes().await?;
         }
 
-        let idx = random::<u32>() as i64 % free_volumes;
+        let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for (_, rack) in self.racks.iter() {
             free_volumes -= rack.read().await.free_volumes().await?;
