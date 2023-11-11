@@ -20,7 +20,7 @@ fn extract_str_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> &'a s
     }
 }
 
-fn extract_int_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> i64 {
+fn extract_int_value(params: &HashMap<String, Value>, key: &str) -> i64 {
     match params.get(key) {
         Some(Value::Number(num)) => num.as_i64().unwrap(),
         _ => panic!("{key} is not found"),
