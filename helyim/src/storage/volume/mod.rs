@@ -5,16 +5,16 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::Path,
     result::Result as StdResult,
+    sync::Arc,
 };
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use rustix::fs::ftruncate;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
-    errors::Result,
     storage::{
         needle::{
             read_needle_header, Needle, NeedleValue, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
@@ -98,12 +98,12 @@ impl SuperBlock {
 pub struct Volume {
     id: VolumeId,
     dir: FastStr,
-    collection: FastStr,
+    pub collection: FastStr,
     data_file: Option<File>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
     readonly: bool,
-    super_block: SuperBlock,
+    pub super_block: SuperBlock,
     last_modified: u64,
     last_compact_index_offset: u64,
     last_compact_revision: u16,
@@ -124,7 +124,6 @@ impl Display for Volume {
     }
 }
 
-#[event_fn]
 impl Volume {
     pub fn new(
         dir: FastStr,
@@ -242,7 +241,7 @@ impl Volume {
         Ok(())
     }
 
-    pub async fn write_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
+    pub fn write_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         let volume_id = self.id;
         if self.readonly {
             return Err(VolumeError::Readonly(volume_id));
@@ -280,7 +279,7 @@ impl Volume {
         Ok(needle)
     }
 
-    pub async fn delete_needle(&mut self, mut needle: Needle) -> StdResult<Size, VolumeError> {
+    pub fn delete_needle(&mut self, mut needle: Needle) -> StdResult<Size, VolumeError> {
         if self.readonly {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -369,7 +368,7 @@ impl Volume {
         self.readonly
     }
 
-    pub fn destroy(self) -> StdResult<(), VolumeError> {
+    pub fn destroy(&self) -> StdResult<(), VolumeError> {
         if self.readonly {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -649,5 +648,38 @@ where
                 return Err(VolumeError::Needle(err));
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct VolumeRef(Arc<RwLock<Volume>>);
+
+impl VolumeRef {
+    pub fn new(
+        dir: FastStr,
+        collection: FastStr,
+        id: VolumeId,
+        needle_map_type: NeedleMapType,
+        replica_placement: ReplicaPlacement,
+        ttl: Ttl,
+        preallocate: i64,
+    ) -> StdResult<VolumeRef, VolumeError> {
+        Ok(Self(Arc::new(RwLock::new(Volume::new(
+            dir,
+            collection,
+            id,
+            needle_map_type,
+            replica_placement,
+            ttl,
+            preallocate,
+        )?))))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Volume> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Volume> {
+        self.0.write().await
     }
 }

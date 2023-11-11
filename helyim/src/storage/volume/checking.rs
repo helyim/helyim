@@ -95,7 +95,7 @@ mod tests {
             ..Default::default()
         };
         needle.parse_path(fid).unwrap();
-        volume.write_needle(needle).await.unwrap();
+        volume.write_needle(needle).unwrap();
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)

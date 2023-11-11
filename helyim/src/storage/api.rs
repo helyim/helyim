@@ -71,7 +71,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in ctx.store.locations().await?.iter() {
         for (_, volume) in location.get_volumes().await?.iter() {
-            infos.push(volume.get_volume_info().await?);
+            infos.push(volume.read().await.get_volume_info());
         }
     }
 
@@ -184,7 +184,7 @@ async fn replicate_delete(
     }
 
     if let Some(volume) = ctx.store.find_volume(vid).await? {
-        if !volume.need_to_replicate().await? {
+        if !volume.read().await.need_to_replicate() {
             return Ok(size);
         }
     }
@@ -259,7 +259,7 @@ async fn replicate_write(
     }
 
     if let Some(volume) = ctx.store.find_volume(vid).await? {
-        if !volume.need_to_replicate().await? {
+        if !volume.read().await.need_to_replicate() {
             return Ok(needle);
         }
     }
