@@ -66,9 +66,5 @@ default = []
 iouring = ["tokio-uring"]
 
 [[bench]]
-name = "upload_files"
-harness = false
-
-[[bench]]
-name = "read_files"
+name = "read_upload_files"
 harness = false

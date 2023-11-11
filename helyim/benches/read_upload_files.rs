@@ -33,29 +33,58 @@ fn read_file(client: &Client, url: &str, fid: &str) -> Result<Bytes, Box<dyn std
     Ok(response)
 }
 
-fn upload(client: &Client, url: &str, fid: &str) -> Result<i64, Box<dyn std::error::Error>> {
+fn upload_file(client: &Client, url: &str, fid: &str) -> Result<i64, Box<dyn std::error::Error>> {
     let form = Form::new().file("Cargo.toml", "Cargo.toml")?;
-    let upload = client
+    let response = client
         .post(format!("http://{url}/{fid}"))
         .multipart(form)
-        .send()?
-        .json::<HashMap<String, Value>>()?;
-    let size = extract_int_value(&upload, "size");
-    Ok(size)
+        .send()?;
+    if response.content_length().unwrap_or_default() > 0 {
+        let upload = response.json::<HashMap<String, Value>>()?;
+        let size = extract_int_value(&upload, "size");
+        Ok(size)
+    } else {
+        Ok(0)
+    }
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
+fn read_files_benchmark(c: &mut Criterion) {
     let client = Client::new();
     let params = get_file_id(&client).unwrap();
     let fid = extract_str_value(&params, "fid");
     let url = extract_str_value(&params, "url");
-    let size = upload(&client, url, fid).unwrap();
+    let size = upload_file(&client, url, fid).unwrap();
 
     let mut group = c.benchmark_group("read-files-bench");
     group.throughput(Throughput::Bytes(size as u64));
     group.bench_function("read files", |b| {
         b.iter(|| {
             read_file(&client, url, fid).unwrap();
+        })
+    });
+}
+
+fn upload_files_benchmark(c: &mut Criterion) {
+    let client = Client::new();
+    let params = get_file_id(&client).unwrap();
+    let size = upload_file(
+        &client,
+        extract_str_value(&params, "url"),
+        extract_str_value(&params, "fid"),
+    )
+    .unwrap();
+
+    let mut group = c.benchmark_group("upload-files-bench");
+    group.throughput(Throughput::Bytes(size as u64));
+    group.bench_function("upload files", |b| {
+        b.iter(|| {
+            let params = get_file_id(&client).unwrap();
+            upload_file(
+                &client,
+                extract_str_value(&params, "url"),
+                extract_str_value(&params, "fid"),
+            )
+            .unwrap();
         })
     });
 }
@@ -69,6 +98,7 @@ fn short_warmup() -> Criterion {
 criterion_group! {
     name = benches;
     config = short_warmup();
-    targets = criterion_benchmark
+    targets = read_files_benchmark, upload_files_benchmark
 }
+
 criterion_main!(benches);
