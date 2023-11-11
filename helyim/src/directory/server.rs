@@ -257,9 +257,9 @@ impl Helyim for DirectoryGrpcServer {
             match self.topology.lookup(collection.clone(), volume_id).await {
                 Ok(Some(nodes)) => {
                     for dn in nodes.iter() {
-                        let public_url = dn.public_url.to_string();
+                        let public_url = dn.read().await.public_url.to_string();
                         locations.push(Location {
-                            url: dn.url(),
+                            url: dn.read().await.url(),
                             public_url,
                         });
                     }
@@ -320,7 +320,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as i64,
         )
         .await?;
-    node.set_rack(rack.downgrade())?;
+    node.write().await.set_rack(rack.downgrade());
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {
@@ -330,7 +330,7 @@ async fn handle_heartbeat(
         };
     }
 
-    let deleted_volumes = node.update_volumes(infos.clone()).await?;
+    let deleted_volumes = node.write().await.update_volumes(infos.clone()).await?;
 
     for v in infos {
         topology.register_volume_layout(v, node.clone()).await?;

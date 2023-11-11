@@ -14,7 +14,7 @@ use crate::{
     },
     topology::{
         collection::Collection, data_center::DataCenterRef, volume_grow::VolumeGrowOption,
-        volume_layout::VolumeLayoutRef, DataNode,
+        volume_layout::VolumeLayoutRef, DataNodeRef,
     },
 };
 
@@ -69,7 +69,7 @@ impl Topology {
         match self.data_centers.get(&name) {
             Some(data_node) => data_node.clone(),
             None => {
-                let data_center = DataCenterRef::new(name.clone(), self.shutdown.clone());
+                let data_center = DataCenterRef::new(name.clone());
 
                 self.data_centers.insert(name, data_center.clone());
                 data_center
@@ -81,7 +81,7 @@ impl Topology {
         &mut self,
         collection: FastStr,
         volume_id: VolumeId,
-    ) -> Option<Vec<Arc<DataNode>>> {
+    ) -> Option<Vec<DataNodeRef>> {
         if collection.is_empty() {
             for c in self.collections.values() {
                 let data_node = c.lookup(volume_id).await;
@@ -122,7 +122,7 @@ impl Topology {
         &mut self,
         count: u64,
         option: Arc<VolumeGrowOption>,
-    ) -> Result<(FileId, u64, Arc<DataNode>)> {
+    ) -> Result<(FileId, u64, DataNodeRef)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
         let (volume_id, node) = {
@@ -143,7 +143,7 @@ impl Topology {
     pub async fn register_volume_layout(
         &mut self,
         volume: VolumeInfo,
-        data_node: Arc<DataNode>,
+        data_node: DataNodeRef,
     ) -> Result<()> {
         self.get_volume_layout(
             volume.collection.clone(),

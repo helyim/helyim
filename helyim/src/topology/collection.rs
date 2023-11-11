@@ -1,14 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{volume_layout::VolumeLayoutRef, DataNode},
+    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
 };
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Collection {
     name: FastStr,
     volume_size_limit: u64,
@@ -42,7 +42,7 @@ impl Collection {
             .or_insert_with(|| VolumeLayoutRef::new(rp, ttl, volume_size))
     }
 
-    pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {
+    pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         for layout in self.volume_layouts.values() {
             let ret = layout.read().await.lookup(vid);
             if ret.is_some() {

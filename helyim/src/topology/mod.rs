@@ -4,7 +4,7 @@ mod data_center;
 pub use data_center::DataCenter;
 
 mod data_node;
-pub use data_node::DataNode;
+pub use data_node::DataNodeRef;
 
 mod rack;
 pub use rack::Rack;

@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::{
     errors::{Error, Result},
     storage::VolumeId,
-    topology::{rack::RackRef, DataNode},
+    topology::{rack::RackRef, DataNodeRef},
 };
 
 #[derive(Serialize)]
@@ -21,17 +21,14 @@ pub struct DataCenter {
     // children
     #[serde(skip)]
     pub racks: HashMap<FastStr, RackRef>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
 }
 
 impl DataCenter {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> DataCenter {
+    pub fn new(id: FastStr) -> DataCenter {
         Self {
             id: id.clone(),
             racks: HashMap::new(),
             max_volume_id: 0,
-            shutdown: shutdown.clone(),
         }
     }
 
@@ -45,7 +42,7 @@ impl DataCenter {
         match self.racks.get(&id) {
             Some(rack) => rack.clone(),
             None => {
-                let rack = RackRef::new(id.clone(), self.shutdown.clone());
+                let rack = RackRef::new(id.clone());
                 self.racks.insert(id, rack.clone());
                 rack
             }
@@ -63,7 +60,7 @@ impl DataCenter {
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
         for rack in self.racks.values() {
-            max_volumes += rack.read().await.max_volumes();
+            max_volumes += rack.read().await.max_volumes().await;
         }
         Ok(max_volumes)
     }
@@ -76,7 +73,7 @@ impl DataCenter {
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef> {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
@@ -103,8 +100,8 @@ impl DataCenter {
 pub struct DataCenterRef(Arc<RwLock<DataCenter>>);
 
 impl DataCenterRef {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Self {
-        Self(Arc::new(RwLock::new(DataCenter::new(id, shutdown))))
+    pub fn new(id: FastStr) -> Self {
+        Self(Arc::new(RwLock::new(DataCenter::new(id))))
     }
 
     pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DataCenter> {

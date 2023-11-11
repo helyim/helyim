@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_center::DataCenterRef, rack::RackRef, DataNode, TopologyEventTx},
+    topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
@@ -30,7 +30,7 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
-    ) -> Result<Vec<Arc<DataNode>>> {
+    ) -> Result<Vec<DataNodeRef>> {
         let rp = option.replica_placement;
 
         let mut ret = vec![];
@@ -92,17 +92,19 @@ impl VolumeGrowth {
         vid: VolumeId,
         option: &VolumeGrowOption,
         topology: TopologyEventTx,
-        nodes: Vec<Arc<DataNode>>,
+        nodes: Vec<DataNodeRef>,
     ) -> Result<()> {
         for dn in nodes {
-            dn.allocate_volume(AllocateVolumeRequest {
-                volumes: vec![vid],
-                collection: option.collection.to_string(),
-                replication: option.replica_placement.to_string(),
-                ttl: option.ttl.to_string(),
-                preallocate: option.preallocate,
-            })
-            .await?;
+            dn.write()
+                .await
+                .allocate_volume(AllocateVolumeRequest {
+                    volumes: vec![vid],
+                    collection: option.collection.to_string(),
+                    replication: option.replica_placement.to_string(),
+                    ttl: option.ttl.to_string(),
+                    preallocate: option.preallocate,
+                })
+                .await?;
 
             let volume_info = VolumeInfo {
                 id: vid,
@@ -114,7 +116,10 @@ impl VolumeGrowth {
                 ..Default::default()
             };
 
-            dn.add_or_update_volume(volume_info.clone()).await?;
+            dn.write()
+                .await
+                .add_or_update_volume(volume_info.clone())
+                .await?;
             topology.register_volume_layout(volume_info, dn).await?;
         }
         Ok(())
@@ -168,7 +173,7 @@ async fn find_main_data_center(
         for (_, rack) in racks.iter() {
             let mut possible_nodes_count = 0;
             for (_, dn) in rack.read().await.data_nodes.clone().iter() {
-                if dn.free_volumes().await? >= 1 {
+                if dn.read().await.free_volumes() >= 1 {
                     possible_nodes_count += 1;
                 }
             }
@@ -229,7 +234,7 @@ async fn find_main_rack(
         }
         let mut possible_nodes = 0;
         for (_, node) in data_nodes.iter() {
-            if node.free_volumes().await? >= 1 {
+            if node.read().await.free_volumes() >= 1 {
                 possible_nodes += 1;
             }
         }
@@ -264,17 +269,17 @@ async fn find_main_rack(
 }
 
 async fn find_main_node(
-    data_nodes: &HashMap<FastStr, Arc<DataNode>>,
+    data_nodes: &HashMap<FastStr, DataNodeRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
-) -> Result<(Arc<DataNode>, Vec<Arc<DataNode>>)> {
+) -> Result<(DataNodeRef, Vec<DataNodeRef>)> {
     let mut candidates = vec![];
 
     for (node_id, node) in data_nodes.iter() {
         if !option.data_node.is_empty() && option.data_node != *node_id {
             continue;
         }
-        if node.free_volumes().await? < 1 {
+        if node.read().await.free_volumes() < 1 {
             continue;
         }
         candidates.push(node.clone());
@@ -284,7 +289,7 @@ async fn find_main_node(
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();
-    debug!("picked main data node: {}", main_dn.id);
+    debug!("picked main data node: {}", main_dn.read().await.id);
 
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
     candidates.remove(first_idx);

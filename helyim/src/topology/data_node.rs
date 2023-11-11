@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use ginepro::LoadBalancedChannel;
-use helyim_macros::event_fn;
 use helyim_proto::{
     volume_server_client::VolumeServerClient, AllocateVolumeRequest, AllocateVolumeResponse,
     VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
@@ -11,15 +12,15 @@ use helyim_proto::{
     VacuumVolumeCompactRequest, VacuumVolumeCompactResponse,
 };
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 use crate::{
     errors::Result,
-    rt_spawn,
     storage::{VolumeId, VolumeInfo},
     topology::rack::WeakRackRef,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct DataNode {
     pub id: FastStr,
     pub ip: FastStr,
@@ -27,18 +28,6 @@ pub struct DataNode {
     pub public_url: FastStr,
     pub last_seen: i64,
     pub max_volumes: i64,
-    #[serde(skip)]
-    inner: DataNodeInnerEventTx,
-}
-
-impl std::fmt::Display for DataNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "DataNode({})", self.id)
-    }
-}
-
-#[derive(Serialize)]
-struct DataNodeInner {
     max_volume_id: VolumeId,
     #[serde(skip)]
     rack: WeakRackRef,
@@ -47,8 +36,45 @@ struct DataNodeInner {
     client: VolumeServerClient<LoadBalancedChannel>,
 }
 
-#[event_fn]
-impl DataNodeInner {
+impl std::fmt::Display for DataNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "DataNode({})", self.id)
+    }
+}
+
+impl DataNode {
+    pub async fn new(
+        id: FastStr,
+        ip: FastStr,
+        port: u16,
+        public_url: FastStr,
+        max_volumes: i64,
+    ) -> Result<DataNode> {
+        let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
+            .channel()
+            .await?;
+        Ok(DataNode {
+            id,
+            ip,
+            port,
+            public_url,
+            last_seen: 0,
+            max_volumes,
+            rack: WeakRackRef::new(),
+            max_volume_id: 0,
+            volumes: HashMap::new(),
+            client: VolumeServerClient::new(channel),
+        })
+    }
+
+    pub fn url(&self) -> String {
+        format!("{}:{}", self.ip, self.port)
+    }
+
+    pub fn free_volumes(&self) -> i64 {
+        self.max_volumes - self.has_volumes()
+    }
+
     pub async fn update_volumes(
         &mut self,
         volume_infos: Vec<VolumeInfo>,
@@ -166,111 +192,27 @@ impl DataNodeInner {
     }
 }
 
-impl DataNode {
+#[derive(Clone)]
+pub struct DataNodeRef(Arc<RwLock<DataNode>>);
+
+impl DataNodeRef {
     pub async fn new(
         id: FastStr,
         ip: FastStr,
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-        shutdown: async_broadcast::Receiver<()>,
-    ) -> Result<DataNode> {
-        let (tx, rx) = unbounded();
-
-        let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
-            .channel()
-            .await?;
-        let inner = DataNodeInner {
-            rack: WeakRackRef::new(),
-            max_volume_id: 0,
-            volumes: HashMap::new(),
-            client: VolumeServerClient::new(channel),
-        };
-        rt_spawn(data_node_inner_loop(inner, rx, shutdown));
-
-        Ok(DataNode {
-            id,
-            ip,
-            port,
-            public_url,
-            last_seen: 0,
-            max_volumes,
-            inner: DataNodeInnerEventTx::new(tx),
-        })
+    ) -> Result<Self> {
+        Ok(Self(Arc::new(RwLock::new(
+            DataNode::new(id, ip, port, public_url, max_volumes).await?,
+        ))))
     }
 
-    pub fn url(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DataNode> {
+        self.0.read().await
     }
 
-    pub async fn add_or_update_volume(&self, v: VolumeInfo) -> Result<()> {
-        self.inner.add_or_update_volume(v).await
-    }
-
-    pub async fn has_volumes(&self) -> Result<i64> {
-        self.inner.has_volumes().await
-    }
-
-    pub async fn free_volumes(&self) -> Result<i64> {
-        Ok(self.max_volumes - self.has_volumes().await?)
-    }
-
-    pub async fn rack_id(&self) -> Result<FastStr> {
-        self.inner.rack_id().await
-    }
-
-    pub async fn data_center_id(&self) -> Result<FastStr> {
-        self.inner.data_center_id().await
-    }
-
-    pub async fn get_volume(&self, vid: VolumeId) -> Result<Option<VolumeInfo>> {
-        self.inner.get_volume(vid).await
-    }
-
-    pub fn set_rack(&self, rack: WeakRackRef) -> Result<()> {
-        self.inner.set_rack(rack)
-    }
-
-    pub async fn update_volumes(&self, volume_infos: Vec<VolumeInfo>) -> Result<Vec<VolumeInfo>> {
-        self.inner.update_volumes(volume_infos).await
-    }
-
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
-        self.inner.adjust_max_volume_id(vid).await
-    }
-
-    pub async fn allocate_volume(
-        &self,
-        request: AllocateVolumeRequest,
-    ) -> Result<AllocateVolumeResponse> {
-        self.inner.allocate_volume(request).await
-    }
-
-    pub async fn vacuum_volume_check(
-        &self,
-        request: VacuumVolumeCheckRequest,
-    ) -> Result<VacuumVolumeCheckResponse> {
-        self.inner.vacuum_volume_check(request).await
-    }
-
-    pub async fn vacuum_volume_compact(
-        &self,
-        request: VacuumVolumeCompactRequest,
-    ) -> Result<VacuumVolumeCompactResponse> {
-        self.inner.vacuum_volume_compact(request).await
-    }
-
-    pub async fn vacuum_volume_commit(
-        &self,
-        request: VacuumVolumeCommitRequest,
-    ) -> Result<VacuumVolumeCommitResponse> {
-        self.inner.vacuum_volume_commit(request).await
-    }
-
-    pub async fn vacuum_volume_cleanup(
-        &self,
-        request: VacuumVolumeCleanupRequest,
-    ) -> Result<VacuumVolumeCleanupResponse> {
-        self.inner.vacuum_volume_cleanup(request).await
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DataNode> {
+        self.0.write().await
     }
 }

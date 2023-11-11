@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::{
     errors::{Error, Result},
     storage::VolumeId,
-    topology::{data_center::WeakDataCenterRef, DataNode},
+    topology::{data_center::WeakDataCenterRef, DataNodeRef},
 };
 
 #[derive(Serialize)]
@@ -19,23 +19,20 @@ pub struct Rack {
     pub id: FastStr,
     // children
     #[serde(skip)]
-    pub data_nodes: HashMap<FastStr, Arc<DataNode>>,
+    pub data_nodes: HashMap<FastStr, DataNodeRef>,
     max_volume_id: VolumeId,
     // parent
     #[serde(skip)]
     data_center: WeakDataCenterRef,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
 }
 
 impl Rack {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Rack {
+    pub fn new(id: FastStr) -> Rack {
         Self {
             id: id.clone(),
             data_nodes: HashMap::new(),
             max_volume_id: 0,
             data_center: WeakDataCenterRef::new(),
-            shutdown: shutdown.clone(),
         }
     }
 
@@ -62,21 +59,13 @@ impl Rack {
         port: u16,
         public_url: FastStr,
         max_volumes: i64,
-    ) -> Result<Arc<DataNode>> {
+    ) -> Result<DataNodeRef> {
         match self.data_nodes.get(&id) {
             Some(data_node) => Ok(data_node.clone()),
             None => {
-                let data_node = DataNode::new(
-                    id.clone(),
-                    ip,
-                    port,
-                    public_url,
-                    max_volumes,
-                    self.shutdown.clone(),
-                )
-                .await?;
+                let data_node =
+                    DataNodeRef::new(id.clone(), ip, port, public_url, max_volumes).await?;
 
-                let data_node = Arc::new(data_node);
                 self.data_nodes.insert(id, data_node.clone());
                 Ok(data_node)
             }
@@ -93,15 +82,15 @@ impl Rack {
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut count = 0;
         for data_node in self.data_nodes.values() {
-            count += data_node.has_volumes().await?;
+            count += data_node.read().await.has_volumes();
         }
         Ok(count)
     }
 
-    pub fn max_volumes(&self) -> i64 {
+    pub async fn max_volumes(&self) -> i64 {
         let mut max_volumes = 0;
         for data_node in self.data_nodes.values() {
-            max_volumes += data_node.max_volumes;
+            max_volumes += data_node.read().await.max_volumes;
         }
         max_volumes
     }
@@ -109,22 +98,22 @@ impl Rack {
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
         for data_node in self.data_nodes.values() {
-            free_volumes += data_node.free_volumes().await?;
+            free_volumes += data_node.read().await.free_volumes();
         }
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef> {
         // randomly select
         let mut free_volumes = 0;
         for (_, data_node) in self.data_nodes.iter() {
-            free_volumes += data_node.free_volumes().await?;
+            free_volumes += data_node.read().await.free_volumes();
         }
 
         let idx = random::<u32>() as i64 % free_volumes;
 
         for (_, data_node) in self.data_nodes.iter() {
-            free_volumes -= data_node.free_volumes().await?;
+            free_volumes -= data_node.read().await.free_volumes();
             if free_volumes == idx {
                 return Ok(data_node.clone());
             }
@@ -141,8 +130,8 @@ impl Rack {
 pub struct RackRef(Arc<RwLock<Rack>>);
 
 impl RackRef {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> Self {
-        Self(Arc::new(RwLock::new(Rack::new(id, shutdown))))
+    pub fn new(id: FastStr) -> Self {
+        Self(Arc::new(RwLock::new(Rack::new(id))))
     }
 
     pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Rack> {
