@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use faststr::FastStr;
 use futures::channel::mpsc::unbounded;
@@ -13,7 +10,7 @@ use crate::{
     errors::{Error, Result},
     rt_spawn,
     storage::VolumeId,
-    topology::{DataCenter, DataNode},
+    topology::{data_center::WeakDataCenterRef, DataNode},
 };
 
 #[derive(Debug, Serialize)]
@@ -23,7 +20,7 @@ pub struct Rack {
     inner: RackInnerEventTx,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct RackInner {
     id: FastStr,
     // children
@@ -32,14 +29,14 @@ struct RackInner {
     max_volume_id: VolumeId,
     // parent
     #[serde(skip)]
-    data_center: Weak<DataCenter>,
+    data_center: WeakDataCenterRef,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
 
 #[event_fn]
 impl RackInner {
-    pub fn set_data_center(&mut self, data_center: Weak<DataCenter>) {
+    pub fn set_data_center(&mut self, data_center: WeakDataCenterRef) {
         self.data_center = data_center;
     }
 
@@ -53,7 +50,7 @@ impl RackInner {
         }
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.adjust_max_volume_id(self.max_volume_id).await?;
+            dc.write().await.adjust_max_volume_id(self.max_volume_id);
         }
 
         Ok(())
@@ -89,7 +86,7 @@ impl RackInner {
 
     pub async fn data_center_id(&self) -> FastStr {
         match self.data_center.upgrade() {
-            Some(data_center) => data_center.id.clone(),
+            Some(data_center) => data_center.read().await.id.clone(),
             None => FastStr::empty(),
         }
     }
@@ -148,7 +145,7 @@ impl Rack {
             id: id.clone(),
             nodes: HashMap::new(),
             max_volume_id: 0,
-            data_center: Weak::new(),
+            data_center: WeakDataCenterRef::new(),
             shutdown: shutdown.clone(),
         };
         rt_spawn(rack_inner_loop(inner, rx, shutdown));
@@ -160,7 +157,7 @@ impl Rack {
         self.id.clone()
     }
 
-    pub fn set_data_center(&self, data_center: Weak<DataCenter>) -> Result<()> {
+    pub fn set_data_center(&self, data_center: WeakDataCenterRef) -> Result<()> {
         self.inner.set_data_center(data_center)
     }
 

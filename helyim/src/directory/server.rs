@@ -305,8 +305,8 @@ async fn handle_heartbeat(
     let rack = get_or_default(heartbeat.rack);
 
     let data_center = topology.get_or_create_data_center(data_center).await?;
-    let rack = data_center.get_or_create_rack(rack).await?;
-    rack.set_data_center(Arc::downgrade(&data_center))?;
+    let rack = data_center.write().await.get_or_create_rack(rack);
+    rack.set_data_center(data_center.downgrade())?;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack

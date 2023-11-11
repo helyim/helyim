@@ -13,8 +13,8 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef,
-        DataCenter, DataNode,
+        collection::Collection, data_center::DataCenterRef, volume_grow::VolumeGrowOption,
+        volume_layout::VolumeLayoutRef, DataNode,
     },
 };
 
@@ -27,7 +27,7 @@ pub struct Topology {
     volume_size_limit: u64,
     // children
     #[serde(skip)]
-    data_centers: HashMap<FastStr, Arc<DataCenter>>,
+    data_centers: HashMap<FastStr, DataCenterRef>,
     #[serde(skip)]
     shutdown: async_broadcast::Receiver<()>,
 }
@@ -65,13 +65,12 @@ impl Topology {
         }
     }
 
-    pub fn get_or_create_data_center(&mut self, name: FastStr) -> Arc<DataCenter> {
+    pub fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
         match self.data_centers.get(&name) {
             Some(data_node) => data_node.clone(),
             None => {
-                let data_center = DataCenter::new(name.clone(), self.shutdown.clone());
+                let data_center = DataCenterRef::new(name.clone(), self.shutdown.clone());
 
-                let data_center = Arc::new(data_center);
                 self.data_centers.insert(name, data_center.clone());
                 data_center
             }
@@ -112,8 +111,9 @@ impl Topology {
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for data_node in self.data_centers.values() {
-            free += data_node.max_volumes().await? - data_node.has_volumes().await?;
+        for data_center in self.data_centers.values() {
+            free += data_center.read().await.max_volumes().await?
+                - data_center.read().await.has_volumes().await?;
         }
         Ok(free)
     }
@@ -177,7 +177,7 @@ impl Topology {
         self.sequencer.set_max(seq);
     }
 
-    pub fn data_centers(&self) -> HashMap<FastStr, Arc<DataCenter>> {
+    pub fn data_centers(&self) -> HashMap<FastStr, DataCenterRef> {
         self.data_centers.clone()
     }
 
@@ -230,8 +230,8 @@ impl Topology {
 
     async fn get_max_volume_id(&self) -> Result<VolumeId> {
         let mut vid = 0;
-        for (_, data_node) in self.data_centers.iter() {
-            let other = data_node.max_volume_id().await?;
+        for (_, data_center) in self.data_centers.iter() {
+            let other = data_center.read().await.max_volume_id;
             if other > vid {
                 vid = other;
             }

@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{DataCenter, DataNode, Rack, TopologyEventTx},
+    topology::{data_center::DataCenterRef, DataNode, Rack, TopologyEventTx},
 };
 
 #[derive(Debug, Clone)]
@@ -39,12 +39,12 @@ impl VolumeGrowth {
         let (main_data_node, other_centers) =
             find_main_data_center(&data_centers, option, &rp).await?;
         for dc in other_centers {
-            let node = dc.reserve_one_volume().await?;
+            let node = dc.read().await.reserve_one_volume().await?;
             ret.push(node);
         }
 
-        let racks = main_data_node.racks().await?;
-        let (main_rack, other_racks) = find_main_rack(&racks, option, &rp).await?;
+        let racks = &main_data_node.read().await.racks;
+        let (main_rack, other_racks) = find_main_rack(racks, option, &rp).await?;
         for rack in other_racks {
             let node = rack.reserve_one_volume().await?;
             ret.push(node);
@@ -145,21 +145,21 @@ pub struct VolumeGrowOption {
 }
 
 async fn find_main_data_center(
-    data_centers: &HashMap<FastStr, Arc<DataCenter>>,
+    data_centers: &HashMap<FastStr, DataCenterRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
-) -> Result<(Arc<DataCenter>, Vec<Arc<DataCenter>>)> {
+) -> Result<(DataCenterRef, Vec<DataCenterRef>)> {
     let mut candidates = vec![];
 
     for (_, data_center) in data_centers.iter() {
-        if !option.data_center.is_empty() && data_center.id != option.data_center {
+        if !option.data_center.is_empty() && data_center.read().await.id != option.data_center {
             continue;
         }
-        let racks = data_center.racks().await?;
+        let racks = &data_center.read().await.racks;
         if racks.len() < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_center.free_volumes().await?
+        if data_center.read().await.free_volumes().await?
             < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
         {
             continue;
@@ -190,7 +190,7 @@ async fn find_main_data_center(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dc = candidates[first_idx].clone();
-    debug!("picked main data center: {}", main_dc.id);
+    debug!("picked main data center: {}", main_dc.read().await.id);
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
     candidates.remove(first_idx);

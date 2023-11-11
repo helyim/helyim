@@ -1,5 +1,4 @@
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
 use helyim_macros::event_fn;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
 use tracing::{debug, error, info, warn};
@@ -7,9 +6,8 @@ use tracing::{debug, error, info, warn};
 use crate::{
     anyhow,
     errors::{Error, Result},
-    rt_spawn,
     storage::{
-        disk_location::{disk_location_loop, DiskLocation, DiskLocationEventTx},
+        disk_location::{DiskLocation, DiskLocationRef},
         needle::Needle,
         needle_map::NeedleMapType,
         types::Size,
@@ -24,7 +22,7 @@ pub struct Store {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    pub locations: Vec<DiskLocationEventTx>,
+    pub locations: Vec<DiskLocationRef>,
 
     pub data_center: FastStr,
     pub rack: FastStr,
@@ -57,10 +55,7 @@ impl Store {
             let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
             location.load_existing_volumes(needle_map_type).await?;
 
-            let (tx, rx) = unbounded();
-            rt_spawn(disk_location_loop(location, rx, shutdown.clone()));
-
-            locations.push(DiskLocationEventTx::new(tx));
+            locations.push(DiskLocationRef::new(location));
         }
 
         Ok(Store {
@@ -89,7 +84,7 @@ impl Store {
         self.volume_size_limit = volume_size_limit;
     }
 
-    pub fn locations(&self) -> Vec<DiskLocationEventTx> {
+    pub fn locations(&self) -> Vec<DiskLocationRef> {
         self.locations.clone()
     }
 
@@ -99,7 +94,7 @@ impl Store {
 
     pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<VolumeRef>> {
         for location in self.locations.iter() {
-            let volume = location.get_volume(vid).await?;
+            let volume = location.read().await.get_volume(vid);
             if volume.is_some() {
                 return Ok(volume);
             }
@@ -137,7 +132,7 @@ impl Store {
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
         for location in self.locations.iter_mut() {
-            location.delete_volume(vid).await?;
+            location.write().await.delete_volume(vid).await?;
             delete = true;
         }
         if delete {
@@ -148,12 +143,12 @@ impl Store {
         }
     }
 
-    async fn find_free_location(&self) -> Result<Option<DiskLocationEventTx>> {
+    async fn find_free_location(&self) -> Result<Option<DiskLocationRef>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
         for location in self.locations.iter() {
-            let free =
-                location.max_volume_count().await? - location.get_volumes_len().await? as i64;
+            let free = location.read().await.max_volume_count
+                - location.read().await.get_volumes_len() as i64;
             if free > max_free {
                 max_free = free;
                 disk_location = Some(location.clone());
@@ -186,7 +181,7 @@ impl Store {
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
         let volume = VolumeRef::new(
-            location.directory().await?,
+            location.read().await.directory.clone(),
             collection,
             vid,
             needle_map_type,
@@ -194,7 +189,7 @@ impl Store {
             ttl,
             preallocate,
         )?;
-        location.add_volume(vid, volume)?;
+        location.write().await.add_volume(vid, volume);
 
         Ok(())
     }
@@ -233,8 +228,8 @@ impl Store {
         let mut max_volume_count = 0;
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
-            max_volume_count += location.max_volume_count().await?;
-            for (vid, volume) in location.get_volumes().await?.iter() {
+            max_volume_count += location.read().await.max_volume_count;
+            for (vid, volume) in location.read().await.get_volumes().iter() {
                 let volume_max_file_key = volume.read().await.max_file_key();
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
@@ -267,7 +262,7 @@ impl Store {
                 }
             }
             for vid in deleted_vids {
-                if let Err(err) = location.delete_volume(vid).await {
+                if let Err(err) = location.write().await.delete_volume(vid).await {
                     warn!("delete volume {vid} err: {err}");
                 }
             }

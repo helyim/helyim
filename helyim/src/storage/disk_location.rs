@@ -1,10 +1,9 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
 use faststr::FastStr;
 use futures::future::join_all;
-use helyim_macros::event_fn;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
-use tokio::task::JoinHandle;
+use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::info;
 
 use crate::{
@@ -26,7 +25,6 @@ pub struct DiskLocation {
     pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
-#[event_fn]
 impl DiskLocation {
     pub fn new(
         dir: &str,
@@ -89,17 +87,7 @@ impl DiskLocation {
     pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeRef) {
         self.volumes.insert(vid, volume);
     }
-    pub fn shutdown_rx(&self) -> async_broadcast::Receiver<()> {
-        self.shutdown.clone()
-    }
 
-    pub fn directory(&self) -> FastStr {
-        self.directory.clone()
-    }
-
-    pub fn max_volume_count(&self) -> i64 {
-        self.max_volume_count
-    }
     pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeRef> {
         self.volumes.get(&vid).cloned()
     }
@@ -114,7 +102,7 @@ impl DiskLocation {
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.write().await.destroy()?;
+            v.read().await.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory
@@ -143,4 +131,21 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
             }
         })?;
     Ok((id.parse()?, collection))
+}
+
+#[derive(Clone)]
+pub struct DiskLocationRef(Arc<RwLock<DiskLocation>>);
+
+impl DiskLocationRef {
+    pub fn new(location: DiskLocation) -> Self {
+        Self(Arc::new(RwLock::new(location)))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DiskLocation> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DiskLocation> {
+        self.0.write().await
+    }
 }
