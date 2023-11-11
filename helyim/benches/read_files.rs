@@ -35,10 +35,11 @@ fn read_file(client: &Client, url: &str, fid: &str) -> Result<Bytes, Box<dyn std
 
 fn upload(client: &Client, url: &str, fid: &str) -> Result<i64, Box<dyn std::error::Error>> {
     let form = Form::new().file("Cargo.toml", "Cargo.toml")?;
-   let upload = client
+    let upload = client
         .post(format!("http://{url}/{fid}"))
         .multipart(form)
-        .send()?.json::<HashMap<String, Value>>()?;
+        .send()?
+        .json::<HashMap<String, Value>>()?;
     let size = extract_int_value(&upload, "size");
     Ok(size)
 }

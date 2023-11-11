@@ -31,7 +31,8 @@ fn upload(client: &Client, url: &str, fid: &str) -> Result<i64, Box<dyn std::err
     let upload = client
         .post(format!("http://{url}/{fid}"))
         .multipart(form)
-        .send()?.json::<HashMap<String, Value>>()?;
+        .send()?
+        .json::<HashMap<String, Value>>()?;
     let size = extract_int_value(&upload, "size");
     Ok(size)
 }

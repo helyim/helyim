@@ -105,6 +105,7 @@ impl StorageServer {
         let addr = addr.parse()?;
 
         rt_spawn(async move {
+            info!("volume grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
                     store: store_tx,
@@ -115,7 +116,7 @@ impl StorageServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {err}");
+                error!("volume grpc server starting failed, {err}");
                 exit();
             }
         });
@@ -190,14 +191,22 @@ impl StorageServer {
                 .fallback(fallback_handler)
                 .with_state(ctx);
 
-            let server = hyper::Server::bind(&addr).serve(app.into_make_service());
-            let graceful = server.with_graceful_shutdown(async {
-                let _ = shutdown_rx.recv().await;
-            });
-            info!("storage server starting up.");
-            match graceful.await {
-                Ok(()) => info!("storage server shutting down gracefully."),
-                Err(e) => error!("storage server stop failed, {}", e),
+            match hyper::Server::try_bind(&addr) {
+                Ok(builder) => {
+                    let server = builder.serve(app.into_make_service());
+                    let graceful = server.with_graceful_shutdown(async {
+                        let _ = shutdown_rx.recv().await;
+                    });
+                    info!("volume api server starting up. binding addr: {addr}");
+                    match graceful.await {
+                        Ok(()) => info!("storage server shutting down gracefully."),
+                        Err(e) => error!("storage server stop failed, {}", e),
+                    }
+                }
+                Err(err) => {
+                    error!("starting volume api server failed, error: {err}");
+                    exit();
+                }
             }
         }));
 
