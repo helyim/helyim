@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use reqwest::blocking::{multipart::Form, Client};
 use serde_json::Value;
 
@@ -12,37 +12,49 @@ fn get_file_id(client: &Client) -> Result<HashMap<String, Value>, Box<dyn std::e
     Ok(response)
 }
 
-fn extract_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> &'a str {
+fn extract_str_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> &'a str {
     match params.get(key) {
         Some(Value::String(fid)) => fid,
         _ => panic!("{key} is not found"),
     }
 }
 
-fn upload(client: &Client, url: &str, fid: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn extract_int_value<'a>(params: &'a HashMap<String, Value>, key: &str) -> i64 {
+    match params.get(key) {
+        Some(Value::Number(num)) => num.as_i64().unwrap(),
+        _ => panic!("{key} is not found"),
+    }
+}
+
+fn upload(client: &Client, url: &str, fid: &str) -> Result<i64, Box<dyn std::error::Error>> {
     let form = Form::new().file("Cargo.toml", "Cargo.toml")?;
-    client
+    let upload = client
         .post(format!("http://{url}/{fid}"))
         .multipart(form)
-        .send()?;
-    Ok(())
+        .send()?.json::<HashMap<String, Value>>()?;
+    let size = extract_int_value(&upload, "size");
+    Ok(size)
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
     let client = Client::new();
-    c.bench_function("upload files", |b| {
+    let params = get_file_id(&client).unwrap();
+    let fid = extract_str_value(&params, "fid");
+    let url = extract_str_value(&params, "url");
+    let size = upload(&client, url, fid).unwrap();
+
+    let mut group = c.benchmark_group("upload-files-bench");
+    group.throughput(Throughput::Bytes(size as u64));
+    group.bench_function("upload files", |b| {
         b.iter(|| {
-            let params = get_file_id(&client).unwrap();
-            let fid = extract_value(&params, "fid");
-            let url = extract_value(&params, "url");
-            upload(&client, url, fid).unwrap();
+            let _ = upload(&client, url, fid).unwrap();
         })
     });
 }
 
 fn short_warmup() -> Criterion {
     Criterion::default()
-        .warm_up_time(Duration::from_secs(1))
+        .warm_up_time(Duration::from_secs(3))
         .sample_size(10_0000)
 }
 
