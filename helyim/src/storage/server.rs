@@ -22,7 +22,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     errors::Result,
@@ -105,6 +105,7 @@ impl StorageServer {
         let addr = addr.parse()?;
 
         rt_spawn(async move {
+            info!("volume grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
                     store: store_tx,
@@ -115,7 +116,7 @@ impl StorageServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {err}");
+                error!("volume grpc server starting failed, {err}");
                 exit();
             }
         });
@@ -190,14 +191,22 @@ impl StorageServer {
                 .fallback(fallback_handler)
                 .with_state(ctx);
 
-            let server = hyper::Server::bind(&addr).serve(app.into_make_service());
-            let graceful = server.with_graceful_shutdown(async {
-                let _ = shutdown_rx.recv().await;
-            });
-            info!("storage server starting up.");
-            match graceful.await {
-                Ok(()) => info!("storage server shutting down gracefully."),
-                Err(e) => error!("storage server stop failed, {}", e),
+            match hyper::Server::try_bind(&addr) {
+                Ok(builder) => {
+                    let server = builder.serve(app.into_make_service());
+                    let graceful = server.with_graceful_shutdown(async {
+                        let _ = shutdown_rx.recv().await;
+                    });
+                    info!("volume api server starting up. binding addr: {addr}");
+                    match graceful.await {
+                        Ok(()) => info!("storage server shutting down gracefully."),
+                        Err(e) => error!("storage server stop failed, {}", e),
+                    }
+                }
+                Err(err) => {
+                    error!("starting volume api server failed, error: {err}");
+                    exit();
+                }
             }
         }));
 
@@ -312,7 +321,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} check", request.volume_id);
+        debug!("vacuum volume {} check", request.volume_id);
         let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
@@ -322,7 +331,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCompactRequest>,
     ) -> StdResult<Response<VacuumVolumeCompactResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} compact", request.volume_id);
+        debug!("vacuum volume {} compact", request.volume_id);
         self.store
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
@@ -334,7 +343,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCommitRequest>,
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} commit compaction", request.volume_id);
+        debug!("vacuum volume {} commit compaction", request.volume_id);
         self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
@@ -347,7 +356,7 @@ impl VolumeServer for StorageGrpcServer {
         request: Request<VacuumVolumeCleanupRequest>,
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
-        info!("vacuum volume {} cleanup", request.volume_id);
+        debug!("vacuum volume {} cleanup", request.volume_id);
         self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }

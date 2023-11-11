@@ -94,6 +94,7 @@ impl DirectoryServer {
         let addr = format!("{}:{}", host, port + 1).parse()?;
 
         rt_spawn(async move {
+            info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(HelyimServer::new(DirectoryGrpcServer {
                     volume_size_limit_mb,
@@ -104,7 +105,7 @@ impl DirectoryServer {
                 })
                 .await
             {
-                error!("grpc server starting failed, {err}");
+                error!("directory grpc server starting failed, {err}");
                 exit();
             }
         });
@@ -159,14 +160,22 @@ impl DirectoryServer {
                 .fallback(default_handler)
                 .with_state(ctx);
 
-            let server = hyper::Server::bind(&addr).serve(app.into_make_service());
-            let graceful = server.with_graceful_shutdown(async {
-                let _ = shutdown_rx.recv().await;
-            });
-            info!("directory server starting up.");
-            match graceful.await {
-                Ok(()) => info!("directory server shutting down gracefully."),
-                Err(e) => error!("directory server stop failed, {}", e),
+            match hyper::Server::try_bind(&addr) {
+                Ok(builder) => {
+                    let server = builder.serve(app.into_make_service());
+                    let graceful = server.with_graceful_shutdown(async {
+                        let _ = shutdown_rx.recv().await;
+                    });
+                    info!("directory api server starting up. binding addr: {addr}");
+                    match graceful.await {
+                        Ok(()) => info!("directory server shutting down gracefully."),
+                        Err(e) => error!("directory server stop failed, {}", e),
+                    }
+                }
+                Err(err) => {
+                    error!("starting directory api server failed, error: {err}");
+                    exit();
+                }
             }
         });
         self.handles.push(handle);
