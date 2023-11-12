@@ -32,7 +32,6 @@ crc32fast.workspace = true
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true
-helyim-macros = { path = "../helyim-macros" }
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
 libflate.workspace = true
