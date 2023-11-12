@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     errors::{Error, Result},
     storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, TopologyEventTx},
+    topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, TopologyRef},
 };
 
 #[derive(Debug, Clone)]
@@ -29,13 +29,13 @@ impl VolumeGrowth {
     async fn find_empty_slots(
         &self,
         option: &VolumeGrowOption,
-        topology: TopologyEventTx,
+        topology: TopologyRef,
     ) -> Result<Vec<DataNodeRef>> {
         let rp = option.replica_placement;
 
         let mut ret = vec![];
 
-        let data_centers = topology.data_centers().await?;
+        let data_centers = topology.read().await.data_centers.clone();
         let (main_data_node, other_centers) =
             find_main_data_center(&data_centers, option, &rp).await?;
         for dc in other_centers {
@@ -64,11 +64,11 @@ impl VolumeGrowth {
     async fn find_and_grow(
         &self,
         option: &VolumeGrowOption,
-        topology: TopologyEventTx,
+        topology: TopologyRef,
     ) -> Result<usize> {
         let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
-        let vid = topology.next_volume_id().await?;
+        let vid = topology.read().await.next_volume_id().await?;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
@@ -77,7 +77,7 @@ impl VolumeGrowth {
         &self,
         count: usize,
         option: &VolumeGrowOption,
-        topology: TopologyEventTx,
+        topology: TopologyRef,
     ) -> Result<usize> {
         let mut grow_count = 0;
         for _ in 0..count {
@@ -91,7 +91,7 @@ impl VolumeGrowth {
         &self,
         vid: VolumeId,
         option: &VolumeGrowOption,
-        topology: TopologyEventTx,
+        topology: TopologyRef,
         nodes: Vec<DataNodeRef>,
     ) -> Result<()> {
         for dn in nodes {
@@ -120,7 +120,11 @@ impl VolumeGrowth {
                 .await
                 .add_or_update_volume(volume_info.clone())
                 .await?;
-            topology.register_volume_layout(volume_info, dn).await?;
+            topology
+                .write()
+                .await
+                .register_volume_layout(volume_info, dn)
+                .await?;
         }
         Ok(())
     }
@@ -130,7 +134,7 @@ impl VolumeGrowth {
     pub async fn grow_by_type(
         &self,
         option: Arc<VolumeGrowOption>,
-        topology: TopologyEventTx,
+        topology: TopologyRef,
     ) -> Result<usize> {
         let count = self.find_volume_count(option.replica_placement.copy_count());
         self.grow_by_count_and_type(count, option.as_ref(), topology)

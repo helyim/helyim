@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use serde::Serialize;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -27,9 +27,7 @@ pub struct Topology {
     volume_size_limit: u64,
     // children
     #[serde(skip)]
-    data_centers: HashMap<FastStr, DataCenterRef>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
+    pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 }
 
 unsafe impl Send for Topology {}
@@ -42,26 +40,18 @@ impl Clone for Topology {
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
-            shutdown: self.shutdown.clone(),
         }
     }
 }
 
-#[event_fn]
 impl Topology {
-    pub fn new(
-        sequencer: Sequencer,
-        volume_size_limit: u64,
-        pulse: u64,
-        shutdown: async_broadcast::Receiver<()>,
-    ) -> Topology {
+    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
         Topology {
             sequencer,
             collections: HashMap::new(),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
-            shutdown,
         }
     }
 
@@ -167,7 +157,7 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&mut self) -> Result<VolumeId> {
+    pub async fn next_volume_id(&self) -> Result<VolumeId> {
         let vid = self.get_max_volume_id().await?;
 
         Ok(vid + 1)
@@ -175,10 +165,6 @@ impl Topology {
 
     pub fn set_max_sequence(&mut self, seq: u64) {
         self.sequencer.set_max(seq);
-    }
-
-    pub fn data_centers(&self) -> HashMap<FastStr, DataCenterRef> {
-        self.data_centers.clone()
     }
 
     pub fn topology(&self) -> Topology {
@@ -242,7 +228,7 @@ impl Topology {
 }
 
 pub async fn topology_vacuum_loop(
-    topology: TopologyEventTx,
+    topology: TopologyRef,
     garbage_threshold: f64,
     preallocate: u64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -253,7 +239,7 @@ pub async fn topology_vacuum_loop(
         tokio::select! {
             _ = interval.tick() => {
                 debug!("topology vacuum starting.");
-                match topology.vacuum(garbage_threshold, preallocate).await {
+                match topology.write().await.vacuum(garbage_threshold, preallocate).await {
                     Ok(_) => debug!("topology vacuum success."),
                     Err(err) => error!("topology vacuum failed, {err}")
                 }
@@ -264,4 +250,25 @@ pub async fn topology_vacuum_loop(
         }
     }
     info!("topology vacuum loop stopped")
+}
+
+#[derive(Clone)]
+pub struct TopologyRef(Arc<RwLock<Topology>>);
+
+impl TopologyRef {
+    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Self {
+        Self(Arc::new(RwLock::new(Topology::new(
+            sequencer,
+            volume_size_limit,
+            pulse,
+        ))))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Topology> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Topology> {
+        self.0.write().await
+    }
 }

@@ -13,13 +13,13 @@ use crate::{
     storage::{ReplicaPlacement, Ttl},
     topology::{
         volume_grow::{VolumeGrowOption, VolumeGrowth},
-        Topology, TopologyEventTx,
+        Topology, TopologyRef,
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DirectoryContext {
-    pub topology: TopologyEventTx,
+    pub topology: TopologyRef,
     pub volume_grow: Arc<VolumeGrowth>,
     pub default_replication: FastStr,
     pub ip: FastStr,
@@ -84,15 +84,26 @@ pub async fn assign_handler(
     };
     let option = Arc::new(request.volume_grow_option(&ctx)?);
 
-    if !ctx.topology.has_writable_volume(option.clone()).await? {
-        if ctx.topology.free_volumes().await? <= 0 {
+    if !ctx
+        .topology
+        .write()
+        .await
+        .has_writable_volume(option.clone())
+        .await?
+    {
+        if ctx.topology.read().await.free_volumes().await? <= 0 {
             return Err(Error::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
             .grow_by_type(option.clone(), ctx.topology.clone())
             .await?;
     }
-    let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
+    let (fid, count, node) = ctx
+        .topology
+        .write()
+        .await
+        .pick_for_write(count, option)
+        .await?;
     let assignment = Assignment {
         fid: fid.to_string(),
         url: node.read().await.url(),
@@ -104,7 +115,7 @@ pub async fn assign_handler(
 }
 
 pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
-    let topology = ctx.topology.topology().await?;
+    let topology = ctx.topology.read().await.topology();
     Ok(Json(topology))
 }
 
