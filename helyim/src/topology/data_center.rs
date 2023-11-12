@@ -1,44 +1,35 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use faststr::FastStr;
-use futures::channel::mpsc::unbounded;
-use helyim_macros::event_fn;
-use rand::random;
+use rand::Rng;
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 use crate::{
     errors::{Error, Result},
-    rt_spawn,
     storage::VolumeId,
-    topology::{DataNode, Rack},
+    topology::{rack::RackRef, DataNodeRef},
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct DataCenter {
     pub id: FastStr,
-    #[serde(skip)]
-    inner: DataCenterInnerEventTx,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DataCenterInner {
-    id: FastStr,
-    max_volume_id: VolumeId,
+    pub max_volume_id: VolumeId,
     // children
     #[serde(skip)]
-    racks: HashMap<FastStr, Arc<Rack>>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
+    pub racks: HashMap<FastStr, RackRef>,
 }
 
-#[event_fn]
-impl DataCenterInner {
-    pub fn max_volume_id(&self) -> VolumeId {
-        self.max_volume_id
-    }
-
-    pub fn racks(&self) -> HashMap<FastStr, Arc<Rack>> {
-        self.racks.clone()
+impl DataCenter {
+    pub fn new(id: FastStr) -> DataCenter {
+        Self {
+            id: id.clone(),
+            racks: HashMap::new(),
+            max_volume_id: 0,
+        }
     }
 
     pub fn adjust_max_volume_id(&mut self, vid: VolumeId) {
@@ -47,12 +38,11 @@ impl DataCenterInner {
         }
     }
 
-    pub fn get_or_create_rack(&mut self, id: FastStr) -> Arc<Rack> {
+    pub fn get_or_create_rack(&mut self, id: FastStr) -> RackRef {
         match self.racks.get(&id) {
             Some(rack) => rack.clone(),
             None => {
-                let rack = Rack::new(id.clone(), self.shutdown.clone());
-                let rack = Arc::new(rack);
+                let rack = RackRef::new(id.clone());
                 self.racks.insert(id, rack.clone());
                 rack
             }
@@ -62,7 +52,7 @@ impl DataCenterInner {
     pub async fn has_volumes(&self) -> Result<i64> {
         let mut has_volumes = 0;
         for rack in self.racks.values() {
-            has_volumes += rack.has_volumes().await?;
+            has_volumes += rack.read().await.has_volumes().await?;
         }
         Ok(has_volumes)
     }
@@ -70,7 +60,7 @@ impl DataCenterInner {
     pub async fn max_volumes(&self) -> Result<i64> {
         let mut max_volumes = 0;
         for rack in self.racks.values() {
-            max_volumes += rack.max_volumes().await?;
+            max_volumes += rack.read().await.max_volumes().await;
         }
         Ok(max_volumes)
     }
@@ -78,24 +68,24 @@ impl DataCenterInner {
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free_volumes = 0;
         for rack in self.racks.values() {
-            free_volumes += rack.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await?;
         }
         Ok(free_volumes)
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef> {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
-            free_volumes += rack.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await?;
         }
 
-        let idx = random::<u32>() as i64 % free_volumes;
+        let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for (_, rack) in self.racks.iter() {
-            free_volumes -= rack.free_volumes().await?;
+            free_volumes -= rack.read().await.free_volumes().await?;
             if free_volumes == idx {
-                return rack.reserve_one_volume().await;
+                return rack.read().await.reserve_one_volume().await;
             }
         }
 
@@ -106,49 +96,42 @@ impl DataCenterInner {
     }
 }
 
-impl DataCenter {
-    pub fn new(id: FastStr, shutdown: async_broadcast::Receiver<()>) -> DataCenter {
-        let (tx, rx) = unbounded();
-        let inner = DataCenterInner {
-            id: id.clone(),
-            racks: HashMap::new(),
-            max_volume_id: 0,
-            shutdown: shutdown.clone(),
-        };
-        rt_spawn(data_center_inner_loop(inner, rx, shutdown));
-        let inner = DataCenterInnerEventTx::new(tx);
-        DataCenter { id, inner }
+#[derive(Clone)]
+pub struct DataCenterRef(Arc<RwLock<DataCenter>>);
+
+impl DataCenterRef {
+    pub fn new(id: FastStr) -> Self {
+        Self(Arc::new(RwLock::new(DataCenter::new(id))))
     }
 
-    pub async fn max_volume_id(&self) -> Result<VolumeId> {
-        self.inner.max_volume_id().await
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DataCenter> {
+        self.0.read().await
     }
 
-    pub async fn racks(&self) -> Result<HashMap<FastStr, Arc<Rack>>> {
-        self.inner.racks().await
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DataCenter> {
+        self.0.write().await
     }
 
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) -> Result<()> {
-        self.inner.adjust_max_volume_id(vid)
+    pub fn downgrade(&self) -> WeakDataCenterRef {
+        WeakDataCenterRef(Arc::downgrade(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct WeakDataCenterRef(Weak<RwLock<DataCenter>>);
+
+impl Default for WeakDataCenterRef {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WeakDataCenterRef {
+    pub fn new() -> Self {
+        Self(Weak::new())
     }
 
-    pub async fn get_or_create_rack(&self, id: FastStr) -> Result<Arc<Rack>> {
-        self.inner.get_or_create_rack(id).await
-    }
-
-    pub async fn has_volumes(&self) -> Result<i64> {
-        self.inner.has_volumes().await
-    }
-
-    pub async fn max_volumes(&self) -> Result<i64> {
-        self.inner.max_volumes().await
-    }
-
-    pub async fn free_volumes(&self) -> Result<i64> {
-        self.inner.free_volumes().await
-    }
-
-    pub async fn reserve_one_volume(&self) -> Result<Arc<DataNode>> {
-        self.inner.reserve_one_volume().await
+    pub fn upgrade(&self) -> Option<DataCenterRef> {
+        self.0.upgrade().map(DataCenterRef)
     }
 }

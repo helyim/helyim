@@ -8,10 +8,10 @@ use tokio::sync::RwLock;
 use crate::{
     errors::Result,
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{volume_grow::VolumeGrowOption, DataNode},
+    topology::{data_node::DataNodeRef, volume_grow::VolumeGrowOption},
 };
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct VolumeLayout {
     rp: ReplicaPlacement,
     ttl: Option<Ttl>,
@@ -21,7 +21,7 @@ pub struct VolumeLayout {
     pub readonly_volumes: HashMap<VolumeId, bool>,
     oversize_volumes: HashMap<VolumeId, bool>,
     #[serde(skip)]
-    pub locations: HashMap<VolumeId, Vec<Arc<DataNode>>>,
+    pub locations: HashMap<VolumeId, Vec<DataNodeRef>>,
 }
 
 impl VolumeLayout {
@@ -46,11 +46,14 @@ impl VolumeLayout {
         for vid in self.writable_volumes.iter() {
             if let Some(nodes) = self.locations.get(vid) {
                 for node in nodes.iter() {
-                    if node.data_center_id().await? == option.data_center {
-                        if !option.rack.is_empty() && node.rack_id().await? != option.rack {
+                    if node.read().await.data_center_id().await == option.data_center {
+                        if !option.rack.is_empty()
+                            && node.read().await.rack_id().await != option.rack
+                        {
                             continue;
                         }
-                        if !option.data_node.is_empty() && node.id != option.data_node {
+                        if !option.data_node.is_empty() && node.read().await.id != option.data_node
+                        {
                             continue;
                         }
                         count += 1;
@@ -65,7 +68,7 @@ impl VolumeLayout {
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> Result<(VolumeId, &Vec<Arc<DataNode>>)> {
+    ) -> Result<(VolumeId, &Vec<DataNodeRef>)> {
         if self.writable_volumes.is_empty() {
             return Err(VolumeError::NoWritableVolumes.into());
         }
@@ -87,11 +90,14 @@ impl VolumeLayout {
         for vid in self.writable_volumes.iter() {
             if let Some(locations) = self.locations.get(vid) {
                 for node in locations.iter() {
-                    if node.data_center_id().await? == option.data_center {
-                        if !option.rack.is_empty() && node.rack_id().await? != option.rack {
+                    if node.read().await.data_center_id().await == option.data_center {
+                        if !option.rack.is_empty()
+                            && node.read().await.rack_id().await != option.rack
+                        {
                             continue;
                         }
-                        if !option.data_node.is_empty() && node.id != option.data_node {
+                        if !option.data_node.is_empty() && node.read().await.id != option.data_node
+                        {
                             continue;
                         }
 
@@ -111,9 +117,11 @@ impl VolumeLayout {
         }
     }
 
-    fn set_node(locations: &mut Vec<Arc<DataNode>>, dn: Arc<DataNode>) -> Result<()> {
+    async fn set_node(locations: &mut Vec<DataNodeRef>, dn: DataNodeRef) -> Result<()> {
         for location in locations.iter_mut() {
-            if location.ip == dn.ip && location.port == dn.port {
+            if location.read().await.ip == dn.read().await.ip
+                && location.read().await.port == dn.read().await.port
+            {
                 *location = dn.clone();
                 return Ok(());
             }
@@ -122,13 +130,14 @@ impl VolumeLayout {
         Ok(())
     }
 
-    pub async fn register_volume(&mut self, v: &VolumeInfo, dn: Arc<DataNode>) -> Result<()> {
+    pub async fn register_volume(&mut self, v: &VolumeInfo, dn: DataNodeRef) -> Result<()> {
         let locations = self.locations.entry(v.id).or_default();
-        VolumeLayout::set_node(locations, dn)?;
+        VolumeLayout::set_node(locations, dn).await?;
 
         for location in locations.iter() {
-            match location.get_volume(v.id).await {
-                Ok(Some(v)) => {
+            let volume = location.read().await.get_volume(v.id);
+            match volume {
+                Some(v) => {
                     if v.read_only {
                         self.remove_from_writable(v.id);
                         self.readonly_volumes.insert(v.id, true);
@@ -137,8 +146,7 @@ impl VolumeLayout {
                         self.readonly_volumes.remove(&v.id);
                     }
                 }
-                Ok(None) => (),
-                Err(_) => {
+                None => {
                     self.remove_from_writable(v.id);
                     self.readonly_volumes.remove(&v.id);
                     return Ok(());
@@ -183,12 +191,12 @@ impl VolumeLayout {
     pub async fn set_volume_available(
         &mut self,
         vid: VolumeId,
-        data_node: &Arc<DataNode>,
+        data_node: &DataNodeRef,
         readonly: bool,
     ) -> Result<bool> {
-        if let Some(volume_info) = data_node.get_volume(vid).await? {
+        if let Some(volume_info) = data_node.read().await.get_volume(vid) {
             if let Some(locations) = self.locations.get_mut(&vid) {
-                VolumeLayout::set_node(locations, data_node.clone())?;
+                VolumeLayout::set_node(locations, data_node.clone()).await?;
             }
 
             if volume_info.read_only || readonly {
@@ -228,12 +236,12 @@ impl VolumeLayout {
         self.remove_from_writable(v.id);
     }
 
-    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<Arc<DataNode>>> {
+    pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         self.locations.get(&vid).cloned()
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
 
 impl VolumeLayoutRef {

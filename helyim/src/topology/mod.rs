@@ -1,17 +1,13 @@
 pub mod collection;
 
 mod data_center;
-pub use data_center::DataCenter;
-
 mod data_node;
-pub use data_node::DataNode;
+pub use data_node::DataNodeRef;
 
 mod rack;
-pub use rack::Rack;
-
 #[allow(clippy::module_inception)]
 mod topology;
-pub use topology::{topology_loop, topology_vacuum_loop, Topology, TopologyEventTx};
+pub use topology::{topology_vacuum_loop, Topology, TopologyRef};
 
 pub mod volume_grow;
 

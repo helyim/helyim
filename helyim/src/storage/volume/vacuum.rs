@@ -5,7 +5,6 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     result::Result as StdResult,
-    sync::Arc,
 };
 
 use bytes::BufMut;
@@ -21,15 +20,81 @@ use crate::{
         needle_map::{index_entry, walk_index_file},
         volume::{
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
-            scan_volume_file, SuperBlock, Volume, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
+            scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
+            COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
         Needle, NeedleError, NeedleMapper, NeedleValue, VolumeError, VolumeId,
     },
-    topology::{volume_layout::VolumeLayoutRef, DataNode},
+    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
     util::time::now,
 };
 
 impl Volume {
+    pub fn compact(&mut self) -> StdResult<(), VolumeError> {
+        let filename = self.filename();
+        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
+        self.last_compact_revision = self.super_block.compact_revision;
+        self.readonly = true;
+        self.copy_data_and_generate_index_file(
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
+        )?;
+        info!("compact {filename} success");
+        Ok(())
+    }
+
+    pub fn compact2(&mut self) -> StdResult<(), VolumeError> {
+        let filename = self.filename();
+        self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
+        self.last_compact_revision = self.super_block.compact_revision;
+        self.readonly = true;
+        self.copy_data_based_on_index_file(
+            format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
+            format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
+        )?;
+        info!("compact {filename} success");
+        Ok(())
+    }
+
+    pub fn commit_compact(&mut self) -> StdResult<(), VolumeError> {
+        let filename = self.filename();
+        let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
+        let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
+        let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
+        let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
+        info!("starting to commit compaction, filename: {compact_data_filename}");
+        match self.makeup_diff(
+            &compact_data_filename,
+            &compact_index_filename,
+            &data_filename,
+            &index_filename,
+        ) {
+            Ok(()) => {
+                fs::rename(&compact_data_filename, data_filename)?;
+                fs::rename(compact_index_filename, index_filename)?;
+                info!(
+                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
+                );
+            }
+            Err(err) => {
+                error!("makeup diff in commit compaction failed, {err}");
+                fs::remove_file(compact_data_filename)?;
+                fs::remove_file(compact_index_filename)?;
+            }
+        }
+        self.data_file = None;
+        self.readonly = false;
+        self.load(false, true)
+    }
+
+    pub fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
+        let filename = self.filename();
+        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
+        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
+        info!("cleanup compaction success, filename: {filename}");
+        Ok(())
+    }
+
     pub fn makeup_diff(
         &self,
         new_data_filename: &str,
@@ -285,18 +350,20 @@ fn fetch_compact_revision_from_data_file(file: &mut File) -> StdResult<u16, Volu
 
 pub async fn batch_vacuum_volume_check(
     volume_id: VolumeId,
-    data_nodes: &[Arc<DataNode>],
+    data_nodes: &[DataNodeRef],
     garbage_ratio: f64,
 ) -> StdResult<bool, VolumeError> {
     let mut need_vacuum = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
-        match data_node.vacuum_volume_check(request).await {
+        let response = data_node.write().await.vacuum_volume_check(request).await;
+        match response {
             Ok(response) => {
                 if response.garbage_ratio > 0.0 {
                     info!(
                         "check volume {}:{volume_id} success. garbage ratio is {}",
-                        data_node.public_url, response.garbage_ratio
+                        data_node.read().await.public_url,
+                        response.garbage_ratio
                     );
                 }
                 need_vacuum = response.garbage_ratio > garbage_ratio;
@@ -304,7 +371,7 @@ pub async fn batch_vacuum_volume_check(
             Err(err) => {
                 error!(
                     "check volume {}:{volume_id} failed, {err}",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
                 need_vacuum = false;
             }
@@ -316,7 +383,7 @@ pub async fn batch_vacuum_volume_check(
 pub async fn batch_vacuum_volume_compact(
     volume_layout: &mut VolumeLayoutRef,
     volume_id: VolumeId,
-    data_nodes: &[Arc<DataNode>],
+    data_nodes: &[DataNodeRef],
     preallocate: u64,
 ) -> StdResult<bool, VolumeError> {
     volume_layout.write().await.remove_from_writable(volume_id);
@@ -326,18 +393,19 @@ pub async fn batch_vacuum_volume_compact(
             volume_id,
             preallocate,
         };
-        match data_node.vacuum_volume_compact(request).await {
+        let response = data_node.write().await.vacuum_volume_compact(request).await;
+        match response {
             Ok(_) => {
                 info!(
                     "compact volume {}:{volume_id} success.",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
                 compact_success = true;
             }
             Err(err) => {
                 error!(
                     "compact volume {}:{volume_id} failed, {err}",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
                 compact_success = false;
             }
@@ -349,26 +417,27 @@ pub async fn batch_vacuum_volume_compact(
 pub async fn batch_vacuum_volume_commit(
     volume_layout: &mut VolumeLayoutRef,
     volume_id: VolumeId,
-    data_nodes: &[Arc<DataNode>],
+    data_nodes: &[DataNodeRef],
 ) -> StdResult<bool, VolumeError> {
     let mut commit_success = true;
     let mut is_readonly = false;
     for data_node in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
-        match data_node.vacuum_volume_commit(request).await {
+        let response = data_node.write().await.vacuum_volume_commit(request).await;
+        match response {
             Ok(response) => {
                 if response.is_read_only {
                     is_readonly = true;
                 }
                 info!(
                     "commit volume {}:{volume_id} success.",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
             }
             Err(err) => {
                 error!(
                     "commit volume {}:{volume_id} failed, {err}",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
                 commit_success = false;
             }
@@ -391,16 +460,17 @@ pub async fn batch_vacuum_volume_commit(
 #[allow(dead_code)]
 async fn batch_vacuum_volume_cleanup(
     volume_id: VolumeId,
-    data_nodes: &[Arc<DataNode>],
+    data_nodes: &[DataNodeRef],
 ) -> StdResult<bool, VolumeError> {
     let mut cleanup_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };
-        match data_node.vacuum_volume_cleanup(request).await {
+        let response = data_node.write().await.vacuum_volume_cleanup(request).await;
+        match response {
             Ok(_) => {
                 info!(
                     "cleanup volume {}:{volume_id} success.",
-                    data_node.public_url
+                    data_node.read().await.public_url
                 );
                 cleanup_success = true;
             }

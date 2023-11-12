@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use serde::Serialize;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -13,8 +13,8 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef,
-        DataCenter, DataNode,
+        collection::Collection, data_center::DataCenterRef, volume_grow::VolumeGrowOption,
+        volume_layout::VolumeLayoutRef, DataNodeRef,
     },
 };
 
@@ -27,9 +27,7 @@ pub struct Topology {
     volume_size_limit: u64,
     // children
     #[serde(skip)]
-    data_centers: HashMap<FastStr, Arc<DataCenter>>,
-    #[serde(skip)]
-    shutdown: async_broadcast::Receiver<()>,
+    pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 }
 
 unsafe impl Send for Topology {}
@@ -42,36 +40,27 @@ impl Clone for Topology {
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
-            shutdown: self.shutdown.clone(),
         }
     }
 }
 
-#[event_fn]
 impl Topology {
-    pub fn new(
-        sequencer: Sequencer,
-        volume_size_limit: u64,
-        pulse: u64,
-        shutdown: async_broadcast::Receiver<()>,
-    ) -> Topology {
+    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
         Topology {
             sequencer,
             collections: HashMap::new(),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
-            shutdown,
         }
     }
 
-    pub fn get_or_create_data_center(&mut self, name: FastStr) -> Arc<DataCenter> {
+    pub fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
         match self.data_centers.get(&name) {
             Some(data_node) => data_node.clone(),
             None => {
-                let data_center = DataCenter::new(name.clone(), self.shutdown.clone());
+                let data_center = DataCenterRef::new(name.clone());
 
-                let data_center = Arc::new(data_center);
                 self.data_centers.insert(name, data_center.clone());
                 data_center
             }
@@ -82,7 +71,7 @@ impl Topology {
         &mut self,
         collection: FastStr,
         volume_id: VolumeId,
-    ) -> Option<Vec<Arc<DataNode>>> {
+    ) -> Option<Vec<DataNodeRef>> {
         if collection.is_empty() {
             for c in self.collections.values() {
                 let data_node = c.lookup(volume_id).await;
@@ -112,8 +101,9 @@ impl Topology {
 
     pub async fn free_volumes(&self) -> Result<i64> {
         let mut free = 0;
-        for data_node in self.data_centers.values() {
-            free += data_node.max_volumes().await? - data_node.has_volumes().await?;
+        for data_center in self.data_centers.values() {
+            free += data_center.read().await.max_volumes().await?
+                - data_center.read().await.has_volumes().await?;
         }
         Ok(free)
     }
@@ -122,7 +112,7 @@ impl Topology {
         &mut self,
         count: u64,
         option: Arc<VolumeGrowOption>,
-    ) -> Result<(FileId, u64, Arc<DataNode>)> {
+    ) -> Result<(FileId, u64, DataNodeRef)> {
         let file_id = self.sequencer.next_file_id(count)?;
 
         let (volume_id, node) = {
@@ -143,7 +133,7 @@ impl Topology {
     pub async fn register_volume_layout(
         &mut self,
         volume: VolumeInfo,
-        data_node: Arc<DataNode>,
+        data_node: DataNodeRef,
     ) -> Result<()> {
         self.get_volume_layout(
             volume.collection.clone(),
@@ -167,7 +157,7 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&mut self) -> Result<VolumeId> {
+    pub async fn next_volume_id(&self) -> Result<VolumeId> {
         let vid = self.get_max_volume_id().await?;
 
         Ok(vid + 1)
@@ -175,10 +165,6 @@ impl Topology {
 
     pub fn set_max_sequence(&mut self, seq: u64) {
         self.sequencer.set_max(seq);
-    }
-
-    pub fn data_centers(&self) -> HashMap<FastStr, Arc<DataCenter>> {
-        self.data_centers.clone()
     }
 
     pub fn topology(&self) -> Topology {
@@ -230,8 +216,8 @@ impl Topology {
 
     async fn get_max_volume_id(&self) -> Result<VolumeId> {
         let mut vid = 0;
-        for (_, data_node) in self.data_centers.iter() {
-            let other = data_node.max_volume_id().await?;
+        for (_, data_center) in self.data_centers.iter() {
+            let other = data_center.read().await.max_volume_id;
             if other > vid {
                 vid = other;
             }
@@ -242,7 +228,7 @@ impl Topology {
 }
 
 pub async fn topology_vacuum_loop(
-    topology: TopologyEventTx,
+    topology: TopologyRef,
     garbage_threshold: f64,
     preallocate: u64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -253,7 +239,7 @@ pub async fn topology_vacuum_loop(
         tokio::select! {
             _ = interval.tick() => {
                 debug!("topology vacuum starting.");
-                match topology.vacuum(garbage_threshold, preallocate).await {
+                match topology.write().await.vacuum(garbage_threshold, preallocate).await {
                     Ok(_) => debug!("topology vacuum success."),
                     Err(err) => error!("topology vacuum failed, {err}")
                 }
@@ -264,4 +250,25 @@ pub async fn topology_vacuum_loop(
         }
     }
     info!("topology vacuum loop stopped")
+}
+
+#[derive(Clone)]
+pub struct TopologyRef(Arc<RwLock<Topology>>);
+
+impl TopologyRef {
+    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Self {
+        Self(Arc::new(RwLock::new(Topology::new(
+            sequencer,
+            volume_size_limit,
+            pulse,
+        ))))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Topology> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Topology> {
+        self.0.write().await
+    }
 }

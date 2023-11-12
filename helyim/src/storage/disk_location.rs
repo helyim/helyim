@@ -1,10 +1,9 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, future::join_all};
-use helyim_macros::event_fn;
+use futures::future::join_all;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
-use tokio::task::JoinHandle;
+use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::info;
 
 use crate::{
@@ -14,7 +13,7 @@ use crate::{
     storage::{
         needle_map::NeedleMapType,
         ttl::Ttl,
-        volume::{volume_loop, ReplicaPlacement, Volume, VolumeEventTx, DATA_FILE_SUFFIX},
+        volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
         VolumeId,
     },
 };
@@ -22,22 +21,15 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, VolumeEventTx>,
-    pub(crate) shutdown: async_broadcast::Receiver<()>,
+    pub volumes: HashMap<VolumeId, VolumeRef>,
 }
 
-#[event_fn]
 impl DiskLocation {
-    pub fn new(
-        dir: &str,
-        max_volume_count: i64,
-        shutdown_rx: async_broadcast::Receiver<()>,
-    ) -> DiskLocation {
+    pub fn new(dir: &str, max_volume_count: i64) -> DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
-            shutdown: shutdown_rx,
         }
     }
 
@@ -45,9 +37,9 @@ impl DiskLocation {
     pub async fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
-        info!("load existing volumes dir: {}", self.directory);
+        info!("load existing volumes: {}", self.directory);
 
-        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeEventTx)>>> = vec![];
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef)>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
@@ -57,11 +49,10 @@ impl DiskLocation {
                 info!("load volume {} data file {:?}", vid, path);
                 if !self.volumes.contains_key(&vid) {
                     let dir = self.directory.clone();
-                    let shutdown = self.shutdown.clone();
                     let collection = FastStr::new(collection);
 
                     let handle = rt_spawn(async move {
-                        let volume = Volume::new(
+                        let volume = VolumeRef::new(
                             dir,
                             collection,
                             vid,
@@ -70,10 +61,8 @@ impl DiskLocation {
                             Ttl::default(),
                             0,
                         )?;
-                        let (tx, rx) = unbounded();
-                        let volume_tx = VolumeEventTx::new(tx);
-                        rt_spawn(volume_loop(volume, rx, shutdown));
-                        Ok((vid, volume_tx))
+
+                        Ok((vid, volume))
                     });
                     handles.push(handle);
                 }
@@ -81,32 +70,22 @@ impl DiskLocation {
         }
 
         for join in join_all(handles).await {
-            let (vid, volume_tx) = join??;
-            self.volumes.insert(vid, volume_tx);
+            let (vid, volume) = join??;
+            self.volumes.insert(vid, volume);
         }
 
         Ok(())
     }
 
-    pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeEventTx) {
+    pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeRef) {
         self.volumes.insert(vid, volume);
     }
-    pub fn shutdown_rx(&self) -> async_broadcast::Receiver<()> {
-        self.shutdown.clone()
-    }
 
-    pub fn directory(&self) -> FastStr {
-        self.directory.clone()
-    }
-
-    pub fn max_volume_count(&self) -> i64 {
-        self.max_volume_count
-    }
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeEventTx> {
+    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeRef> {
         self.volumes.get(&vid).cloned()
     }
 
-    pub fn get_volumes(&self) -> HashMap<VolumeId, VolumeEventTx> {
+    pub fn get_volumes(&self) -> HashMap<VolumeId, VolumeRef> {
         self.volumes.clone()
     }
 
@@ -116,7 +95,7 @@ impl DiskLocation {
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.destroy().await?;
+            v.read().await.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory
@@ -145,4 +124,21 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
             }
         })?;
     Ok((id.parse()?, collection))
+}
+
+#[derive(Clone)]
+pub struct DiskLocationRef(Arc<RwLock<DiskLocation>>);
+
+impl DiskLocationRef {
+    pub fn new(location: DiskLocation) -> Self {
+        Self(Arc::new(RwLock::new(location)))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DiskLocation> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DiskLocation> {
+        self.0.write().await
+    }
 }

@@ -1,6 +1,6 @@
 use std::time::SystemTimeError;
 
-use crate::storage::{version::Version, volume::VolumeEvent, VolumeId};
+use crate::storage::{version::Version, VolumeId};
 
 #[derive(thiserror::Error, Debug)]
 pub enum NeedleError {
@@ -42,8 +42,6 @@ pub enum VolumeError {
     #[error("Raw volume error: {0}")]
     String(String),
 
-    #[error("Futures channel try send error: {0}")]
-    TrySendError(#[from] futures::channel::mpsc::TrySendError<VolumeEvent>),
     #[error("Futures channel send error: {0}")]
     SendError(#[from] futures::channel::mpsc::SendError),
     #[error("Oneshot channel canceled")]

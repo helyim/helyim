@@ -3,7 +3,7 @@ use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 use async_stream::stream;
 use axum::{routing::get, Router};
 use faststr::FastStr;
-use futures::{channel::mpsc::unbounded, StreamExt};
+use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient,
@@ -31,7 +31,7 @@ use crate::{
     storage::{
         api::{fallback_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
-        store::{store_loop, Store, StoreEventTx},
+        store::StoreRef,
     },
     util::exit,
     STOP_INTERVAL,
@@ -44,7 +44,7 @@ pub struct StorageServer {
     pub pulse_seconds: i64,
     pub data_center: FastStr,
     pub rack: FastStr,
-    pub store: StoreEventTx,
+    pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     handles: Vec<JoinHandle<()>>,
@@ -71,7 +71,7 @@ impl StorageServer {
 
         let master_node = FastStr::new(master_node);
 
-        let store = Store::new(
+        let store = StoreRef::new(
             ip,
             port,
             public_url,
@@ -79,13 +79,8 @@ impl StorageServer {
             max_counts,
             needle_map_type,
             master_node.clone(),
-            shutdown_rx.clone(),
         )
         .await?;
-
-        let (tx, rx) = unbounded();
-        let store_tx = StoreEventTx::new(tx);
-        rt_spawn(store_loop(store, rx, shutdown_rx.clone()));
 
         let storage = StorageServer {
             host: FastStr::new(host),
@@ -96,7 +91,7 @@ impl StorageServer {
             rack: FastStr::new(rack),
             needle_map_type,
             read_redirect,
-            store: store_tx.clone(),
+            store: store.clone(),
             handles: vec![],
             shutdown,
         };
@@ -108,7 +103,7 @@ impl StorageServer {
             info!("volume grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
-                    store: store_tx,
+                    store,
                     needle_map_type,
                 }))
                 .serve_with_shutdown(addr, async {
@@ -215,7 +210,7 @@ impl StorageServer {
 }
 
 async fn start_heartbeat(
-    store: StoreEventTx,
+    store: StoreRef,
     mut client: HelyimClient<LoadBalancedChannel>,
     pulse_seconds: i64,
     mut shutdown: async_broadcast::Receiver<()>,
@@ -235,9 +230,7 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
-                                        if let Err(err) = store.set_volume_size_limit(response.volume_size_limit) {
-                                            error!("set volume_size_limit failed, error: {err}");
-                                        }
+                                        store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
@@ -263,7 +256,7 @@ async fn start_heartbeat(
 }
 
 async fn heartbeat_stream(
-    store: StoreEventTx,
+    store: StoreRef,
     client: &mut HelyimClient<LoadBalancedChannel>,
     pulse_seconds: i64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
@@ -274,7 +267,7 @@ async fn heartbeat_stream(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    match store.collect_heartbeat().await {
+                    match store.write().await.collect_heartbeat().await {
                         Ok(heartbeat) => yield heartbeat,
                         Err(err) => error!("collect heartbeat error: {err}")
                     }
@@ -292,7 +285,7 @@ async fn heartbeat_stream(
 
 #[derive(Clone)]
 struct StorageGrpcServer {
-    store: StoreEventTx,
+    store: StoreRef,
     needle_map_type: NeedleMapType,
 }
 
@@ -304,6 +297,8 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
         self.store
+            .read()
+            .await
             .add_volume(
                 request.volumes,
                 request.collection,
@@ -322,7 +317,12 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self
+            .store
+            .read()
+            .await
+            .check_compact_volume(request.volume_id)
+            .await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -333,6 +333,8 @@ impl VolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} compact", request.volume_id);
         self.store
+            .read()
+            .await
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
@@ -344,7 +346,11 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
-        self.store.commit_compact_volume(request.volume_id).await?;
+        self.store
+            .read()
+            .await
+            .commit_compact_volume(request.volume_id)
+            .await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -357,7 +363,11 @@ impl VolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} cleanup", request.volume_id);
-        self.store.commit_cleanup_volume(request.volume_id).await?;
+        self.store
+            .read()
+            .await
+            .commit_cleanup_volume(request.volume_id)
+            .await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
