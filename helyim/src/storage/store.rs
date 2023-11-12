@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use faststr::FastStr;
-use helyim_macros::event_fn;
 use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -38,7 +40,6 @@ unsafe impl Send for Store {}
 
 unsafe impl Sync for Store {}
 
-#[event_fn]
 impl Store {
     pub async fn new(
         ip: &str,
@@ -379,5 +380,43 @@ mod tests {
         if let Err(err) = timeout {
             panic!("{err}");
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct StoreRef(Arc<RwLock<Store>>);
+
+impl StoreRef {
+    pub async fn new(
+        ip: &str,
+        port: u16,
+        public_url: &str,
+        folders: Vec<String>,
+        max_counts: Vec<i64>,
+        needle_map_type: NeedleMapType,
+        master_addr: FastStr,
+        shutdown: async_broadcast::Receiver<()>,
+    ) -> Result<Self> {
+        Ok(Self(Arc::new(RwLock::new(
+            Store::new(
+                ip,
+                port,
+                public_url,
+                folders,
+                max_counts,
+                needle_map_type,
+                master_addr,
+                shutdown,
+            )
+            .await?,
+        ))))
+    }
+
+    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Store> {
+        self.0.read().await
+    }
+
+    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Store> {
+        self.0.write().await
     }
 }
