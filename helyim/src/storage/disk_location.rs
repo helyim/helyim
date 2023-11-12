@@ -22,20 +22,14 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, VolumeRef>,
-    pub(crate) shutdown: async_broadcast::Receiver<()>,
 }
 
 impl DiskLocation {
-    pub fn new(
-        dir: &str,
-        max_volume_count: i64,
-        shutdown_rx: async_broadcast::Receiver<()>,
-    ) -> DiskLocation {
+    pub fn new(dir: &str, max_volume_count: i64) -> DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
-            shutdown: shutdown_rx,
         }
     }
 
@@ -55,7 +49,6 @@ impl DiskLocation {
                 info!("load volume {} data file {:?}", vid, path);
                 if !self.volumes.contains_key(&vid) {
                     let dir = self.directory.clone();
-                    let shutdown = self.shutdown.clone();
                     let collection = FastStr::new(collection);
 
                     let handle = rt_spawn(async move {

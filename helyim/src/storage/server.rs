@@ -79,7 +79,6 @@ impl StorageServer {
             max_counts,
             needle_map_type,
             master_node.clone(),
-            shutdown_rx.clone(),
         )
         .await?;
 

@@ -49,11 +49,10 @@ impl Store {
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
         master_addr: FastStr,
-        shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
-            let mut location = DiskLocation::new(&folders[i], max_counts[i], shutdown.clone());
+            let mut location = DiskLocation::new(&folders[i], max_counts[i]);
             location.load_existing_volumes(needle_map_type).await?;
 
             locations.push(DiskLocationRef::new(location));
@@ -395,7 +394,6 @@ impl StoreRef {
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
         master_addr: FastStr,
-        shutdown: async_broadcast::Receiver<()>,
     ) -> Result<Self> {
         Ok(Self(Arc::new(RwLock::new(
             Store::new(
@@ -406,7 +404,6 @@ impl StoreRef {
                 max_counts,
                 needle_map_type,
                 master_addr,
-                shutdown,
             )
             .await?,
         ))))
