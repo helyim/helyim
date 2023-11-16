@@ -30,6 +30,13 @@ use crate::{
 };
 
 impl Volume {
+    pub fn garbage_level(&self) -> f64 {
+        if self.content_size() == 0 {
+            return 0.0;
+        }
+        self.deleted_bytes() as f64 / self.content_size() as f64
+    }
+
     pub fn compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;

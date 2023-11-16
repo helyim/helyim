@@ -66,17 +66,19 @@ fn verify_needle_integrity(
 mod tests {
     use bytes::Bytes;
     use faststr::FastStr;
+    use rand::random;
 
     use crate::storage::{
         crc,
         volume::{checking::check_volume_data_integrity, Volume},
-        Needle, NeedleMapType, ReplicaPlacement, Ttl,
+        FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
+        let dir = FastStr::from_static_str("/tmp/");
         let mut volume = Volume::new(
-            FastStr::from_static_str("/tmp/"),
+            dir,
             FastStr::empty(),
             1,
             NeedleMapType::NeedleMapInMemory,
@@ -86,16 +88,20 @@ mod tests {
         )
         .unwrap();
 
-        let fid = "1b1f52120";
-        let data = Bytes::from_static(b"Hello World");
-        let checksum = crc::checksum(&data);
-        let mut needle = Needle {
-            data,
-            checksum,
-            ..Default::default()
-        };
-        needle.parse_path(fid).unwrap();
-        volume.write_needle(needle).unwrap();
+        for i in 0..1000 {
+            let fid = FileId::new(1, i, random::<u32>());
+            let data = Bytes::from_static(b"Hello World");
+            let checksum = crc::checksum(&data);
+            let mut needle = Needle {
+                data,
+                checksum,
+                ..Default::default()
+            };
+            needle
+                .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
+                .unwrap();
+            volume.write_needle(needle).unwrap();
+        }
 
         let index_file = std::fs::OpenOptions::new()
             .read(true)

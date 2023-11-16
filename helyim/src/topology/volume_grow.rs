@@ -204,11 +204,12 @@ async fn find_main_data_center(
     let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
     candidates.remove(first_idx);
 
+    let mut rng = rand::thread_rng();
     for (i, data_center) in candidates.iter().enumerate() {
         if i < rest_nodes.len() {
             rest_nodes.insert(i, data_center.clone());
         } else {
-            let r = rand::thread_rng().gen_range(0..(i + 1));
+            let r = rng.gen_range(0..(i + 1));
             if r < rest_nodes.len() {
                 rest_nodes.insert(r, data_center.clone());
             }
@@ -259,11 +260,12 @@ async fn find_main_rack(
     let mut rest_nodes = Vec::with_capacity(rp.diff_rack_count as usize);
     candidates.remove(first_idx);
 
+    let mut rng = rand::thread_rng();
     for (i, rack) in candidates.iter().enumerate() {
         if i < rest_nodes.len() {
             rest_nodes.insert(i, rack.clone());
         } else {
-            let r = rand::thread_rng().gen_range(0..(i + 1));
+            let r = rng.gen_range(0..(i + 1));
             if r < rest_nodes.len() {
                 rest_nodes.insert(r, rack.clone());
             }
@@ -298,16 +300,17 @@ async fn find_main_node(
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
     candidates.remove(first_idx);
 
+    let mut rng = rand::thread_rng();
     for (i, data_node) in candidates.iter().enumerate() {
         if i < rest_nodes.len() {
             rest_nodes.insert(i, data_node.clone());
         } else {
-            let r = rand::thread_rng().gen_range(0..(i + 1));
+            let r = rng.gen_range(0..(i + 1));
             if r < rest_nodes.len() {
                 rest_nodes.insert(r, data_node.clone());
             }
         }
     }
 
-    Ok((main_dn, candidates))
+    Ok((main_dn, rest_nodes))
 }
