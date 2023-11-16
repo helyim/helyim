@@ -58,6 +58,7 @@ url.workspace = true
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]

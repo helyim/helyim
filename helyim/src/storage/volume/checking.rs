@@ -67,6 +67,7 @@ mod tests {
     use bytes::Bytes;
     use faststr::FastStr;
     use rand::random;
+    use tempfile::Builder;
 
     use crate::storage::{
         crc,
@@ -76,7 +77,11 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_check_volume_data_integrity() {
-        let dir = FastStr::from_static_str("/tmp/");
+        let dir = Builder::new()
+            .prefix("check_volume_data_integrity")
+            .tempdir_in(".")
+            .unwrap();
+        let dir = FastStr::new(dir.path().to_str().unwrap());
         let mut volume = Volume::new(
             dir,
             FastStr::empty(),

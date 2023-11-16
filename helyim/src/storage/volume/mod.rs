@@ -604,6 +604,7 @@ pub mod tests {
     use bytes::Bytes;
     use faststr::FastStr;
     use rand::random;
+    use tempfile::Builder;
 
     use crate::storage::{
         crc,
@@ -633,7 +634,7 @@ pub mod tests {
                 ..Default::default()
             };
             needle
-                .parse_path(&&format!("{:x}{:08x}", fid.key, fid.hash))
+                .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
             volume.write_needle(needle).unwrap();
         }
@@ -643,7 +644,11 @@ pub mod tests {
 
     #[test]
     pub fn test_scan_volume_file() {
-        let dir = FastStr::from_static_str("/tmp/");
+        let dir = Builder::new()
+            .prefix("scan_volume_file")
+            .tempdir_in(".")
+            .unwrap();
+        let dir = FastStr::new(dir.path().to_str().unwrap());
         let volume = setup(dir.clone());
 
         scan_volume_file(
