@@ -303,7 +303,7 @@ impl Volume {
     pub fn read_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
-                if nv.offset == 0 {
+                if nv.offset == 0 || nv.size.is_deleted() {
                     return Err(NeedleError::Deleted(self.id, needle.id).into());
                 }
 
@@ -418,10 +418,10 @@ impl Volume {
         self.needle_mapper.content_size()
     }
 
-    // volume is expired if modified time + volume ttl < now
-    // except when volume is empty
-    // or when the volume does not have a ttl
-    // or when volumeSizeLimit is 0 when server just starts
+    /// volume is expired if modified time + volume ttl < now
+    /// except when volume is empty
+    /// or when the volume does not have a ttl
+    /// or when volumeSizeLimit is 0 when server just starts
     pub fn expired(&self, volume_size_limit: u64) -> bool {
         if volume_size_limit == 0 {
             return false;
@@ -447,7 +447,7 @@ impl Volume {
         self.super_block.replica_placement.copy_count() > 1
     }
 
-    // wait either maxDelayMinutes or 10% of ttl minutes
+    /// wait either maxDelayMinutes or 10% of ttl minutes
     pub fn expired_long_enough(&self, max_delay_minutes: u64) -> bool {
         let ttl = self.super_block.ttl;
         if ttl.minutes() == 0 {
@@ -464,14 +464,6 @@ impl Volume {
         }
 
         false
-    }
-
-    // vacuum
-    pub fn garbage_level(&self) -> f64 {
-        if self.content_size() == 0 {
-            return 0.0;
-        }
-        self.deleted_bytes() as f64 / self.content_size() as f64
     }
 }
 
@@ -603,5 +595,74 @@ impl VolumeRef {
 
     pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Volume> {
         self.0.write().await
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+
+    use bytes::Bytes;
+    use faststr::FastStr;
+    use rand::random;
+    use tempfile::Builder;
+
+    use crate::storage::{
+        crc,
+        volume::{scan_volume_file, SuperBlock, Volume},
+        FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl, VolumeError,
+    };
+
+    pub fn setup(dir: FastStr) -> Volume {
+        let mut volume = Volume::new(
+            dir,
+            FastStr::empty(),
+            1,
+            NeedleMapType::NeedleMapInMemory,
+            ReplicaPlacement::default(),
+            Ttl::default(),
+            0,
+        )
+        .unwrap();
+
+        for i in 0..1000 {
+            let fid = FileId::new(volume.id, i, random::<u32>());
+            let data = Bytes::from_static(b"Hello World");
+            let checksum = crc::checksum(&data);
+            let mut needle = Needle {
+                data,
+                checksum,
+                ..Default::default()
+            };
+            needle
+                .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
+                .unwrap();
+            volume.write_needle(needle).unwrap();
+        }
+
+        volume
+    }
+
+    #[test]
+    pub fn test_scan_volume_file() {
+        let dir = Builder::new()
+            .prefix("scan_volume_file")
+            .tempdir_in(".")
+            .unwrap();
+        let dir = FastStr::new(dir.path().to_str().unwrap());
+        let volume = setup(dir.clone());
+
+        scan_volume_file(
+            dir.clone(),
+            FastStr::empty(),
+            volume.id,
+            volume.needle_map_type,
+            true,
+            |super_block: &mut SuperBlock| -> Result<(), VolumeError> { Ok(()) },
+            |needle, offset| -> Result<(), VolumeError> {
+                assert_eq!(needle.data_size, 11);
+                Ok(())
+            },
+        )
+        .unwrap();
     }
 }

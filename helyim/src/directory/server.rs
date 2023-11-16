@@ -83,7 +83,6 @@ impl DirectoryServer {
         };
 
         let addr = format!("{}:{}", host, port + 1).parse()?;
-
         rt_spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
