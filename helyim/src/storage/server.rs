@@ -176,8 +176,7 @@ impl StorageServer {
         );
 
         // http server
-        let addr_str = format!("{}:{}", self.host, self.port);
-        let addr = addr_str.parse()?;
+        let addr = format!("{}:{}", self.host, self.port).parse()?;
         let mut shutdown_rx = self.shutdown.new_receiver();
 
         self.handles.push(rt_spawn(async move {
