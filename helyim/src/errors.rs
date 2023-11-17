@@ -16,13 +16,8 @@ use crate::storage::{NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// directory errors
-    #[error("No free space: {0}")]
-    NoFreeSpace(String),
-    // volume error
     #[error("Volume error: {0}")]
     Volume(#[from] VolumeError),
-    // needle error
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
 
@@ -35,8 +30,6 @@ pub enum Error {
     Bincode(#[from] Box<bincode::ErrorKind>),
     #[error("Other error: {0}")]
     Other(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("Anyhow error: {0}")]
-    Anyhow(#[from] anyhow::Error),
     #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
     #[error("{0}")]

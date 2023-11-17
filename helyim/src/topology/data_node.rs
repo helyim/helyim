@@ -16,7 +16,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
+    errors::{Error, Result},
     storage::{VolumeError, VolumeId, VolumeInfo},
     topology::rack::WeakRackRef,
 };
@@ -53,7 +53,8 @@ impl DataNode {
     ) -> Result<DataNode> {
         let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
             .channel()
-            .await?;
+            .await
+            .map_err(|err| Error::String(err.to_string()))?;
         Ok(DataNode {
             id,
             ip,
