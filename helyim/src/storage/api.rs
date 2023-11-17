@@ -50,7 +50,7 @@ use crate::{
         needle_map::NeedleMapType,
         store::StoreRef,
         types::Size,
-        NeedleError, Ttl, VolumeId, VolumeInfo,
+        NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     util,
     util::time::now,
@@ -596,7 +596,7 @@ pub async fn get_or_head_handler(
     Ok(FallbackResponse::GetOrHead(response))
 }
 
-fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str)> {
+fn parse_url_path(input: &str) -> StdResult<(VolumeId, &str, Option<&str>, &str), VolumeError> {
     let (vid, fid, filename, ext) = tuple((
         char('/'),
         parse_vid_fid,

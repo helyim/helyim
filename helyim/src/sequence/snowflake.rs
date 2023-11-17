@@ -21,8 +21,4 @@ impl Sequence for SnowflakeSequencer {
     fn set_max(&self, _seen_value: u64) {
         // ignore set max as we are snowflake
     }
-
-    fn peek(&self) -> Result<u64> {
-        Ok(self.flake.next_id()?)
-    }
 }

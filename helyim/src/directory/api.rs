@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{result::Result as StdResult, sync::Arc};
 
 use axum::{
     extract::{Query, State},
@@ -8,9 +8,9 @@ use faststr::FastStr;
 use serde::Deserialize;
 
 use crate::{
-    errors::{Error, Result},
+    errors::Result,
     operation::{Assignment, ClusterStatus},
-    storage::{ReplicaPlacement, Ttl},
+    storage::{ReplicaPlacement, Ttl, VolumeError},
     topology::{
         volume_grow::{VolumeGrowOption, VolumeGrowth},
         Topology, TopologyRef,
@@ -39,7 +39,10 @@ pub struct AssignRequest {
 }
 
 impl AssignRequest {
-    pub fn volume_grow_option(self, ctx: &DirectoryContext) -> Result<VolumeGrowOption> {
+    pub fn volume_grow_option(
+        self,
+        ctx: &DirectoryContext,
+    ) -> StdResult<VolumeGrowOption, VolumeError> {
         let mut option = VolumeGrowOption::default();
         match self.replication {
             Some(mut replication) => {
@@ -77,7 +80,7 @@ impl AssignRequest {
 pub async fn assign_handler(
     State(ctx): State<DirectoryContext>,
     Query(request): Query<AssignRequest>,
-) -> Result<Json<Assignment>> {
+) -> StdResult<Json<Assignment>, VolumeError> {
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
@@ -89,10 +92,10 @@ pub async fn assign_handler(
         .write()
         .await
         .has_writable_volume(option.clone())
-        .await?
+        .await
     {
-        if ctx.topology.read().await.free_volumes().await? <= 0 {
-            return Err(Error::NoFreeSpace("no free volumes".to_string()));
+        if ctx.topology.read().await.free_volumes().await <= 0 {
+            return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
             .grow_by_type(option.clone(), ctx.topology.clone())

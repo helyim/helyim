@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, fs, path::Path, result::Result as StdResult, sync::Arc};
 
 use faststr::FastStr;
 use futures::future::join_all;
@@ -14,7 +14,7 @@ use crate::{
         needle_map::NeedleMapType,
         ttl::Ttl,
         volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
-        VolumeId,
+        VolumeError, VolumeId,
     },
 };
 
@@ -37,7 +37,6 @@ impl DiskLocation {
     pub async fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
-        info!("load existing volumes: {}", self.directory);
 
         let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef)>>> = vec![];
         for entry in fs::read_dir(dir)? {
@@ -105,7 +104,7 @@ impl DiskLocation {
     }
 }
 
-fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str)> {
+fn parse_volume_id_from_path(path: &Path) -> StdResult<(VolumeId, &str), VolumeError> {
     if path.is_dir() {
         return Err(anyhow!(
             "invalid data file: {}",

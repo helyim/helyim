@@ -37,9 +37,4 @@ impl Sequence for MemorySequencer {
             *counter = seen_value;
         }
     }
-
-    fn peek(&self) -> Result<u64> {
-        let counter = self.counter.lock();
-        Ok(*counter)
-    }
 }

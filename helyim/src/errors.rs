@@ -78,12 +78,8 @@ pub enum Error {
     #[error("Tonic transport error: {0}")]
     TonicTransport(#[from] tonic::transport::Error),
 
-    #[error("Futures channel send error: {0}")]
-    MpscSend(#[from] futures::channel::mpsc::SendError),
     #[error("Broadcast channel closed")]
     BroadcastSend(#[from] async_broadcast::SendError<()>),
-    #[error("Oneshot channel canceled")]
-    OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
 }
@@ -99,8 +95,6 @@ impl From<String> for Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let error = self.to_string();
-        error!("axum response: {error}");
-
         let error = json!({
             "error": error
         });
@@ -118,11 +112,5 @@ impl<T> From<TrySendError<T>> for Error {
 impl From<Error> for tonic::Status {
     fn from(value: Error) -> Self {
         tonic::Status::internal(value.to_string())
-    }
-}
-
-impl From<nom::Err<nom::error::Error<&str>>> for Error {
-    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
-        Self::Nom(value.to_string())
     }
 }

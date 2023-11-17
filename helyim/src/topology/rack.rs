@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    result::Result as StdResult,
     sync::{Arc, Weak},
 };
 
@@ -9,8 +10,8 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::{Error, Result},
-    storage::VolumeId,
+    errors::Result,
+    storage::{VolumeError, VolumeId},
     topology::{data_center::WeakDataCenterRef, DataNodeRef},
 };
 
@@ -40,7 +41,7 @@ impl Rack {
         self.data_center = data_center;
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
@@ -48,8 +49,6 @@ impl Rack {
         if let Some(dc) = self.data_center.upgrade() {
             dc.write().await.adjust_max_volume_id(self.max_volume_id);
         }
-
-        Ok(())
     }
 
     pub async fn get_or_create_data_node(
@@ -79,12 +78,12 @@ impl Rack {
         }
     }
 
-    pub async fn has_volumes(&self) -> Result<i64> {
+    pub async fn has_volumes(&self) -> i64 {
         let mut count = 0;
         for data_node in self.data_nodes.values() {
             count += data_node.read().await.has_volumes();
         }
-        Ok(count)
+        count
     }
 
     pub async fn max_volumes(&self) -> i64 {
@@ -95,15 +94,15 @@ impl Rack {
         max_volumes
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for data_node in self.data_nodes.values() {
             free_volumes += data_node.read().await.free_volumes();
         }
-        Ok(free_volumes)
+        free_volumes
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef> {
+    pub async fn reserve_one_volume(&self) -> StdResult<DataNodeRef, VolumeError> {
         // randomly select
         let mut free_volumes = 0;
         for (_, data_node) in self.data_nodes.iter() {
@@ -119,7 +118,7 @@ impl Rack {
             }
         }
 
-        Err(Error::NoFreeSpace(format!(
+        Err(VolumeError::NoFreeSpace(format!(
             "no free volumes found on rack {}",
             self.id
         )))
