@@ -25,7 +25,7 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status, Streami
 use tracing::{debug, error, info};
 
 use crate::{
-    errors::Result,
+    errors::{Error, Result},
     operation::Looker,
     rt_spawn,
     storage::{
@@ -153,7 +153,8 @@ impl StorageServer {
 
         let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
             .channel()
-            .await?;
+            .await
+            .map_err(|err| Error::String(err.to_string()))?;
         let client = HelyimClient::new(channel);
 
         let ctx = StorageContext {

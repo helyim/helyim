@@ -9,8 +9,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::{Error, Result},
-    storage::VolumeId,
+    storage::{VolumeError, VolumeId},
     topology::{rack::RackRef, DataNodeRef},
 };
 
@@ -49,47 +48,47 @@ impl DataCenter {
         }
     }
 
-    pub async fn has_volumes(&self) -> Result<i64> {
+    pub async fn has_volumes(&self) -> i64 {
         let mut has_volumes = 0;
         for rack in self.racks.values() {
-            has_volumes += rack.read().await.has_volumes().await?;
+            has_volumes += rack.read().await.has_volumes().await;
         }
-        Ok(has_volumes)
+        has_volumes
     }
 
-    pub async fn max_volumes(&self) -> Result<i64> {
+    pub async fn max_volumes(&self) -> i64 {
         let mut max_volumes = 0;
         for rack in self.racks.values() {
             max_volumes += rack.read().await.max_volumes().await;
         }
-        Ok(max_volumes)
+        max_volumes
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for rack in self.racks.values() {
-            free_volumes += rack.read().await.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await;
         }
-        Ok(free_volumes)
+        free_volumes
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef> {
+    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef, VolumeError> {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
-            free_volumes += rack.read().await.free_volumes().await?;
+            free_volumes += rack.read().await.free_volumes().await;
         }
 
         let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for (_, rack) in self.racks.iter() {
-            free_volumes -= rack.read().await.free_volumes().await?;
+            free_volumes -= rack.read().await.free_volumes().await;
             if free_volumes == idx {
                 return rack.read().await.reserve_one_volume().await;
             }
         }
 
-        Err(Error::NoFreeSpace(format!(
+        Err(VolumeError::NoFreeSpace(format!(
             "no free volumes found on data center {}",
             self.id
         )))

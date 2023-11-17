@@ -9,7 +9,6 @@ pub use snowflake::SnowflakeSequencer;
 pub trait Sequence {
     fn next_file_id(&self, count: u64) -> Result<u64>;
     fn set_max(&self, value: u64);
-    fn peek(&self) -> Result<u64>;
 }
 
 #[derive(Copy, Clone)]
@@ -45,13 +44,6 @@ impl Sequence for Sequencer {
         match self {
             Sequencer::Memory(memory) => memory.set_max(value),
             Sequencer::Snowflake(snowflake) => snowflake.set_max(value),
-        }
-    }
-
-    fn peek(&self) -> Result<u64> {
-        match self {
-            Sequencer::Memory(memory) => memory.peek(),
-            Sequencer::Snowflake(snowflake) => snowflake.peek(),
         }
     }
 }

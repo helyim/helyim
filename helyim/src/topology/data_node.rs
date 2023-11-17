@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    result::Result as StdResult,
     sync::Arc,
 };
 
@@ -15,8 +16,8 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
-    storage::{VolumeId, VolumeInfo},
+    errors::{Error, Result},
+    storage::{VolumeError, VolumeId, VolumeInfo},
     topology::rack::WeakRackRef,
 };
 
@@ -52,7 +53,8 @@ impl DataNode {
     ) -> Result<DataNode> {
         let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
             .channel()
-            .await?;
+            .await
+            .map_err(|err| Error::String(err.to_string()))?;
         Ok(DataNode {
             id,
             ip,
@@ -75,10 +77,7 @@ impl DataNode {
         self.max_volumes - self.has_volumes()
     }
 
-    pub async fn update_volumes(
-        &mut self,
-        volume_infos: Vec<VolumeInfo>,
-    ) -> Result<Vec<VolumeInfo>> {
+    pub async fn update_volumes(&mut self, volume_infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
         let mut volumes = HashSet::new();
         for info in volume_infos.iter() {
             volumes.insert(info.id);
@@ -94,7 +93,7 @@ impl DataNode {
         }
 
         for info in volume_infos {
-            self.add_or_update_volume(info).await?;
+            self.add_or_update_volume(info).await;
         }
 
         for id in deleted_id.iter() {
@@ -103,16 +102,15 @@ impl DataNode {
             }
         }
 
-        Ok(deleted)
+        deleted
     }
 
-    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) -> Result<()> {
-        self.adjust_max_volume_id(v.id).await?;
+    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) {
+        self.adjust_max_volume_id(v.id).await;
         self.volumes.insert(v.id, v);
-        Ok(())
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
         if vid > self.max_volume_id {
             self.max_volume_id = vid;
         }
@@ -121,10 +119,8 @@ impl DataNode {
             rack.write()
                 .await
                 .adjust_max_volume_id(self.max_volume_id)
-                .await?;
+                .await;
         }
-
-        Ok(())
     }
 
     pub fn has_volumes(&self) -> i64 {
@@ -154,7 +150,7 @@ impl DataNode {
     pub async fn allocate_volume(
         &mut self,
         request: AllocateVolumeRequest,
-    ) -> Result<AllocateVolumeResponse> {
+    ) -> StdResult<AllocateVolumeResponse, VolumeError> {
         let response = self.client.allocate_volume(request).await?;
         Ok(response.into_inner())
     }
@@ -162,7 +158,7 @@ impl DataNode {
     pub async fn vacuum_volume_check(
         &mut self,
         request: VacuumVolumeCheckRequest,
-    ) -> Result<VacuumVolumeCheckResponse> {
+    ) -> StdResult<VacuumVolumeCheckResponse, VolumeError> {
         let response = self.client.vacuum_volume_check(request).await?;
         Ok(response.into_inner())
     }
@@ -170,7 +166,7 @@ impl DataNode {
     pub async fn vacuum_volume_compact(
         &mut self,
         request: VacuumVolumeCompactRequest,
-    ) -> Result<VacuumVolumeCompactResponse> {
+    ) -> StdResult<VacuumVolumeCompactResponse, VolumeError> {
         let response = self.client.vacuum_volume_compact(request).await?;
         Ok(response.into_inner())
     }
@@ -178,7 +174,7 @@ impl DataNode {
     pub async fn vacuum_volume_commit(
         &mut self,
         request: VacuumVolumeCommitRequest,
-    ) -> Result<VacuumVolumeCommitResponse> {
+    ) -> StdResult<VacuumVolumeCommitResponse, VolumeError> {
         let response = self.client.vacuum_volume_commit(request).await?;
         Ok(response.into_inner())
     }
@@ -186,7 +182,7 @@ impl DataNode {
     pub async fn vacuum_volume_cleanup(
         &mut self,
         request: VacuumVolumeCleanupRequest,
-    ) -> Result<VacuumVolumeCleanupResponse> {
+    ) -> StdResult<VacuumVolumeCleanupResponse, VolumeError> {
         let response = self.client.vacuum_volume_cleanup(request).await?;
         Ok(response.into_inner())
     }

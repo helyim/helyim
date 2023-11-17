@@ -75,8 +75,8 @@ mod tests {
         FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
-    #[tokio::test]
-    pub async fn test_check_volume_data_integrity() {
+    #[test]
+    pub fn test_check_volume_data_integrity() {
         let dir = Builder::new()
             .prefix("check_volume_data_integrity")
             .tempdir_in(".")

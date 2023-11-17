@@ -1,6 +1,5 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, result::Result as StdResult, sync::Arc};
 
-use anyhow::anyhow;
 use rand::{self, Rng};
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -37,9 +36,9 @@ impl VolumeLayout {
         }
     }
 
-    pub async fn active_volume_count(&self, option: Arc<VolumeGrowOption>) -> Result<i64> {
+    pub async fn active_volume_count(&self, option: Arc<VolumeGrowOption>) -> i64 {
         if option.data_center.is_empty() {
-            return Ok(self.writable_volumes.len() as i64);
+            return self.writable_volumes.len() as i64;
         }
         let mut count = 0;
 
@@ -62,15 +61,15 @@ impl VolumeLayout {
             }
         }
 
-        Ok(count)
+        count
     }
 
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> Result<(VolumeId, &Vec<DataNodeRef>)> {
+    ) -> StdResult<(VolumeId, &Vec<DataNodeRef>), VolumeError> {
         if self.writable_volumes.is_empty() {
-            return Err(VolumeError::NoWritableVolumes.into());
+            return Err(VolumeError::NoWritableVolumes);
         }
 
         if option.data_center.is_empty() {
@@ -78,7 +77,7 @@ impl VolumeLayout {
             let vid = self.writable_volumes[rand::thread_rng().gen_range(0..len)];
             return match self.locations.get(&vid) {
                 Some(data_nodes) => Ok((vid, data_nodes)),
-                None => Err(anyhow!("Strangely vid {} is on no machine!", vid).into()),
+                None => Err(VolumeError::NotFound(vid)),
             };
         }
 
@@ -113,26 +112,25 @@ impl VolumeLayout {
 
         match location_list {
             Some(locations) => Ok((volume_id, locations)),
-            None => Err(VolumeError::NoWritableVolumes.into()),
+            None => Err(VolumeError::NoWritableVolumes),
         }
     }
 
-    async fn set_node(locations: &mut Vec<DataNodeRef>, dn: DataNodeRef) -> Result<()> {
+    async fn set_node(locations: &mut Vec<DataNodeRef>, dn: DataNodeRef) {
         for location in locations.iter_mut() {
             if location.read().await.ip == dn.read().await.ip
                 && location.read().await.port == dn.read().await.port
             {
                 *location = dn.clone();
-                return Ok(());
+                return;
             }
         }
         locations.push(dn);
-        Ok(())
     }
 
-    pub async fn register_volume(&mut self, v: &VolumeInfo, dn: DataNodeRef) -> Result<()> {
+    pub async fn register_volume(&mut self, v: &VolumeInfo, dn: DataNodeRef) {
         let locations = self.locations.entry(v.id).or_default();
-        VolumeLayout::set_node(locations, dn).await?;
+        VolumeLayout::set_node(locations, dn).await;
 
         for location in locations.iter() {
             let volume = location.read().await.get_volume(v.id);
@@ -141,7 +139,7 @@ impl VolumeLayout {
                     if v.read_only {
                         self.remove_from_writable(v.id);
                         self.readonly_volumes.insert(v.id, true);
-                        return Ok(());
+                        return;
                     } else {
                         self.readonly_volumes.remove(&v.id);
                     }
@@ -149,15 +147,13 @@ impl VolumeLayout {
                 None => {
                     self.remove_from_writable(v.id);
                     self.readonly_volumes.remove(&v.id);
-                    return Ok(());
+                    return;
                 }
             }
         }
 
         self.remember_oversized_volume(v);
         self.ensure_correct_writable(v);
-
-        Ok(())
     }
 
     fn ensure_correct_writable(&mut self, v: &VolumeInfo) {
@@ -196,7 +192,7 @@ impl VolumeLayout {
     ) -> Result<bool> {
         if let Some(volume_info) = data_node.read().await.get_volume(vid) {
             if let Some(locations) = self.locations.get_mut(&vid) {
-                VolumeLayout::set_node(locations, data_node.clone()).await?;
+                VolumeLayout::set_node(locations, data_node.clone()).await;
             }
 
             if volume_info.read_only || readonly {

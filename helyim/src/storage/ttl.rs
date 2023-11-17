@@ -8,7 +8,7 @@ use nom::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::errors::Result;
+use crate::storage::VolumeError;
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -71,7 +71,7 @@ pub struct Ttl {
 }
 
 impl Ttl {
-    pub fn new(s: &str) -> Result<Ttl> {
+    pub fn new(s: &str) -> Result<Ttl, VolumeError> {
         if s.is_empty() {
             return Ok(Ttl::default());
         }
@@ -140,7 +140,7 @@ impl From<&[u8]> for Ttl {
     }
 }
 
-fn parse_ttl(input: &str) -> Result<(u32, char)> {
+fn parse_ttl(input: &str) -> Result<(u32, char), VolumeError> {
     let (_, (count, unit)) = pair(
         digit1,
         opt(alt((

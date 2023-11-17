@@ -330,14 +330,14 @@ async fn handle_heartbeat(
         };
     }
 
-    let deleted_volumes = node.write().await.update_volumes(infos.clone()).await?;
+    let deleted_volumes = node.write().await.update_volumes(infos.clone()).await;
 
     for v in infos {
         topology
             .write()
             .await
             .register_volume_layout(v, node.clone())
-            .await?;
+            .await;
     }
 
     for v in deleted_volumes.iter() {

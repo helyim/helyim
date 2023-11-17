@@ -6,8 +6,7 @@ use rand::Rng;
 use tracing::debug;
 
 use crate::{
-    errors::{Error, Result},
-    storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+    storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
     topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, TopologyRef},
 };
 
@@ -30,7 +29,7 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: TopologyRef,
-    ) -> Result<Vec<DataNodeRef>> {
+    ) -> Result<Vec<DataNodeRef>, VolumeError> {
         let rp = option.replica_placement;
 
         let mut ret = vec![];
@@ -65,10 +64,10 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: TopologyRef,
-    ) -> Result<usize> {
+    ) -> Result<usize, VolumeError> {
         let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
-        let vid = topology.read().await.next_volume_id().await?;
+        let vid = topology.read().await.next_volume_id().await;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
@@ -78,7 +77,7 @@ impl VolumeGrowth {
         count: usize,
         option: &VolumeGrowOption,
         topology: TopologyRef,
-    ) -> Result<usize> {
+    ) -> Result<usize, VolumeError> {
         let mut grow_count = 0;
         for _ in 0..count {
             grow_count += self.find_and_grow(option, topology.clone()).await?;
@@ -93,7 +92,7 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: TopologyRef,
         nodes: Vec<DataNodeRef>,
-    ) -> Result<()> {
+    ) -> Result<(), VolumeError> {
         for dn in nodes {
             dn.write()
                 .await
@@ -119,12 +118,12 @@ impl VolumeGrowth {
             dn.write()
                 .await
                 .add_or_update_volume(volume_info.clone())
-                .await?;
+                .await;
             topology
                 .write()
                 .await
                 .register_volume_layout(volume_info, dn)
-                .await?;
+                .await;
         }
         Ok(())
     }
@@ -135,7 +134,7 @@ impl VolumeGrowth {
         &self,
         option: Arc<VolumeGrowOption>,
         topology: TopologyRef,
-    ) -> Result<usize> {
+    ) -> Result<usize, VolumeError> {
         let count = self.find_volume_count(option.replica_placement.copy_count());
         self.grow_by_count_and_type(count, option.as_ref(), topology)
             .await
@@ -157,7 +156,7 @@ async fn find_main_data_center(
     data_centers: &HashMap<FastStr, DataCenterRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
-) -> Result<(DataCenterRef, Vec<DataCenterRef>)> {
+) -> Result<(DataCenterRef, Vec<DataCenterRef>), VolumeError> {
     let mut candidates = vec![];
 
     for (_, data_center) in data_centers.iter() {
@@ -168,7 +167,7 @@ async fn find_main_data_center(
         if racks.len() < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_center.read().await.free_volumes().await?
+        if data_center.read().await.free_volumes().await
             < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
         {
             continue;
@@ -192,7 +191,7 @@ async fn find_main_data_center(
     }
 
     if candidates.is_empty() {
-        return Err(Error::NoFreeSpace(
+        return Err(VolumeError::NoFreeSpace(
             "find main data center failed".to_string(),
         ));
     }
@@ -223,14 +222,14 @@ async fn find_main_rack(
     racks: &HashMap<FastStr, RackRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
-) -> Result<(RackRef, Vec<RackRef>)> {
+) -> Result<(RackRef, Vec<RackRef>), VolumeError> {
     let mut candidates = vec![];
 
     for (_, rack) in racks.iter() {
         if !option.rack.is_empty() && option.rack != rack.read().await.id {
             continue;
         }
-        if rack.read().await.free_volumes().await? < rp.same_rack_count as i64 + 1 {
+        if rack.read().await.free_volumes().await < rp.same_rack_count as i64 + 1 {
             continue;
         }
         let data_nodes = rack.read().await.data_nodes.clone();
@@ -250,7 +249,9 @@ async fn find_main_rack(
     }
 
     if candidates.is_empty() {
-        return Err(Error::NoFreeSpace("find main rack failed".to_string()));
+        return Err(VolumeError::NoFreeSpace(
+            "find main rack failed".to_string(),
+        ));
     }
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
@@ -278,7 +279,7 @@ async fn find_main_node(
     data_nodes: &HashMap<FastStr, DataNodeRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
-) -> Result<(DataNodeRef, Vec<DataNodeRef>)> {
+) -> Result<(DataNodeRef, Vec<DataNodeRef>), VolumeError> {
     let mut candidates = vec![];
 
     for (node_id, node) in data_nodes.iter() {
@@ -291,7 +292,9 @@ async fn find_main_node(
         candidates.push(node.clone());
     }
     if candidates.is_empty() {
-        return Err(Error::NoFreeSpace("find main data node failed".to_string()));
+        return Err(VolumeError::NoFreeSpace(
+            "find main data node failed".to_string(),
+        ));
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();

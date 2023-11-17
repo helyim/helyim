@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, result::Result as StdResult, sync::Arc, time::Duration};
 
 use faststr::FastStr;
 use serde::Serialize;
@@ -10,7 +10,7 @@ use crate::{
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
-        ReplicaPlacement, Ttl, VolumeId, VolumeInfo,
+        ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     topology::{
         collection::Collection, data_center::DataCenterRef, volume_grow::VolumeGrowOption,
@@ -89,31 +89,34 @@ impl Topology {
         None
     }
 
-    pub async fn has_writable_volume(&mut self, option: Arc<VolumeGrowOption>) -> Result<bool> {
+    pub async fn has_writable_volume(&mut self, option: Arc<VolumeGrowOption>) -> bool {
         let vl = self.get_volume_layout(
             option.collection.clone(),
             option.replica_placement,
             option.ttl,
         );
 
-        Ok(vl.read().await.active_volume_count(option).await? > 0)
+        vl.read().await.active_volume_count(option).await > 0
     }
 
-    pub async fn free_volumes(&self) -> Result<i64> {
+    pub async fn free_volumes(&self) -> i64 {
         let mut free = 0;
         for data_center in self.data_centers.values() {
-            free += data_center.read().await.max_volumes().await?
-                - data_center.read().await.has_volumes().await?;
+            free += data_center.read().await.max_volumes().await
+                - data_center.read().await.has_volumes().await;
         }
-        Ok(free)
+        free
     }
 
     pub async fn pick_for_write(
         &mut self,
         count: u64,
         option: Arc<VolumeGrowOption>,
-    ) -> Result<(FileId, u64, DataNodeRef)> {
-        let file_id = self.sequencer.next_file_id(count)?;
+    ) -> StdResult<(FileId, u64, DataNodeRef), VolumeError> {
+        let file_id = self
+            .sequencer
+            .next_file_id(count)
+            .map_err(|err| VolumeError::BoxError(Box::new(err)))?;
 
         let (volume_id, node) = {
             let layout = self.get_volume_layout(
@@ -130,11 +133,7 @@ impl Topology {
         Ok((file_id, count, node))
     }
 
-    pub async fn register_volume_layout(
-        &mut self,
-        volume: VolumeInfo,
-        data_node: DataNodeRef,
-    ) -> Result<()> {
+    pub async fn register_volume_layout(&mut self, volume: VolumeInfo, data_node: DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
@@ -157,10 +156,10 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&self) -> Result<VolumeId> {
-        let vid = self.get_max_volume_id().await?;
+    pub async fn next_volume_id(&self) -> VolumeId {
+        let vid = self.get_max_volume_id().await;
 
-        Ok(vid + 1)
+        vid + 1
     }
 
     pub fn set_max_sequence(&mut self, seq: u64) {
@@ -214,7 +213,7 @@ impl Topology {
             .get_or_create_volume_layout(rp, Some(ttl))
     }
 
-    async fn get_max_volume_id(&self) -> Result<VolumeId> {
+    async fn get_max_volume_id(&self) -> VolumeId {
         let mut vid = 0;
         for (_, data_center) in self.data_centers.iter() {
             let other = data_center.read().await.max_volume_id;
@@ -222,8 +221,7 @@ impl Topology {
                 vid = other;
             }
         }
-
-        Ok(vid)
+        vid
     }
 }
 

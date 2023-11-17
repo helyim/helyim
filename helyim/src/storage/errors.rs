@@ -1,5 +1,12 @@
 use std::time::SystemTimeError;
 
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
 use crate::storage::{version::Version, VolumeId};
 
 #[derive(thiserror::Error, Debug)]
@@ -41,11 +48,11 @@ pub enum VolumeError {
     SystemTimeError(#[from] SystemTimeError),
     #[error("Raw volume error: {0}")]
     String(String),
+    #[error("Parse integer error: {0}")]
+    ParseInt(#[from] std::num::ParseIntError),
 
-    #[error("Futures channel send error: {0}")]
-    SendError(#[from] futures::channel::mpsc::SendError),
-    #[error("Oneshot channel canceled")]
-    OneshotCanceled(#[from] futures::channel::oneshot::Canceled),
+    #[error("Tonic status: {0}")]
+    TonicStatus(#[from] tonic::Status),
 
     #[error("Invalid replica placement: {0}")]
     ReplicaPlacement(String),
@@ -63,4 +70,23 @@ pub enum VolumeError {
     Readonly(VolumeId),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("No free space: {0}")]
+    NoFreeSpace(String),
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for VolumeError {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl IntoResponse for VolumeError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
+    }
 }
