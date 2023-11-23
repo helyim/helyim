@@ -8,6 +8,7 @@ pub mod directory;
 mod errors;
 mod filer;
 mod images;
+mod io;
 mod operation;
 pub mod storage;
 
