@@ -39,7 +39,9 @@ pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
 
-pub const SUPER_BLOCK_SIZE: usize = 8;
+use crate::io::MmapFile;
+
+pub const SUPER_BLOCK_SIZE: usize = 16;
 
 pub const DATA_FILE_SUFFIX: &str = "dat";
 pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
@@ -52,6 +54,8 @@ pub struct SuperBlock {
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
     pub compact_revision: u16,
+    /// the position where the next needle to write
+    pub position: u64,
 }
 
 impl Default for SuperBlock {
@@ -61,6 +65,7 @@ impl Default for SuperBlock {
             replica_placement: ReplicaPlacement::default(),
             ttl: Ttl::default(),
             compact_revision: 0,
+            position: 0,
         }
     }
 }
@@ -70,12 +75,14 @@ impl SuperBlock {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
         let ttl = Ttl::from(&buf[2..4]);
         let compact_revision = (&buf[4..6]).get_u16();
+        let position = (&buf[8..16]).get_u64();
 
         Ok(SuperBlock {
             version: buf[0],
             replica_placement: rp,
             ttl,
             compact_revision,
+            position,
         })
     }
 
@@ -90,6 +97,7 @@ impl SuperBlock {
             idx += 1;
         }
         (&mut buf[4..6]).put_u16(self.compact_revision);
+        (&mut buf[8..16]).put_u64(self.position);
         buf
     }
 }
@@ -99,7 +107,7 @@ pub struct Volume {
     id: VolumeId,
     dir: FastStr,
     pub collection: FastStr,
-    data_file: Option<File>,
+    data_file: Option<MmapFile>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
     readonly: bool,
@@ -107,6 +115,7 @@ pub struct Volume {
     last_modified: u64,
     last_compact_index_offset: u64,
     last_compact_revision: u16,
+    preallocate: u64,
 }
 
 impl Display for Volume {
@@ -132,7 +141,7 @@ impl Volume {
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
-        _preallocate: i64,
+        preallocate: u64,
     ) -> StdResult<Volume, VolumeError> {
         let sb = SuperBlock {
             replica_placement,
@@ -152,6 +161,7 @@ impl Volume {
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             last_modified: 0,
+            preallocate,
         };
 
         v.load(true, true)?;
@@ -199,7 +209,7 @@ impl Volume {
 
         if meta.permissions().readonly() {
             let file = fs::OpenOptions::new().read(true).open(&name)?;
-            self.data_file = Some(file);
+            self.data_file = Some(MmapFile::new(file, self.preallocate)?);
             self.readonly = true;
         } else {
             let file = fs::OpenOptions::new()
@@ -209,7 +219,7 @@ impl Volume {
                 .open(&name)?;
 
             self.last_modified = get_time(meta.modified()?)?.as_secs();
-            self.data_file = Some(file);
+            self.data_file = Some(MmapFile::new(file, self.preallocate)?);
         }
 
         if has_super_block {
@@ -270,6 +280,7 @@ impl Volume {
             offset: offset as u32,
             size: needle.size,
         };
+        self.super_block.position = offset + needle.size.0 as u64;
         self.needle_mapper.set(needle.id, nv)?;
 
         if self.last_modified < needle.last_modified {
@@ -394,14 +405,14 @@ impl Volume {
 
     pub fn file(&self) -> StdResult<&File, VolumeError> {
         match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
+            Some(data_file) => Ok(data_file.as_file()),
             None => Err(VolumeError::NotLoad(self.id)),
         }
     }
 
     pub fn file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
         match self.data_file.as_mut() {
-            Some(data_file) => Ok(data_file),
+            Some(data_file) => Ok(data_file.as_file_mut()),
             None => Err(VolumeError::NotLoad(self.id)),
         }
     }
@@ -576,7 +587,7 @@ impl VolumeRef {
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
-        preallocate: i64,
+        preallocate: u64,
     ) -> StdResult<VolumeRef, VolumeError> {
         Ok(Self(Arc::new(RwLock::new(Volume::new(
             dir,

@@ -31,7 +31,7 @@ pub struct AssignRequest {
     count: Option<u64>,
     replication: Option<FastStr>,
     ttl: Option<FastStr>,
-    preallocate: Option<i64>,
+    preallocate: Option<u64>,
     collection: Option<FastStr>,
     data_center: Option<FastStr>,
     rack: Option<FastStr>,
@@ -42,6 +42,7 @@ impl AssignRequest {
     pub fn volume_grow_option(
         self,
         ctx: &DirectoryContext,
+        preallocate: u64,
     ) -> StdResult<VolumeGrowOption, VolumeError> {
         let mut option = VolumeGrowOption::default();
         match self.replication {
@@ -58,8 +59,9 @@ impl AssignRequest {
         if let Some(ttl) = self.ttl {
             option.ttl = Ttl::new(&ttl)?;
         }
-        if let Some(preallocate) = self.preallocate {
-            option.preallocate = preallocate;
+        match self.preallocate {
+            Some(preallocate) => option.preallocate = preallocate,
+            None => option.preallocate = preallocate,
         }
         if let Some(collection) = self.collection {
             option.collection = collection;
@@ -85,7 +87,8 @@ pub async fn assign_handler(
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = Arc::new(request.volume_grow_option(&ctx)?);
+    let option =
+        Arc::new(request.volume_grow_option(&ctx, ctx.topology.read().await.volume_size_limit)?);
 
     if !ctx
         .topology

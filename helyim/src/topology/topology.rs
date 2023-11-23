@@ -24,7 +24,7 @@ pub struct Topology {
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
     pulse: u64,
-    volume_size_limit: u64,
+    pub volume_size_limit: u64,
     // children
     #[serde(skip)]
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,

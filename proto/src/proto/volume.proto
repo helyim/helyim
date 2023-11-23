@@ -42,7 +42,7 @@ message AllocateVolumeRequest {
   string collection = 2;
   string replication = 3;
   string ttl = 4;
-  int64 preallocate = 5;
+  uint64 preallocate = 5;
 }
 message AllocateVolumeResponse {
 }
