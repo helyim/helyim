@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     fs,
-    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     result::Result as StdResult,
@@ -103,7 +102,7 @@ impl Volume {
     }
 
     pub fn makeup_diff(
-        &self,
+        &mut self,
         new_data_filename: &str,
         new_idx_filename: &str,
         old_data_filename: &str,
@@ -180,7 +179,7 @@ impl Volume {
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-                    offset = self.file()?.seek(SeekFrom::Start(offset))?;
+                    offset = self.file_mut()?.seek(SeekFrom::Start(offset))?;
                 }
 
                 if value.offset != 0 && value.size != 0 {
@@ -348,8 +347,11 @@ impl Volume {
     }
 }
 
-fn fetch_compact_revision_from_data_file(file: &mut File) -> StdResult<u16, VolumeError> {
+fn fetch_compact_revision_from_data_file<F: Read + Seek>(
+    file: &mut F,
+) -> StdResult<u16, VolumeError> {
     let mut buf = [0u8; SUPER_BLOCK_SIZE];
+    file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut buf)?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision)

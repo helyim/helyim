@@ -2,7 +2,6 @@
 
 use std::{
     fmt::{Display, Formatter},
-    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
     result::Result as StdResult,
@@ -12,12 +11,15 @@ use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::storage::{
-    crc,
-    ttl::Ttl,
-    types::{Cookie, Offset, Size},
-    version::{Version, CURRENT_VERSION, VERSION2},
-    NeedleError, NeedleId,
+use crate::{
+    io::MmapFile,
+    storage::{
+        crc,
+        ttl::Ttl,
+        types::{Cookie, Offset, Size},
+        version::{Version, CURRENT_VERSION, VERSION2},
+        NeedleError, NeedleId,
+    },
 };
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
@@ -123,8 +125,8 @@ pub fn actual_offset(offset: Offset) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-pub fn read_needle_blob(
-    file: &mut File,
+pub fn read_needle_blob<F: Read + Seek>(
+    file: &mut F,
     offset: Offset,
     size: Size,
 ) -> StdResult<Bytes, NeedleError> {
@@ -172,7 +174,7 @@ impl Needle {
 
     pub fn read_needle_body(
         &mut self,
-        data_file: &File,
+        data_file: &MmapFile,
         offset: u32,
         body_len: u32,
         version: Version,
@@ -299,9 +301,9 @@ impl Needle {
         Ok(buf.len())
     }
 
-    pub fn read_data(
+    pub fn read_data<F: Read + Seek>(
         &mut self,
-        file: &mut File,
+        file: &mut F,
         offset: Offset,
         size: Size,
         version: Version,
@@ -423,7 +425,7 @@ fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
 }
 
 pub fn read_needle_header(
-    file: &File,
+    file: &MmapFile,
     version: Version,
     offset: Offset,
 ) -> StdResult<(Needle, u32), NeedleError> {

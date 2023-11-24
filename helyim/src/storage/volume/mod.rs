@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    fs::{self, metadata, File},
+    fs::{self, metadata},
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::Path,
@@ -10,7 +10,6 @@ use std::{
 
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use rustix::fs::ftruncate;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -274,7 +273,7 @@ impl Volume {
                     "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
                     needle.id
                 );
-                ftruncate(file, offset)?;
+                // ftruncate(file, offset)?;
                 return Err(VolumeError::Needle(err));
             }
         }
@@ -406,19 +405,19 @@ impl Volume {
 
     pub fn size(&self) -> StdResult<u64, VolumeError> {
         let file = self.file()?;
-        Ok(file.metadata()?.len())
+        Ok(file.len())
     }
 
-    pub fn file(&self) -> StdResult<&File, VolumeError> {
+    pub fn file(&self) -> StdResult<&MmapFile, VolumeError> {
         match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file.as_file()),
+            Some(data_file) => Ok(data_file),
             None => Err(VolumeError::NotLoad(self.id)),
         }
     }
 
-    pub fn file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
+    pub fn file_mut(&mut self) -> StdResult<&mut MmapFile, VolumeError> {
         match self.data_file.as_mut() {
-            Some(data_file) => Ok(data_file.as_file_mut()),
+            Some(data_file) => Ok(data_file),
             None => Err(VolumeError::NotLoad(self.id)),
         }
     }
@@ -486,14 +485,12 @@ impl Volume {
 
 impl Volume {
     fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
-        let mut file = self.file()?;
-        let meta = file.metadata()?;
-
-        if meta.len() != 0 {
+        let bytes = self.super_block.as_bytes();
+        let file = self.file_mut()?;
+        if file.len() != 0 {
             return Ok(());
         }
 
-        let bytes = self.super_block.as_bytes();
         file.write_all(&bytes)?;
         debug!("write super block success");
         Ok(())

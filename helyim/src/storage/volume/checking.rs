@@ -1,4 +1,9 @@
-use std::{fs::File, os::unix::fs::FileExt, result::Result};
+use std::{
+    fs::File,
+    io::{Read, Seek},
+    os::unix::fs::FileExt,
+    result::Result,
+};
 
 use crate::storage::{
     index_entry,
@@ -44,8 +49,8 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
     Ok(buf)
 }
 
-fn verify_needle_integrity(
-    data_file: &mut File,
+fn verify_needle_integrity<F: Read + Seek>(
+    data_file: &mut F,
     version: Version,
     key: NeedleId,
     offset: Offset,
