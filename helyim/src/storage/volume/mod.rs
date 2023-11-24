@@ -41,7 +41,7 @@ pub use volume_info::VolumeInfo;
 
 use crate::io::MmapFile;
 
-pub const SUPER_BLOCK_SIZE: usize = 16;
+pub const SUPER_BLOCK_SIZE: usize = 8;
 
 pub const DATA_FILE_SUFFIX: &str = "dat";
 pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
@@ -75,14 +75,13 @@ impl SuperBlock {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
         let ttl = Ttl::from(&buf[2..4]);
         let compact_revision = (&buf[4..6]).get_u16();
-        let position = (&buf[8..16]).get_u64();
 
         Ok(SuperBlock {
             version: buf[0],
             replica_placement: rp,
             ttl,
             compact_revision,
-            position,
+            position: 0,
         })
     }
 
@@ -97,7 +96,6 @@ impl SuperBlock {
             idx += 1;
         }
         (&mut buf[4..6]).put_u16(self.compact_revision);
-        (&mut buf[8..16]).put_u64(self.position);
         buf
     }
 }
@@ -209,6 +207,7 @@ impl Volume {
 
         if meta.permissions().readonly() {
             let file = fs::OpenOptions::new().read(true).open(&name)?;
+            self.super_block.position = file.metadata()?.len();
             self.data_file = Some(MmapFile::new(file, self.preallocate)?);
             self.readonly = true;
         } else {
@@ -217,7 +216,7 @@ impl Volume {
                 .write(true)
                 .mode(0o644)
                 .open(&name)?;
-
+            self.super_block.position = file.metadata()?.len();
             self.last_modified = get_time(meta.modified()?)?.as_secs();
             self.data_file = Some(MmapFile::new(file, self.preallocate)?);
         }
@@ -266,21 +265,25 @@ impl Volume {
             offset = file.seek(SeekFrom::Start(offset))?;
         }
 
-        if let Err(err) = needle.append(file, version) {
-            error!(
-                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                needle.id
-            );
-            ftruncate(file, offset)?;
-            return Err(err.into());
+        match needle.append(file, version) {
+            Ok(len) => {
+                self.super_block.position = offset + len as u64;
+            }
+            Err(err) => {
+                error!(
+                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                    needle.id
+                );
+                ftruncate(file, offset)?;
+                return Err(VolumeError::Needle(err));
+            }
         }
 
-        offset /= NEEDLE_PADDING_SIZE as u64;
         let nv = NeedleValue {
-            offset: offset as u32,
+            offset: offset as u32 / NEEDLE_PADDING_SIZE,
             size: needle.size,
         };
-        self.super_block.position = offset + needle.size.0 as u64;
+
         self.needle_mapper.set(needle.id, nv)?;
 
         if self.last_modified < needle.last_modified {
@@ -307,7 +310,10 @@ impl Volume {
 
         let version = self.version();
         let file = self.file_mut()?;
-        needle.append(file, version)?;
+        match needle.append(file, version) {
+            Ok(len) => self.super_block.position += len as u64,
+            Err(err) => return Err(VolumeError::Needle(err)),
+        }
         Ok(nv.size)
     }
 

@@ -237,7 +237,11 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> StdResult<(), NeedleError> {
+    pub fn append<W: Write>(
+        &mut self,
+        w: &mut W,
+        version: Version,
+    ) -> StdResult<usize, NeedleError> {
         if version != CURRENT_VERSION {
             return Err(NeedleError::UnsupportedVersion(version));
         }
@@ -292,7 +296,7 @@ impl Needle {
         buf.put_slice(&vec![0; padding as usize]);
         w.write_all(&buf)?;
 
-        Ok(())
+        Ok(buf.len())
     }
 
     pub fn read_data(
