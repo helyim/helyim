@@ -53,7 +53,7 @@ use crate::{
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     util,
-    util::{time::now, FormOrJson},
+    util::time::now,
     PHRASE,
 };
 
@@ -104,8 +104,8 @@ pub enum FallbackResponse {
     Favicon,
     Default(Html<&'static str>),
     GetOrHead(Response<Body>),
-    Post(FormOrJson<Upload>),
-    Delete(FormOrJson<Value>),
+    Post(Json<Upload>),
+    Delete(Json<Value>),
 }
 
 impl IntoResponse for FallbackResponse {
@@ -172,7 +172,7 @@ pub async fn delete_handler(
     let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let size = json!({ "size": size.0 });
 
-    Ok(FallbackResponse::Delete(FormOrJson(size)))
+    Ok(FallbackResponse::Delete(Json(size)))
 }
 
 async fn replicate_delete(
@@ -255,7 +255,7 @@ pub async fn post_handler(
     }
 
     // TODO: add etag support
-    Ok(FallbackResponse::Post(FormOrJson(upload)))
+    Ok(FallbackResponse::Post(Json(upload)))
 }
 
 async fn replicate_write(

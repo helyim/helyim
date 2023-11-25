@@ -3,15 +3,13 @@ use std::time::Duration;
 use axum::{
     body::HttpBody,
     extract::FromRequest,
-    headers::HeaderValue,
     http::{header::CONTENT_TYPE, StatusCode},
     response::IntoResponse,
     BoxError, Form, Json, RequestExt,
 };
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use hyper::{body::to_bytes, header::CONTENT_LENGTH, Body, Client, Method, Request};
-use mime_guess::mime;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 use url::Url;
 
 use crate::errors::Result;
@@ -94,34 +92,6 @@ where
             Ok(Self(payload))
         } else {
             Err(StatusCode::BAD_REQUEST.into_response())
-        }
-    }
-}
-
-impl<T> IntoResponse for FormOrJson<T>
-where
-    T: Serialize,
-{
-    fn into_response(self) -> axum::response::Response {
-        let mut buf = BytesMut::with_capacity(128).writer();
-        match serde_json::to_writer(&mut buf, &self.0) {
-            Ok(()) => (
-                [(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static(mime::APPLICATION_JSON.as_ref()),
-                )],
-                buf.into_inner().freeze(),
-            )
-                .into_response(),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                [(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static(mime::TEXT_PLAIN_UTF_8.as_ref()),
-                )],
-                err.to_string(),
-            )
-                .into_response(),
         }
     }
 }
