@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errors::Result, storage::VolumeId};
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupRequest {
+    pub volume_id: String,
+    pub collection: Option<FastStr>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Location {

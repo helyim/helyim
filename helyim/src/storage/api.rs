@@ -6,7 +6,7 @@ use std::{
 use axum::{
     extract::{Query, State},
     headers,
-    http::{HeaderMap, Response},
+    http::{header::ACCEPT_RANGES, HeaderMap, Response},
     response::{Html, IntoResponse},
     Json, TypedHeader,
 };
@@ -590,6 +590,9 @@ pub async fn get_or_head_handler(
     response
         .headers_mut()
         .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
+    response
+        .headers_mut()
+        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     *response.body_mut() = Body::from(needle.data);
     *response.status_mut() = StatusCode::ACCEPTED;
 

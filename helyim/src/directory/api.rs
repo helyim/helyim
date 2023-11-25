@@ -1,23 +1,16 @@
 use std::{result::Result as StdResult, sync::Arc};
 
-use axum::{
-    extract::{Query, State},
-    Json,
-};
+use axum::{extract::State, Json};
 use faststr::FastStr;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     errors::Result,
     operation::{
-        lookup::{Location, Lookup},
-        Assignment, ClusterStatus,
+        lookup::{Location, Lookup, LookupRequest},
+        AssignRequest, Assignment, ClusterStatus,
     },
-    storage::{ReplicaPlacement, Ttl, VolumeError},
-    topology::{
-        volume_grow::{VolumeGrowOption, VolumeGrowth},
-        Topology, TopologyRef,
-    },
+    storage::VolumeError,
+    topology::{volume_grow::VolumeGrowth, Topology, TopologyRef},
     util::FormOrJson,
 };
 
@@ -30,66 +23,15 @@ pub struct DirectoryContext {
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AssignRequest {
-    count: Option<u64>,
-    replication: Option<FastStr>,
-    ttl: Option<FastStr>,
-    preallocate: Option<i64>,
-    collection: Option<FastStr>,
-    data_center: Option<FastStr>,
-    rack: Option<FastStr>,
-    data_node: Option<FastStr>,
-}
-
-impl AssignRequest {
-    pub fn volume_grow_option(
-        self,
-        ctx: &DirectoryContext,
-    ) -> StdResult<VolumeGrowOption, VolumeError> {
-        let mut option = VolumeGrowOption::default();
-        match self.replication {
-            Some(mut replication) => {
-                if replication.is_empty() {
-                    replication = ctx.default_replication.clone();
-                }
-                option.replica_placement = ReplicaPlacement::new(&replication)?;
-            }
-            None => {
-                option.replica_placement = ReplicaPlacement::new(&ctx.default_replication)?;
-            }
-        }
-        if let Some(ttl) = self.ttl {
-            option.ttl = Ttl::new(&ttl)?;
-        }
-        if let Some(preallocate) = self.preallocate {
-            option.preallocate = preallocate;
-        }
-        if let Some(collection) = self.collection {
-            option.collection = collection;
-        }
-        if let Some(data_center) = self.data_center {
-            option.data_center = data_center;
-        }
-        if let Some(rack) = self.rack {
-            option.rack = rack;
-        }
-        if let Some(data_node) = self.data_node {
-            option.data_node = data_node;
-        }
-        Ok(option)
-    }
-}
-
 pub async fn assign_handler(
     State(ctx): State<DirectoryContext>,
-    Query(request): Query<AssignRequest>,
+    FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> StdResult<Json<Assignment>, VolumeError> {
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = Arc::new(request.volume_grow_option(&ctx)?);
+    let option = Arc::new(request.volume_grow_option(&ctx.default_replication)?);
 
     if !ctx
         .topology
@@ -119,13 +61,6 @@ pub async fn assign_handler(
         error: String::default(),
     };
     Ok(Json(assignment))
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LookupRequest {
-    volume_id: String,
-    collection: Option<FastStr>,
 }
 
 pub async fn lookup_handler(
