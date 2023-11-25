@@ -1,13 +1,37 @@
 use std::time::Duration;
 
+use faststr::FastStr;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
     LookupVolumeResponse,
 };
 use moka::sync::{Cache, CacheBuilder};
+use serde::{Deserialize, Serialize};
 
 use crate::{errors::Result, storage::VolumeId};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupRequest {
+    pub volume_id: String,
+    pub collection: Option<FastStr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Location {
+    pub url: String,
+    pub public_url: FastStr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lookup {
+    pub volume_id: String,
+    pub locations: Vec<Location>,
+    pub error: FastStr,
+}
 
 pub struct Looker {
     volumes: Cache<VolumeId, VolumeLocation>,

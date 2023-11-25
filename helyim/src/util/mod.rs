@@ -6,7 +6,7 @@ pub mod macros;
 
 mod http;
 
-pub use http::{delete, post};
+pub use http::{delete, post, FormOrJson};
 
 mod sys;
 pub use sys::exit;

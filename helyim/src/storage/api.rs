@@ -6,7 +6,7 @@ use std::{
 use axum::{
     extract::{Query, State},
     headers,
-    http::{HeaderMap, Response},
+    http::{header::ACCEPT_RANGES, HeaderMap, Response},
     response::{Html, IntoResponse},
     Json, TypedHeader,
 };
@@ -111,9 +111,9 @@ pub enum FallbackResponse {
 impl IntoResponse for FallbackResponse {
     fn into_response(self) -> axum::response::Response {
         match self {
-            FallbackResponse::GetOrHead(res) => res.into_response(),
-            FallbackResponse::Post(json) => json.into_response(),
-            FallbackResponse::Delete(json) => json.into_response(),
+            FallbackResponse::GetOrHead(get) => get.into_response(),
+            FallbackResponse::Post(post) => post.into_response(),
+            FallbackResponse::Delete(delete) => delete.into_response(),
             FallbackResponse::Default(default) => default.into_response(),
             FallbackResponse::Favicon => FAVICON_ICO.bytes().into_response(),
         }
@@ -590,6 +590,9 @@ pub async fn get_or_head_handler(
     response
         .headers_mut()
         .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
+    response
+        .headers_mut()
+        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     *response.body_mut() = Body::from(needle.data);
     *response.status_mut() = StatusCode::ACCEPTED;
 
