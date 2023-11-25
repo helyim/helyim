@@ -53,7 +53,7 @@ use crate::{
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     util,
-    util::time::now,
+    util::{time::now, FormOrJson},
     PHRASE,
 };
 
@@ -104,16 +104,16 @@ pub enum FallbackResponse {
     Favicon,
     Default(Html<&'static str>),
     GetOrHead(Response<Body>),
-    Post(Json<Upload>),
-    Delete(Json<Value>),
+    Post(FormOrJson<Upload>),
+    Delete(FormOrJson<Value>),
 }
 
 impl IntoResponse for FallbackResponse {
     fn into_response(self) -> axum::response::Response {
         match self {
-            FallbackResponse::GetOrHead(res) => res.into_response(),
-            FallbackResponse::Post(json) => json.into_response(),
-            FallbackResponse::Delete(json) => json.into_response(),
+            FallbackResponse::GetOrHead(get) => get.into_response(),
+            FallbackResponse::Post(post) => post.into_response(),
+            FallbackResponse::Delete(delete) => delete.into_response(),
             FallbackResponse::Default(default) => default.into_response(),
             FallbackResponse::Favicon => FAVICON_ICO.bytes().into_response(),
         }
@@ -172,7 +172,7 @@ pub async fn delete_handler(
     let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let size = json!({ "size": size.0 });
 
-    Ok(FallbackResponse::Delete(Json(size)))
+    Ok(FallbackResponse::Delete(FormOrJson(size)))
 }
 
 async fn replicate_delete(
@@ -255,7 +255,7 @@ pub async fn post_handler(
     }
 
     // TODO: add etag support
-    Ok(FallbackResponse::Post(Json(upload)))
+    Ok(FallbackResponse::Post(FormOrJson(upload)))
 }
 
 async fn replicate_write(

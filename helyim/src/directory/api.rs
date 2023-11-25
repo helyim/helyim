@@ -2,7 +2,7 @@ use std::{result::Result as StdResult, sync::Arc};
 
 use axum::{
     extract::{Query, State},
-    Form, Json,
+    Json,
 };
 use faststr::FastStr;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ use crate::{
         volume_grow::{VolumeGrowOption, VolumeGrowth},
         Topology, TopologyRef,
     },
+    util::FormOrJson,
 };
 
 #[derive(Clone)]
@@ -129,7 +130,7 @@ pub struct LookupRequest {
 
 pub async fn lookup_handler(
     State(ctx): State<DirectoryContext>,
-    Form(request): Form<LookupRequest>,
+    FormOrJson(request): FormOrJson<LookupRequest>,
 ) -> StdResult<Json<Lookup>, VolumeError> {
     if request.volume_id.is_empty() {
         return Err(VolumeError::String("volume_id can't be empty".to_string()));
