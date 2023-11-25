@@ -16,7 +16,8 @@ use tracing::{debug, error, info};
 
 use crate::{
     directory::api::{
-        assign_handler, cluster_status_handler, dir_status_handler, DirectoryContext,
+        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
+        DirectoryContext,
     },
     errors::Result,
     rt_spawn,
@@ -139,6 +140,7 @@ impl DirectoryServer {
 
             let app = Router::new()
                 .route("/dir/assign", get(assign_handler).post(assign_handler))
+                .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
                 .route(
                     "/dir/status",
                     get(dir_status_handler).post(dir_status_handler),

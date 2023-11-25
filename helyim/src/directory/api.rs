@@ -2,14 +2,17 @@ use std::{result::Result as StdResult, sync::Arc};
 
 use axum::{
     extract::{Query, State},
-    Json,
+    Form, Json,
 };
 use faststr::FastStr;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     errors::Result,
-    operation::{Assignment, ClusterStatus},
+    operation::{
+        lookup::{Location, Lookup},
+        Assignment, ClusterStatus,
+    },
     storage::{ReplicaPlacement, Ttl, VolumeError},
     topology::{
         volume_grow::{VolumeGrowOption, VolumeGrowth},
@@ -115,6 +118,54 @@ pub async fn assign_handler(
         error: String::default(),
     };
     Ok(Json(assignment))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupRequest {
+    volume_id: String,
+    collection: Option<FastStr>,
+}
+
+pub async fn lookup_handler(
+    State(ctx): State<DirectoryContext>,
+    Form(request): Form<LookupRequest>,
+) -> StdResult<Json<Lookup>, VolumeError> {
+    if request.volume_id.is_empty() {
+        return Err(VolumeError::String("volume_id can't be empty".to_string()));
+    }
+    let mut volume_id = request.volume_id;
+    if let Some(idx) = volume_id.rfind(',') {
+        volume_id = volume_id[..idx].to_string();
+    }
+    let mut locations = vec![];
+    let data_nodes = ctx
+        .topology
+        .write()
+        .await
+        .lookup(
+            request.collection.unwrap_or_default(),
+            volume_id.parse::<u32>()?,
+        )
+        .await;
+    match data_nodes {
+        Some(nodes) => {
+            for dn in nodes.iter() {
+                locations.push(Location {
+                    url: dn.read().await.url(),
+                    public_url: dn.read().await.public_url.clone(),
+                });
+            }
+
+            let lookup = Lookup {
+                volume_id,
+                locations,
+                error: FastStr::default(),
+            };
+            Ok(Json(lookup))
+        }
+        None => Err(VolumeError::String("cannot find any locations".to_string())),
+    }
 }
 
 pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
