@@ -214,7 +214,9 @@ impl Volume {
         let mut reader = BufReader::new(old_index_file);
         let mut buf: Vec<u8> = vec![0; 16];
 
-        let old_data_file = self.data_file()?;
+        let version = self.version();
+        let ttl = self.super_block.ttl.minutes() as u64;
+
         for _ in 0..(len + 15) / 16 {
             reader.read_exact(&mut buf).await?;
             let (key, offset, size) = index_entry(&buf);
@@ -223,13 +225,10 @@ impl Volume {
             }
 
             let mut needle = Needle::default();
-            let version = self.version();
             needle
-                .read_data(old_data_file, offset, size, version)
+                .read_data(self.data_file()?, offset, size, version)
                 .await?;
-            if needle.has_ttl()
-                && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
-            {
+            if needle.has_ttl() && now >= needle.last_modified + ttl * 60 {
                 return Ok(());
             }
             let nv = match self.needle_mapper.get(key) {
