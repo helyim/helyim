@@ -434,18 +434,17 @@ pub async fn parse_upload(extractor: &StorageExtractor) -> Result<ParseUpload> {
     let mut post_mtype = String::new();
     while let Ok(Some(field)) = mpart.next_field().await {
         if let Some(name) = field.file_name() {
-            filename = name.to_string();
-            if let Some(content_type) = field.content_type() {
-                post_mtype.push_str(content_type.type_().as_str());
-                post_mtype.push('/');
-                post_mtype.push_str(content_type.subtype().as_str());
+            if !name.is_empty() {
+                filename = name.to_string();
+                if let Some(content_type) = field.content_type() {
+                    post_mtype.push_str(content_type.type_().as_str());
+                    post_mtype.push('/');
+                    post_mtype.push_str(content_type.subtype().as_str());
+                }
                 data.clear();
                 data.extend(field.bytes().await?);
+                break;
             }
-        }
-
-        if !filename.is_empty() {
-            break;
         }
     }
 
@@ -559,11 +558,6 @@ pub async fn get_or_head_handler(
         }
     }
 
-    let mut _mtype = String::new();
-    if !needle.mime.is_empty() && !needle.mime.starts_with(b"application/octet-stream") {
-        _mtype = String::from_utf8(needle.mime.to_vec())?;
-    }
-
     if needle.is_gzipped() {
         let all_headers = extractor.headers.get_all(ACCEPT_ENCODING);
         let mut gzip = false;
@@ -589,7 +583,7 @@ pub async fn get_or_head_handler(
 
     response
         .headers_mut()
-        .insert(CONTENT_LENGTH, HeaderValue::from(needle.data.len()));
+        .insert(CONTENT_LENGTH, HeaderValue::from(needle.data_size()));
     response
         .headers_mut()
         .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));

@@ -2,8 +2,8 @@ use std::{
     collections::HashMap,
     fs,
     fs::File,
-    io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
+    io::{Seek, SeekFrom},
+    os::unix::fs::{FileExt, OpenOptionsExt},
     result::Result as StdResult,
 };
 
@@ -186,7 +186,7 @@ impl Volume {
                 if value.offset != 0 && value.size != 0 {
                     let needle_bytes =
                         read_needle_blob(&mut old_data_file, value.offset, value.size)?;
-                    new_data_file.write_all(&needle_bytes)?;
+                    new_data_file.write_all_at(&needle_bytes, offset)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
                     let mut fake_del_needle = Needle {
@@ -195,12 +195,12 @@ impl Volume {
                         ..Default::default()
                     };
                     let version = self.version();
-                    fake_del_needle.append(&mut new_data_file, version)?;
+                    fake_del_needle.append(&mut new_data_file, offset, version)?;
                     (&mut index_entry_buf[8..12]).put_u32(0);
                 }
 
-                new_idx_file.seek(SeekFrom::End(0))?;
-                new_idx_file.write_all(&index_entry_buf)?;
+                let offset = new_idx_file.seek(SeekFrom::End(0))?;
+                new_idx_file.write_all_at(&index_entry_buf, offset)?;
             }
         }
 
@@ -212,7 +212,7 @@ impl Volume {
         compact_data_filename: String,
         compact_index_filename: String,
     ) -> StdResult<(), VolumeError> {
-        let mut compact_data_file = fs::OpenOptions::new()
+        let compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
@@ -241,7 +241,7 @@ impl Volume {
             true,
             |super_block: &mut SuperBlock| -> StdResult<(), VolumeError> {
                 super_block.compact_revision += 1;
-                compact_data_file.write_all(&super_block.as_bytes())?;
+                compact_data_file.write_all_at(&super_block.as_bytes(), 0)?;
                 Ok(())
             },
             |needle, offset| -> StdResult<(), VolumeError> {
@@ -257,7 +257,7 @@ impl Volume {
                             size: needle.size,
                         };
                         compact_nm.set(needle.id, nv)?;
-                        needle.append(&mut dst, version)?;
+                        needle.append(&mut dst, offset as u64, version)?;
                         new_offset += needle.disk_size() as u32;
                     }
                 }
@@ -285,7 +285,7 @@ impl Volume {
             .mode(0o644)
             .open(compact_index_filename)?;
 
-        let old_idx_file = fs::OpenOptions::new()
+        let mut old_idx_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
@@ -296,11 +296,11 @@ impl Volume {
         let now = now().as_millis() as u64;
 
         self.super_block.compact_revision += 1;
-        compact_data_file.write_all(&self.super_block.as_bytes())?;
+        compact_data_file.write_all_at(&self.super_block.as_bytes(), 0)?;
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
 
         walk_index_file(
-            &old_idx_file,
+            &mut old_idx_file,
             |key, offset, size| -> StdResult<(), NeedleError> {
                 if offset == 0 {
                     return Ok(());
@@ -336,7 +336,7 @@ impl Volume {
                     compact_nm
                         .set(needle.id, nv)
                         .map_err(|err| NeedleError::BoxError(err.into()))?;
-                    needle.append(&mut compact_data_file, version)?;
+                    needle.append(&mut compact_data_file, new_offset as u64, version)?;
                     new_offset += needle.disk_size() as u32;
                 }
 
@@ -350,7 +350,7 @@ impl Volume {
 
 fn fetch_compact_revision_from_data_file(file: &mut File) -> StdResult<u16, VolumeError> {
     let mut buf = [0u8; SUPER_BLOCK_SIZE];
-    file.read_exact(&mut buf)?;
+    file.read_exact_at(&mut buf, 0)?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision)
 }

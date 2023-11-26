@@ -3,7 +3,6 @@
 use std::{
     fmt::{Display, Formatter},
     fs::File,
-    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
     result::Result as StdResult,
 };
@@ -129,13 +128,12 @@ pub fn read_needle_blob(
     size: Size,
 ) -> StdResult<Bytes, NeedleError> {
     let size = actual_size(size);
-    let mut buffer = vec![0; size as usize];
+    let mut buf = vec![0; size as usize];
 
     let offset = actual_offset(offset);
-    file.seek(SeekFrom::Start(offset))?;
 
-    file.read_exact(&mut buffer)?;
-    Ok(Bytes::from(buffer))
+    file.read_exact_at(&mut buf, offset)?;
+    Ok(Bytes::from(buf))
 }
 
 impl Needle {
@@ -237,7 +235,12 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> StdResult<(), NeedleError> {
+    pub fn append<W: FileExt>(
+        &mut self,
+        w: &mut W,
+        offset: u64,
+        version: Version,
+    ) -> StdResult<(), NeedleError> {
         if version != CURRENT_VERSION {
             return Err(NeedleError::UnsupportedVersion(version));
         }
@@ -290,7 +293,7 @@ impl Needle {
 
         buf.put_u32(self.checksum);
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all(&buf)?;
+        w.write_all_at(&buf, offset)?;
 
         Ok(())
     }
