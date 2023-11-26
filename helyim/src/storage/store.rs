@@ -329,7 +329,7 @@ impl Store {
     pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                volume.write().await.cleanup_compact()?;
+                volume.write().await.cleanup_compact().await?;
                 info!("volume {vid} committing cleanup success.");
                 Ok(())
             }

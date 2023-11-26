@@ -132,7 +132,7 @@ pub async fn read_needle_blob<F: AsyncReadExt + AsyncSeekExt + Unpin>(
     let offset = actual_offset(offset);
 
     reader.seek(SeekFrom::Start(offset)).await?;
-    let size = reader.read_exact(&mut buf).await?;
+    reader.read_exact(&mut buf).await?;
 
     Ok(Bytes::from(buf))
 }

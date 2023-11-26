@@ -10,7 +10,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
 use tokio::{
-    fs::{metadata, remove_file, File},
+    fs::{metadata, remove_file, File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::RwLock,
 };
@@ -38,8 +38,6 @@ pub use replica_placement::ReplicaPlacement;
 pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
-
-use crate::util::file;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -191,7 +189,13 @@ impl Volume {
                 debug!("get metadata err: {err}");
                 if err.kind() == ErrorKind::NotFound && create_if_missing {
                     // TODO support preallocate
-                    file::create(&name).await?;
+                    OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .mode(0o644)
+                        .open(&name)
+                        .await?;
                     debug!("create volume {} data file success", self.id);
                     metadata(&name).await?
                 } else {
@@ -201,11 +205,19 @@ impl Volume {
         };
 
         if meta.permissions().readonly() {
-            self.data_file = Some(file::open(&name).await?);
+            let file = OpenOptions::new().read(true).open(&name).await?;
+            self.data_file = Some(file);
             self.readonly = true;
         } else {
             self.last_modified = get_time(meta.modified()?)?.as_secs();
-            self.data_file = Some(file::append(&name).await?);
+
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .mode(0o644)
+                .open(&name)
+                .await?;
+            self.data_file = Some(file);
         }
         self.data_filename = name;
 
@@ -217,7 +229,12 @@ impl Volume {
 
         if load_index {
             self.index_filename = self.index_file_name();
-            let mut index_file = file::create(self.index_filename()).await?;
+            let mut index_file = OpenOptions::new()
+                .read(true)
+                .create(true)
+                .write(true)
+                .open(self.index_filename())
+                .await?;
 
             if let Err(err) = check_volume_data_integrity(self, &mut index_file).await {
                 self.readonly = true;

@@ -1,11 +1,14 @@
-use std::{collections::HashMap, fs, io::SeekFrom, result::Result as StdResult};
+use std::{collections::HashMap, io::SeekFrom, result::Result as StdResult};
 
 use bytes::BufMut;
 use helyim_proto::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
 };
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
+use tokio::{
+    fs::{remove_file, rename, OpenOptions},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -20,7 +23,7 @@ use crate::{
         Needle, NeedleError, NeedleMapper, NeedleValue, VolumeError, VolumeId,
     },
     topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
-    util::{file, time::now},
+    util::time::now,
 };
 
 impl Volume {
@@ -62,16 +65,16 @@ impl Volume {
             .await
         {
             Ok(()) => {
-                fs::rename(&compact_data_filename, data_filename)?;
-                fs::rename(compact_index_filename, index_filename)?;
+                rename(&compact_data_filename, data_filename).await?;
+                rename(compact_index_filename, index_filename).await?;
                 info!(
                     "makeup diff in commit compaction success, filename: {compact_data_filename}"
                 );
             }
             Err(err) => {
                 error!("makeup diff in commit compaction failed, {err}");
-                fs::remove_file(compact_data_filename)?;
-                fs::remove_file(compact_index_filename)?;
+                remove_file(compact_data_filename).await?;
+                remove_file(compact_index_filename).await?;
             }
         }
         self.data_file = None;
@@ -79,28 +82,31 @@ impl Volume {
         self.load(false, true).await
     }
 
-    pub fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
+    pub async fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
-        fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
-        fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
+        remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename)).await?;
+        remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename)).await?;
         info!("cleanup compaction success, filename: {filename}");
         Ok(())
     }
 
     pub async fn makeup_diff(
-        &self,
+        &mut self,
         new_data_filename: &str,
         new_idx_filename: &str,
         old_data_filename: &str,
         old_idx_filename: &str,
     ) -> StdResult<(), VolumeError> {
-        let mut old_idx_file = file::open(old_idx_filename).await?;
+        let mut old_idx_file = OpenOptions::new().read(true).open(old_idx_filename).await?;
         let index_size = verify_index_file_integrity(&old_idx_file).await?;
         if index_size == 0 || index_size <= self.last_compact_index_offset {
             return Ok(());
         }
 
-        let mut old_data_file = file::open(old_data_filename).await?;
+        let mut old_data_file = OpenOptions::new()
+            .read(true)
+            .open(old_data_filename)
+            .await?;
         let old_compact_revision =
             fetch_compact_revision_from_data_file(&mut old_data_file).await?;
         if old_compact_revision != self.last_compact_revision {
@@ -132,7 +138,12 @@ impl Volume {
         }
 
         if !incremented_has_updated_index_entry.is_empty() {
-            let mut new_data_file = file::append(new_data_filename).await?;
+            let mut new_data_file = OpenOptions::new()
+                .write(true)
+                .read(true)
+                .mode(0o644)
+                .open(new_data_filename)
+                .await?;
             let new_compact_revision =
                 fetch_compact_revision_from_data_file(&mut new_data_file).await?;
             if old_compact_revision + 1 != new_compact_revision {
@@ -143,7 +154,12 @@ impl Volume {
                 )));
             }
 
-            let mut new_idx_file = file::append(new_idx_filename).await?;
+            let mut new_idx_file = OpenOptions::new()
+                .write(true)
+                .read(true)
+                .mode(0o644)
+                .open(new_idx_filename)
+                .await?;
             new_idx_file.seek(SeekFrom::End(0)).await?;
 
             let mut index_entry_buf = [0u8; 16];
@@ -160,7 +176,7 @@ impl Volume {
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-                    offset = new_data_file.seek(SeekFrom::Start(offset)).await?;
+                    offset = self.data_file()?.seek(SeekFrom::Start(offset)).await?;
                 }
 
                 if value.offset != 0 && value.size != 0 {
@@ -192,15 +208,26 @@ impl Volume {
         compact_index_filename: String,
     ) -> StdResult<(), VolumeError> {
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-        compact_nm
-            .load_idx_file(file::create(&compact_index_filename).await?)
+        let compact_index_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o644)
+            .open(compact_index_filename)
             .await?;
+        compact_nm.load_idx_file(compact_index_file).await?;
 
         let now = now().as_millis() as u64;
 
         self.super_block.compact_revision += 1;
 
-        let mut compact_data_file = file::create(&compact_data_filename).await?;
+        let mut compact_data_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o644)
+            .open(compact_data_filename)
+            .await?;
         compact_data_file.seek(SeekFrom::Start(0)).await?;
         compact_data_file
             .write_all(&self.super_block.as_bytes())
@@ -209,7 +236,11 @@ impl Volume {
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
 
         // walk through old index file
-        let old_index_file = file::open(self.index_filename()).await?;
+        let old_index_file = OpenOptions::new()
+            .read(true)
+            .mode(0o644)
+            .open(self.index_filename())
+            .await?;
         let len = old_index_file.metadata().await?.len();
         let mut reader = BufReader::new(old_index_file);
         let mut buf: Vec<u8> = vec![0; 16];

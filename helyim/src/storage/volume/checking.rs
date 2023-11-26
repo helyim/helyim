@@ -83,14 +83,12 @@ mod tests {
     use faststr::FastStr;
     use rand::random;
     use tempfile::Builder;
+    use tokio::fs::OpenOptions;
 
-    use crate::{
-        storage::{
-            crc,
-            volume::{checking::check_volume_data_integrity, Volume},
-            FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
-        },
-        util::file,
+    use crate::storage::{
+        crc,
+        volume::{checking::check_volume_data_integrity, Volume},
+        FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
     #[tokio::test]
@@ -127,9 +125,13 @@ mod tests {
             volume.write_needle(needle).await.unwrap();
         }
 
-        let mut index_file = file::open(volume.index_filename()).await.unwrap();
-        assert!(check_volume_data_integrity(&mut volume, &mut index_file)
+        let mut index_file = OpenOptions::new()
+            .read(true)
+            .open(volume.index_filename())
             .await
-            .is_ok());
+            .unwrap();
+        check_volume_data_integrity(&mut volume, &mut index_file)
+            .await
+            .unwrap();
     }
 }
