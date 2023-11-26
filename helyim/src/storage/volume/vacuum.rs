@@ -100,7 +100,9 @@ impl Volume {
             return Ok(());
         }
 
-        let old_compact_revision = fetch_compact_revision_from_data_file(&mut old_idx_file).await?;
+        let mut old_data_file = file::open(old_data_filename).await?;
+        let old_compact_revision =
+            fetch_compact_revision_from_data_file(&mut old_data_file).await?;
         if old_compact_revision != self.last_compact_revision {
             return Err(VolumeError::String(format!(
                 "current old data file's compact revision {old_compact_revision} is not the \
@@ -142,6 +144,8 @@ impl Volume {
             }
 
             let mut new_idx_file = file::append(new_idx_filename).await?;
+            new_idx_file.seek(SeekFrom::End(0)).await?;
+
             let mut index_entry_buf = [0u8; 16];
             for (key, value) in incremented_has_updated_index_entry {
                 debug!(
@@ -161,7 +165,7 @@ impl Volume {
 
                 if value.offset != 0 && value.size != 0 {
                     let needle_bytes =
-                        read_needle_blob(&mut old_idx_file, value.offset, value.size).await?;
+                        read_needle_blob(&mut old_data_file, value.offset, value.size).await?;
                     new_data_file.write_all(&needle_bytes).await?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
@@ -174,6 +178,7 @@ impl Volume {
                     fake_del_needle.append(&mut new_data_file, version).await?;
                     (&mut index_entry_buf[8..12]).put_u32(0);
                 }
+
                 new_idx_file.write_all(&index_entry_buf).await?;
             }
         }
@@ -196,6 +201,7 @@ impl Volume {
         self.super_block.compact_revision += 1;
 
         let mut compact_data_file = file::create(&compact_data_filename).await?;
+        compact_data_file.seek(SeekFrom::Start(0)).await?;
         compact_data_file
             .write_all(&self.super_block.as_bytes())
             .await?;
@@ -208,6 +214,7 @@ impl Volume {
         let mut reader = BufReader::new(old_index_file);
         let mut buf: Vec<u8> = vec![0; 16];
 
+        let old_data_file = self.data_file()?;
         for _ in 0..(len + 15) / 16 {
             reader.read_exact(&mut buf).await?;
             let (key, offset, size) = index_entry(&buf);
@@ -218,7 +225,7 @@ impl Volume {
             let mut needle = Needle::default();
             let version = self.version();
             needle
-                .read_data(self.data_file()?, offset, size, version)
+                .read_data(old_data_file, offset, size, version)
                 .await?;
             if needle.has_ttl()
                 && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60

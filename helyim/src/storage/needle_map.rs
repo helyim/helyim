@@ -1,9 +1,9 @@
-use std::result::Result;
+use std::{io::SeekFrom, result::Result};
 
 use bytes::{Buf, BufMut};
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
 use tracing::{debug, error};
 
@@ -164,6 +164,7 @@ impl NeedleMapper {
             buf.put_u32(value.offset);
             buf.put_i32(value.size.0);
 
+            file.seek(SeekFrom::End(0)).await?;
             if let Err(err) = file.write_all(&buf).await {
                 error!(
                     "failed to write index file, volume {}, error: {err}",

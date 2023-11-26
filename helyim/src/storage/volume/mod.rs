@@ -229,7 +229,7 @@ impl Volume {
             }
             self.needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
             self.needle_mapper.load_idx_file(index_file).await?;
-            info!("load index file `{}` success", self.index_filename);
+            info!("load index file `{}` success", self.index_filename());
         }
 
         Ok(())
@@ -291,11 +291,6 @@ impl Volume {
         let version = self.version();
 
         let mut file = self.data_file()?;
-        let mut offset = file.seek(SeekFrom::End(0)).await?;
-        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            file.seek(SeekFrom::Start(offset)).await?;
-        }
         needle.append(&mut file, version).await?;
         Ok(nv.size)
     }
@@ -472,12 +467,13 @@ impl Volume {
 
 impl Volume {
     async fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
-        let mut file = file::create(self.data_filename()).await?;
+        let bytes = self.super_block.as_bytes();
+
+        let file = self.data_file()?;
         if file.metadata().await?.len() != 0 {
             return Ok(());
         }
-
-        let bytes = self.super_block.as_bytes();
+        file.seek(SeekFrom::Start(0)).await?;
         file.write_all(&bytes).await?;
         debug!("write super block success");
         Ok(())
@@ -486,7 +482,7 @@ impl Volume {
     async fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let mut file = file::open(self.data_filename()).await?;
+            let file = self.data_file()?;
             file.seek(SeekFrom::Start(0)).await?;
             file.read_exact(&mut buf).await?;
         }
