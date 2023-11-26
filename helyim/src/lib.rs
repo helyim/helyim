@@ -13,7 +13,7 @@ pub mod storage;
 
 mod sequence;
 mod topology;
-mod util;
+pub(crate) mod util;
 
 const PHRASE: &str = "<h1>Hello, World!</h1>";
 const DEFAULT: &str = "default";

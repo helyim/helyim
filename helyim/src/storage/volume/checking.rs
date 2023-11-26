@@ -1,4 +1,4 @@
-use std::{fs::File, os::unix::fs::FileExt, result::Result};
+use std::{ result::Result};
 
 use crate::storage::{
     index_entry,
@@ -8,9 +8,10 @@ use crate::storage::{
     volume::Volume,
     Needle, NeedleId, VolumeError,
 };
+use crate::util::file;
 
-pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError> {
-    let meta = index_file.metadata()?;
+pub async fn verify_index_file_integrity(path: &str) -> Result<u64, VolumeError> {
+    let meta = tokio::fs::metadata(path).await?;
     let size = meta.len();
     if size % NEEDLE_PADDING_SIZE as u64 != 0 {
         return Err(VolumeError::DataIntegrity(format!(
@@ -20,39 +21,39 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError
     Ok(size)
 }
 
-pub fn check_volume_data_integrity(
+pub async fn check_volume_data_integrity(
     volume: &mut Volume,
-    index_file: &File,
+    index_file_path: &str,
 ) -> Result<(), VolumeError> {
-    let index_size = verify_index_file_integrity(index_file)?;
+    let index_size = verify_index_file_integrity(index_file_path).await?;
     if index_size == 0 {
         return Ok(());
     }
     let last_index_entry =
-        read_index_entry_at_offset(index_file, index_size - NEEDLE_INDEX_SIZE as u64)?;
+        read_index_entry_at_offset(index_file_path, index_size - NEEDLE_INDEX_SIZE as u64).await?;
     let (key, offset, size) = index_entry(&last_index_entry);
     if offset == 0 || size.is_deleted() {
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.file_mut()?, version, key, offset, size)
+    verify_needle_integrity(&volume.data_filename(), version, key, offset, size).await
 }
 
-pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {
+pub async fn read_index_entry_at_offset(index_file_path: &str, offset: u64) -> Result<Vec<u8>, VolumeError> {
     let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
-    index_file.read_exact_at(&mut buf, offset)?;
+    file::read_exact_at(index_file_path, &mut buf, offset).await?;
     Ok(buf)
 }
 
-fn verify_needle_integrity(
-    data_file: &mut File,
+async fn verify_needle_integrity(
+    data_file_path: &str,
     version: Version,
     key: NeedleId,
     offset: Offset,
     size: Size,
 ) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
-    needle.read_data(data_file, offset, size, version)?;
+    needle.read_data(data_file_path, offset, size, version).await?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
@@ -75,8 +76,8 @@ mod tests {
         FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
-    #[test]
-    pub fn test_check_volume_data_integrity() {
+    #[tokio::test]
+    pub async fn test_check_volume_data_integrity() {
         let dir = Builder::new()
             .prefix("check_volume_data_integrity")
             .tempdir_in(".")
@@ -91,6 +92,7 @@ mod tests {
             Ttl::default(),
             0,
         )
+        .await
         .unwrap();
 
         for i in 0..1000 {
@@ -113,6 +115,6 @@ mod tests {
             .open(volume.index_filename())
             .unwrap();
 
-        assert!(check_volume_data_integrity(&mut volume, &index_file).is_ok());
+        assert!(check_volume_data_integrity(&mut volume, &index_file).await.is_ok());
     }
 }

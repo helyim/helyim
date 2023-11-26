@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     fs::{self, metadata, File},
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{ErrorKind, Seek, SeekFrom},
     os::unix::fs::OpenOptionsExt,
     path::Path,
     result::Result as StdResult,
@@ -11,7 +11,10 @@ use std::{
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
-use tokio::sync::RwLock;
+use tokio::{
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    sync::RwLock,
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -38,6 +41,8 @@ pub use replica_placement::ReplicaPlacement;
 pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
+
+use crate::util::file;
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -125,7 +130,7 @@ impl Display for Volume {
 }
 
 impl Volume {
-    pub fn new(
+    pub async fn new(
         dir: FastStr,
         collection: FastStr,
         id: VolumeId,
@@ -154,12 +159,12 @@ impl Volume {
             last_modified: 0,
         };
 
-        v.load(true, true)?;
+        v.load(true, true).await?;
         debug!("load volume {id} success, path: {dir}");
         Ok(v)
     }
 
-    pub fn load(
+    pub async fn load(
         &mut self,
         create_if_missing: bool,
         load_index: bool,
@@ -213,19 +218,14 @@ impl Volume {
         }
 
         if has_super_block {
-            self.read_super_block()?;
+            self.read_super_block().await?;
         } else {
-            self.write_super_block()?;
+            self.write_super_block().await?;
         }
 
         if load_index {
-            let index_file = fs::OpenOptions::new()
-                .read(true)
-                .create(true)
-                .write(true)
-                .open(self.index_filename())?;
-
-            if let Err(err) = check_volume_data_integrity(self, &index_file) {
+            let index_file_path = self.index_filename();
+            if let Err(err) = check_volume_data_integrity(self, &index_file_path).await {
                 self.readonly = true;
                 error!(
                     "volume data integrity checking failed. volume: {}, filename: {}, {err}",
@@ -234,8 +234,8 @@ impl Volume {
                 );
             }
             self.needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
-            self.needle_mapper.load_idx_file(index_file)?;
-            info!("load index file `{}` success", self.index_filename());
+            self.needle_mapper.load_idx_file(&index_file_path)?;
+            info!("load index file `{index_file_path}` success");
         }
 
         Ok(())
@@ -300,7 +300,7 @@ impl Volume {
         Ok(nv.size)
     }
 
-    pub fn read_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
+    pub async fn read_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 || nv.size.is_deleted() {
@@ -308,8 +308,7 @@ impl Volume {
                 }
 
                 let version = self.version();
-                let data_file = self.file_mut()?;
-                needle.read_data(data_file, nv.offset, nv.size, version)?;
+                needle.read_data(&self.data_filename(), nv.offset, nv.size, version).await?;
 
                 if needle.has_ttl() && needle.has_last_modified_date() {
                     let minutes = needle.ttl.minutes();
@@ -388,15 +387,7 @@ impl Volume {
     }
 
     pub fn size(&self) -> StdResult<u64, VolumeError> {
-        let file = self.file()?;
-        Ok(file.metadata()?.len())
-    }
-
-    pub fn file(&self) -> StdResult<&File, VolumeError> {
-        match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
-            None => Err(VolumeError::NotLoad(self.id)),
-        }
+        Ok(metadata(self.data_filename())?.len())
     }
 
     pub fn file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
@@ -468,26 +459,24 @@ impl Volume {
 }
 
 impl Volume {
-    fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
-        let mut file = self.file()?;
-        let meta = file.metadata()?;
-
-        if meta.len() != 0 {
+    async fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
+        let mut file = file::overwrite(&self.data_filename()).await?;
+        if file.metadata().await?.len() != 0 {
             return Ok(());
         }
 
         let bytes = self.super_block.as_bytes();
-        file.write_all(&bytes)?;
+        file.write_all(&bytes).await?;
         debug!("write super block success");
         Ok(())
     }
 
-    fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
+    async fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let file = self.file_mut()?;
-            file.seek(SeekFrom::Start(0))?;
-            file.read_exact(&mut buf)?;
+            let mut file = file::open(&self.data_filename()).await?;
+            file.seek(SeekFrom::Start(0)).await?;
+            file.read_exact(&mut buf).await?;
         }
         self.super_block = SuperBlock::parse(buf)?;
 
@@ -495,7 +484,7 @@ impl Volume {
     }
 }
 
-fn load_volume_without_index(
+async fn load_volume_without_index(
     dirname: FastStr,
     collection: FastStr,
     id: VolumeId,
@@ -508,11 +497,11 @@ fn load_volume_without_index(
         needle_map_type,
         ..Default::default()
     };
-    volume.load(false, false)?;
+    volume.load(false, false).await?;
     Ok(volume)
 }
 
-pub fn scan_volume_file<VSB, VN>(
+pub async fn scan_volume_file<VSB, VN>(
     dirname: FastStr,
     collection: FastStr,
     id: VolumeId,
@@ -525,13 +514,13 @@ where
     VSB: FnMut(&mut SuperBlock) -> StdResult<(), VolumeError>,
     VN: FnMut(&mut Needle, u32) -> StdResult<(), VolumeError>,
 {
-    let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
+    let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type).await?;
     visit_super_block(&mut volume.super_block)?;
 
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u32;
 
-    let (mut needle, mut rest) = read_needle_header(volume.file()?, version, offset)?;
+    let (mut needle, mut rest) = read_needle_header(&volume.data_filename(), version, offset).await?;
 
     loop {
         if read_needle_body {
@@ -548,7 +537,7 @@ where
         visit_needle(&mut needle, offset)?;
         offset += NEEDLE_HEADER_SIZE + rest;
 
-        match read_needle_header(volume.file()?, version, offset) {
+        match read_needle_header(&volume.data_filename(), version, offset).await {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;
@@ -569,7 +558,7 @@ where
 pub struct VolumeRef(Arc<RwLock<Volume>>);
 
 impl VolumeRef {
-    pub fn new(
+    pub async fn new(
         dir: FastStr,
         collection: FastStr,
         id: VolumeId,
@@ -578,15 +567,18 @@ impl VolumeRef {
         ttl: Ttl,
         preallocate: i64,
     ) -> StdResult<VolumeRef, VolumeError> {
-        Ok(Self(Arc::new(RwLock::new(Volume::new(
-            dir,
-            collection,
-            id,
-            needle_map_type,
-            replica_placement,
-            ttl,
-            preallocate,
-        )?))))
+        Ok(Self(Arc::new(RwLock::new(
+            Volume::new(
+                dir,
+                collection,
+                id,
+                needle_map_type,
+                replica_placement,
+                ttl,
+                preallocate,
+            )
+            .await?,
+        ))))
     }
 
     pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Volume> {
@@ -612,7 +604,7 @@ pub mod tests {
         FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl, VolumeError,
     };
 
-    pub fn setup(dir: FastStr) -> Volume {
+    pub async fn setup(dir: FastStr) -> Volume {
         let mut volume = Volume::new(
             dir,
             FastStr::empty(),
@@ -621,7 +613,7 @@ pub mod tests {
             ReplicaPlacement::default(),
             Ttl::default(),
             0,
-        )
+        ).await
         .unwrap();
 
         for i in 0..1000 {
@@ -642,14 +634,14 @@ pub mod tests {
         volume
     }
 
-    #[test]
-    pub fn test_scan_volume_file() {
+    #[tokio::test]
+    pub async fn test_scan_volume_file() {
         let dir = Builder::new()
             .prefix("scan_volume_file")
             .tempdir_in(".")
             .unwrap();
         let dir = FastStr::new(dir.path().to_str().unwrap());
-        let volume = setup(dir.clone());
+        let volume = setup(dir.clone()).await;
 
         scan_volume_file(
             dir.clone(),
@@ -663,6 +655,7 @@ pub mod tests {
                 Ok(())
             },
         )
+        .await
         .unwrap();
     }
 }

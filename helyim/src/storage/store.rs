@@ -111,7 +111,7 @@ impl Store {
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.write().await.read_needle(needle)?),
+            Some(volume) => Ok(volume.write().await.read_needle(needle).await?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -188,7 +188,8 @@ impl Store {
             replica_placement,
             ttl,
             preallocate,
-        )?;
+        )
+        .await?;
         location.write().await.add_volume(vid, volume);
 
         Ok(())
@@ -299,7 +300,7 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
-                volume.write().await.compact()?;
+                volume.write().await.compact().await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }
@@ -314,7 +315,7 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
-                volume.write().await.commit_compact()?;
+                volume.write().await.commit_compact().await?;
                 info!("volume {vid} committing compaction success.");
                 Ok(())
             }

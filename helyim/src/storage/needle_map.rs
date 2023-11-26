@@ -3,8 +3,10 @@ use std::{
     io::{BufReader, Read, Write},
     result::Result,
 };
+use std::future::Future;
 
 use bytes::{Buf, BufMut};
+use tokio::io::AsyncReadExt;
 use tracing::{debug, error};
 
 use crate::storage::{
@@ -13,6 +15,7 @@ use crate::storage::{
     types::{Offset, Size},
     NeedleError, NeedleId, VolumeError, VolumeId,
 };
+use crate::util::file;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub enum NeedleMapType {
@@ -60,7 +63,7 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_idx_file(&mut self, index_file: File) -> Result<(), VolumeError> {
+    pub fn load_idx_file(&mut self, index_file: &str) -> Result<(), VolumeError> {
         walk_index_file(
             &index_file,
             |key, offset, size| -> Result<(), NeedleError> {
@@ -192,6 +195,25 @@ where
 
         let (key, offset, size) = index_entry(&buf);
         walk(key, offset, size)?;
+    }
+
+    Ok(())
+}
+
+pub async fn walk_index_file1<T>(path: &str, mut walk: T) -> Result<(), VolumeError>
+    where
+        T: FnMut(NeedleId, Offset, Size) -> dyn Future<Output=Result<(), NeedleError>>,
+{
+    let index_file = file::open(path).await?;
+    let mut reader = tokio::io::BufReader::new(index_file);
+    let mut buf: Vec<u8> = vec![0; 16];
+
+    // if there is a not complete entry, will err
+    for _ in 0..(index_file.metadata().await?.len() + 15) / 16 {
+        reader.read_exact(&mut buf).await?;
+
+        let (key, offset, size) = index_entry(&buf);
+        walk(key, offset, size).await?;
     }
 
     Ok(())

@@ -59,7 +59,8 @@ impl DiskLocation {
                             ReplicaPlacement::default(),
                             Ttl::default(),
                             0,
-                        )?;
+                        )
+                        .await?;
 
                         Ok((vid, volume))
                     });

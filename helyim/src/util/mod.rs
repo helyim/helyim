@@ -4,6 +4,8 @@ use faststr::FastStr;
 #[macro_use]
 pub mod macros;
 
+pub mod file;
+
 mod http;
 
 pub use http::{delete, post, FormOrJson};

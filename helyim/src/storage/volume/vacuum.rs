@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     result::Result as StdResult,
 };
@@ -17,7 +16,7 @@ use tracing::{debug, error, info};
 use crate::{
     storage::{
         needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
-        needle_map::{index_entry, walk_index_file},
+        needle_map::{index_entry},
         volume::{
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
@@ -28,6 +27,8 @@ use crate::{
     topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
     util::time::now,
 };
+use crate::storage::needle_map::walk_index_file1;
+use crate::util::file;
 
 impl Volume {
     pub fn garbage_level(&self) -> f64 {
@@ -37,7 +38,7 @@ impl Volume {
         self.deleted_bytes() as f64 / self.content_size() as f64
     }
 
-    pub fn compact(&mut self) -> StdResult<(), VolumeError> {
+    pub async fn compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
@@ -45,12 +46,13 @@ impl Volume {
         self.copy_data_and_generate_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
+        )
+        .await?;
         info!("compact {filename} success");
         Ok(())
     }
 
-    pub fn compact2(&mut self) -> StdResult<(), VolumeError> {
+    pub async fn compact2(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
@@ -58,12 +60,12 @@ impl Volume {
         self.copy_data_based_on_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-        )?;
+        ).await?;
         info!("compact {filename} success");
         Ok(())
     }
 
-    pub fn commit_compact(&mut self) -> StdResult<(), VolumeError> {
+    pub async fn commit_compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -75,7 +77,7 @@ impl Volume {
             &compact_index_filename,
             &data_filename,
             &index_filename,
-        ) {
+        ).await {
             Ok(()) => {
                 fs::rename(&compact_data_filename, data_filename)?;
                 fs::rename(compact_index_filename, index_filename)?;
@@ -91,7 +93,7 @@ impl Volume {
         }
         self.data_file = None;
         self.readonly = false;
-        self.load(false, true)
+        self.load(false, true).await
     }
 
     pub fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
@@ -102,22 +104,19 @@ impl Volume {
         Ok(())
     }
 
-    pub fn makeup_diff(
+    pub async fn makeup_diff(
         &self,
         new_data_filename: &str,
         new_idx_filename: &str,
         old_data_filename: &str,
         old_idx_filename: &str,
     ) -> StdResult<(), VolumeError> {
-        let old_idx_file = fs::OpenOptions::new().read(true).open(old_idx_filename)?;
-        let mut old_data_file = fs::OpenOptions::new().read(true).open(old_data_filename)?;
-
-        let index_size = verify_index_file_integrity(&old_idx_file)?;
+        let index_size = verify_index_file_integrity(&old_idx_filename).await?;
         if index_size == 0 || index_size <= self.last_compact_index_offset {
             return Ok(());
         }
 
-        let old_compact_revision = fetch_compact_revision_from_data_file(&mut old_data_file)?;
+        let old_compact_revision = fetch_compact_revision_from_data_file( old_data_filename).await?;
         if old_compact_revision != self.last_compact_revision {
             return Err(VolumeError::String(format!(
                 "current old data file's compact revision {old_compact_revision} is not the \
@@ -132,7 +131,7 @@ impl Volume {
             let mut idx_offset = index_size as i64 - NEEDLE_INDEX_SIZE as i64;
             loop {
                 if idx_offset >= self.last_compact_index_offset as i64 {
-                    let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
+                    let idx_entry = read_index_entry_at_offset(&old_idx_filename, idx_offset as u64).await?;
                     let (key, offset, size) = index_entry(&idx_entry);
                     incremented_has_updated_index_entry
                         .entry(key)
@@ -157,7 +156,7 @@ impl Volume {
                 .mode(0o644)
                 .open(new_data_filename)?;
 
-            let new_compact_revision = fetch_compact_revision_from_data_file(&mut new_data_file)?;
+            let new_compact_revision = fetch_compact_revision_from_data_file(new_data_filename).await?;
             if old_compact_revision + 1 != new_compact_revision {
                 return Err(VolumeError::String(format!(
                     "old data file {}'s compact revision is {old_compact_revision} while new data \
@@ -180,12 +179,12 @@ impl Volume {
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-                    offset = self.file()?.seek(SeekFrom::Start(offset))?;
+                    offset = file::seek(&self.data_filename(), SeekFrom::Start(offset)).await?;
                 }
 
                 if value.offset != 0 && value.size != 0 {
                     let needle_bytes =
-                        read_needle_blob(&mut old_data_file, value.offset, value.size)?;
+                        read_needle_blob(&old_data_filename, value.offset, value.size).await?;
                     new_data_file.write_all(&needle_bytes)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
@@ -207,7 +206,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn copy_data_and_generate_index_file(
+    pub async fn copy_data_and_generate_index_file(
         &mut self,
         compact_data_filename: String,
         compact_index_filename: String,
@@ -218,15 +217,9 @@ impl Volume {
             .truncate(true)
             .mode(0o644)
             .open(compact_data_filename)?;
-        let compact_index_file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(compact_index_filename)?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-        compact_nm.load_idx_file(compact_index_file)?;
+        compact_nm.load_idx_file(&compact_index_filename)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
         let now = now().as_millis() as u64;
@@ -263,11 +256,12 @@ impl Volume {
                 }
                 Ok(())
             },
-        )?;
+        )
+        .await?;
         Ok(())
     }
 
-    pub fn copy_data_based_on_index_file(
+    pub async fn copy_data_based_on_index_file(
         &mut self,
         compact_data_filename: String,
         compact_index_filename: String,
@@ -285,11 +279,6 @@ impl Volume {
             .mode(0o644)
             .open(compact_index_filename)?;
 
-        let old_idx_file = fs::OpenOptions::new()
-            .read(true)
-            .mode(0o644)
-            .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
-
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
         compact_nm.load_idx_file(compact_index_file)?;
 
@@ -299,9 +288,9 @@ impl Volume {
         compact_data_file.write_all(&self.super_block.as_bytes())?;
         let mut new_offset = SUPER_BLOCK_SIZE as u32;
 
-        walk_index_file(
-            &old_idx_file,
-            |key, offset, size| -> StdResult<(), NeedleError> {
+        walk_index_file1(
+            &self.index_filename(),
+            |key, offset, size| async {
                 if offset == 0 {
                     return Ok(());
                 }
@@ -315,12 +304,11 @@ impl Volume {
                 let version = self.version();
 
                 needle.read_data(
-                    self.file_mut()
-                        .map_err(|err| NeedleError::BoxError(err.into()))?,
+                    &self.data_filename(),
                     offset,
                     size,
                     version,
-                )?;
+                ).await?;
 
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
@@ -342,15 +330,15 @@ impl Volume {
 
                 Ok(())
             },
-        )?;
+        ).await?;
 
         Ok(())
     }
 }
 
-fn fetch_compact_revision_from_data_file(file: &mut File) -> StdResult<u16, VolumeError> {
+async fn fetch_compact_revision_from_data_file(data_file_path: &str) -> StdResult<u16, VolumeError> {
     let mut buf = [0u8; SUPER_BLOCK_SIZE];
-    file.read_exact(&mut buf)?;
+    file::read_exact_at(data_file_path, &mut buf, 0).await?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision)
 }

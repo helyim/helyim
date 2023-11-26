@@ -3,7 +3,7 @@
 use std::{
     fmt::{Display, Formatter},
     fs::File,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Write},
     os::unix::fs::FileExt,
     result::Result as StdResult,
 };
@@ -12,12 +12,15 @@ use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::storage::{
-    crc,
-    ttl::Ttl,
-    types::{Cookie, Offset, Size},
-    version::{Version, CURRENT_VERSION, VERSION2},
-    NeedleError, NeedleId,
+use crate::{
+    storage::{
+        crc,
+        ttl::Ttl,
+        types::{Cookie, Offset, Size},
+        version::{Version, CURRENT_VERSION, VERSION2},
+        NeedleError, NeedleId,
+    },
+    util::file,
 };
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
@@ -123,8 +126,8 @@ pub fn actual_offset(offset: Offset) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-pub fn read_needle_blob(
-    file: &mut File,
+pub async fn read_needle_blob(
+    path: &str,
     offset: Offset,
     size: Size,
 ) -> StdResult<Bytes, NeedleError> {
@@ -132,9 +135,7 @@ pub fn read_needle_blob(
     let mut buffer = vec![0; size as usize];
 
     let offset = actual_offset(offset);
-    file.seek(SeekFrom::Start(offset))?;
-
-    file.read_exact(&mut buffer)?;
+    file::read_exact_at(path, &mut buffer, offset).await?;
     Ok(Bytes::from(buffer))
 }
 
@@ -295,14 +296,14 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_data(
+    pub async fn read_data(
         &mut self,
-        file: &mut File,
+        path: &str,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> StdResult<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
+        let bytes = read_needle_blob(path, offset, size).await?;
         self.parse_needle_header(&bytes);
 
         if self.size != size {
@@ -418,8 +419,8 @@ fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     Ok((key, cookie))
 }
 
-pub fn read_needle_header(
-    file: &File,
+pub async fn read_needle_header(
+    path: &str,
     version: Version,
     offset: Offset,
 ) -> StdResult<(Needle, u32), NeedleError> {
@@ -428,7 +429,8 @@ pub fn read_needle_header(
 
     if version == VERSION2 {
         let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
-        file.read_exact_at(&mut buf, offset as u64)?;
+
+        file::read_exact_at(path, &mut buf, offset as u64).await?;
         needle.parse_needle_header(&buf);
         let padding = padding_len(needle.size);
         body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;
