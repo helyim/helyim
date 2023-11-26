@@ -16,7 +16,7 @@ use crate::storage::{
 
 pub async fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError> {
     let size = index_file.metadata().await?.len();
-    if size % NEEDLE_PADDING_SIZE as u64 != 0 {
+    if size % NEEDLE_INDEX_SIZE as u64 != 0 {
         return Err(VolumeError::DataIntegrity(format!(
             "index file's size is {size} bytes, maybe corrupted"
         )));
@@ -39,7 +39,14 @@ pub async fn check_volume_data_integrity(
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.data_file()?, version, key, offset, size).await
+    verify_needle_integrity(
+        volume.data_file()?,
+        version,
+        key,
+        offset * NEEDLE_PADDING_SIZE,
+        size,
+    )
+    .await
 }
 
 pub async fn read_index_entry_at_offset<F: AsyncReadExt + AsyncSeekExt + Unpin>(
