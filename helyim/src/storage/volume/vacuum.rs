@@ -272,15 +272,9 @@ impl Volume {
             .truncate(true)
             .mode(0o644)
             .open(compact_data_filename)?;
-        let compact_index_file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(compact_index_filename)?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-        compact_nm.load_idx_file(compact_index_file)?;
+        compact_nm.load_idx_file(&compact_index_filename)?;
 
         let now = now().as_millis() as u64;
 
@@ -290,7 +284,7 @@ impl Volume {
 
         walk_index_file1(
             &self.index_filename(),
-            |key, offset, size| async {
+            |key, offset, size| Box::pin(async move{
                 if offset == 0 {
                     return Ok(());
                 }
@@ -330,7 +324,7 @@ impl Volume {
 
                 Ok(())
             },
-        ).await?;
+        )).await?;
 
         Ok(())
     }

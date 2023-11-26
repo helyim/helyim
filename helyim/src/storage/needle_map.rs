@@ -3,10 +3,10 @@ use std::{
     io::{BufReader, Read, Write},
     result::Result,
 };
-use std::future::Future;
 
 use bytes::{Buf, BufMut};
 use tokio::io::AsyncReadExt;
+use futures::future::BoxFuture;
 use tracing::{debug, error};
 
 use crate::storage::{
@@ -202,14 +202,15 @@ where
 
 pub async fn walk_index_file1<T>(path: &str, mut walk: T) -> Result<(), VolumeError>
     where
-        T: FnMut(NeedleId, Offset, Size) -> dyn Future<Output=Result<(), NeedleError>>,
+        T: FnMut(NeedleId, Offset, Size) -> BoxFuture<'static, Result<(), NeedleError>>,
 {
     let index_file = file::open(path).await?;
+    let len = index_file.metadata().await?.len();
     let mut reader = tokio::io::BufReader::new(index_file);
     let mut buf: Vec<u8> = vec![0; 16];
 
     // if there is a not complete entry, will err
-    for _ in 0..(index_file.metadata().await?.len() + 15) / 16 {
+    for _ in 0..(len + 15) / 16 {
         reader.read_exact(&mut buf).await?;
 
         let (key, offset, size) = index_entry(&buf);
