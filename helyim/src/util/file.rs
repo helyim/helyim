@@ -6,7 +6,7 @@ use std::{
 
 use tokio::{
     fs::{read_dir, File, OpenOptions},
-    io::{AsyncReadExt, AsyncSeekExt},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
 pub async fn open(path: &str) -> Result<File> {
@@ -17,13 +17,12 @@ pub async fn append(path: &str) -> Result<File> {
     OpenOptions::new().read(true).append(true).open(path).await
 }
 
-pub async fn overwrite(path: &str) -> Result<File> {
+pub async fn create(path: &str) -> Result<File> {
     OpenOptions::new().create(true).write(true).open(path).await
 }
 
 pub async fn seek(path: &str, pos: SeekFrom) -> Result<u64> {
-    let mut file = open(path).await?;
-    file.seek(pos).await
+    open(path).await?.seek(pos).await
 }
 
 pub async fn read_exact_at(path: &str, buf: &mut [u8], offset: u64) -> Result<()> {
@@ -31,6 +30,13 @@ pub async fn read_exact_at(path: &str, buf: &mut [u8], offset: u64) -> Result<()
     file.seek(SeekFrom::Start(offset)).await?;
     let size = file.read_exact(buf).await?;
     assert_eq!(buf.len(), size);
+    Ok(())
+}
+
+pub async fn write_all_at(path: &str, buf: &[u8], offset: u64) -> Result<()> {
+    let mut file = OpenOptions::new().write(true).open(path).await?;
+    file.seek(SeekFrom::Start(offset)).await?;
+    file.write_all(buf).await?;
     Ok(())
 }
 

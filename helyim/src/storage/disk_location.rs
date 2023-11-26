@@ -95,7 +95,7 @@ impl DiskLocation {
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.read().await.destroy()?;
+            v.read().await.destroy().await?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory

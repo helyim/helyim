@@ -2,14 +2,12 @@
 
 use std::{
     fmt::{Display, Formatter},
-    fs::File,
-    io::{Write},
-    os::unix::fs::FileExt,
     result::Result as StdResult,
 };
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tracing::debug;
 
 use crate::{
@@ -171,9 +169,9 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_needle_body(
+    pub async fn read_needle_body(
         &mut self,
-        data_file: &File,
+        data_file_path: &str,
         offset: u32,
         body_len: u32,
         version: Version,
@@ -184,7 +182,8 @@ impl Needle {
         match version {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
-                data_file.read_exact_at(&mut buf, offset as u64)?;
+
+                file::read_exact_at(data_file_path, &mut buf, offset as u64).await?;
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
@@ -238,7 +237,11 @@ impl Needle {
         }
     }
 
-    pub fn append<W: Write>(&mut self, w: &mut W, version: Version) -> StdResult<(), NeedleError> {
+    pub async fn append<W: AsyncWriteExt + Unpin>(
+        &mut self,
+        w: &mut W,
+        version: Version,
+    ) -> StdResult<(), NeedleError> {
         if version != CURRENT_VERSION {
             return Err(NeedleError::UnsupportedVersion(version));
         }
@@ -291,7 +294,7 @@ impl Needle {
 
         buf.put_u32(self.checksum);
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all(&buf)?;
+        w.write_all(&buf).await?;
 
         Ok(())
     }

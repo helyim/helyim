@@ -104,7 +104,7 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Size> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.write().await.delete_needle(needle)?),
+            Some(volume) => Ok(volume.write().await.delete_needle(needle).await?),
             None => Ok(Size(0)),
         }
     }
@@ -123,7 +123,7 @@ impl Store {
                     return Err(VolumeError::Readonly(vid).into());
                 }
 
-                Ok(volume.write().await.write_needle(needle)?)
+                Ok(volume.write().await.write_needle(needle).await?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }
@@ -240,7 +240,7 @@ impl Store {
                     let super_block = volume.read().await.super_block;
                     let msg = VolumeInformationMessage {
                         id: *vid,
-                        size: volume.read().await.size().unwrap_or(0),
+                        size: volume.read().await.size().await.unwrap_or(0),
                         collection: volume.read().await.collection.to_string(),
                         file_count: volume.read().await.file_count(),
                         delete_count: volume.read().await.deleted_count(),
@@ -300,7 +300,7 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
-                volume.write().await.compact().await?;
+                volume.write().await.compact2().await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }

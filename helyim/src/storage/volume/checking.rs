@@ -1,14 +1,16 @@
-use std::{ result::Result};
+use std::result::Result;
 
-use crate::storage::{
-    index_entry,
-    needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
-    types::{Offset, Size},
-    version::Version,
-    volume::Volume,
-    Needle, NeedleId, VolumeError,
+use crate::{
+    storage::{
+        index_entry,
+        needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
+        types::{Offset, Size},
+        version::Version,
+        volume::Volume,
+        Needle, NeedleId, VolumeError,
+    },
+    util::file,
 };
-use crate::util::file;
 
 pub async fn verify_index_file_integrity(path: &str) -> Result<u64, VolumeError> {
     let meta = tokio::fs::metadata(path).await?;
@@ -39,7 +41,10 @@ pub async fn check_volume_data_integrity(
     verify_needle_integrity(&volume.data_filename(), version, key, offset, size).await
 }
 
-pub async fn read_index_entry_at_offset(index_file_path: &str, offset: u64) -> Result<Vec<u8>, VolumeError> {
+pub async fn read_index_entry_at_offset(
+    index_file_path: &str,
+    offset: u64,
+) -> Result<Vec<u8>, VolumeError> {
     let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
     file::read_exact_at(index_file_path, &mut buf, offset).await?;
     Ok(buf)
@@ -53,7 +58,9 @@ async fn verify_needle_integrity(
     size: Size,
 ) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
-    needle.read_data(data_file_path, offset, size, version).await?;
+    needle
+        .read_data(data_file_path, offset, size, version)
+        .await?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
@@ -107,14 +114,12 @@ mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(needle).unwrap();
+            volume.write_needle(needle).await.unwrap();
         }
 
-        let index_file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(volume.index_filename())
-            .unwrap();
-
-        assert!(check_volume_data_integrity(&mut volume, &index_file).await.is_ok());
+        let index_filename = volume.index_filename();
+        assert!(check_volume_data_integrity(&mut volume, &index_filename)
+            .await
+            .is_ok());
     }
 }

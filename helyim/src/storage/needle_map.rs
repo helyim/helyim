@@ -1,26 +1,25 @@
-use std::{
-    fs::File,
-    io::{BufReader, Read, Write},
-    result::Result,
-};
+use std::result::Result;
 
 use bytes::{Buf, BufMut};
-use tokio::io::AsyncReadExt;
 use futures::future::BoxFuture;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error};
 
-use crate::storage::{
-    needle::NeedleValue,
-    needle_value_map::{MemoryNeedleValueMap, NeedleValueMap},
-    types::{Offset, Size},
-    NeedleError, NeedleId, VolumeError, VolumeId,
+use crate::{
+    storage::{
+        needle::NeedleValue,
+        needle_value_map::{MemoryNeedleValueMap, NeedleValueMap},
+        types::{Offset, Size},
+        NeedleError, NeedleId, VolumeError, VolumeId,
+    },
+    util::file,
 };
-use crate::util::file;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub enum NeedleMapType {
     #[default]
     NeedleMapInMemory = 0,
+    PlaceHolder,
 }
 
 #[derive(Default)]
@@ -35,7 +34,7 @@ struct Metric {
 pub struct NeedleMapper {
     volume_id: VolumeId,
     needle_value_map: Box<dyn NeedleValueMap>,
-    index_file: Option<File>,
+    index_file: Option<String>,
     metric: Metric,
 }
 
@@ -52,7 +51,6 @@ impl Default for NeedleMapper {
 
 impl NeedleMapper {
     pub fn new(volume_id: VolumeId, kind: NeedleMapType) -> NeedleMapper {
-        #[allow(unreachable_patterns)]
         match kind {
             NeedleMapType::NeedleMapInMemory => NeedleMapper {
                 needle_value_map: Box::new(MemoryNeedleValueMap::new()),
@@ -63,25 +61,34 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_idx_file(&mut self, index_file: &str) -> Result<(), VolumeError> {
-        walk_index_file(
-            &index_file,
-            |key, offset, size| -> Result<(), NeedleError> {
-                if offset == 0 || size.is_deleted() {
-                    self.delete(key)
-                        .map_err(|err| NeedleError::BoxError(err.into()))?;
-                } else {
-                    self.set(key, NeedleValue { offset, size })
-                        .map_err(|err| NeedleError::BoxError(err.into()))?;
-                }
-                Ok(())
-            },
-        )?;
-        self.index_file = Some(index_file);
+    /// TODO: How to use walk_index_file() in a simply way
+    pub async fn load_idx_file(&mut self, path: &str) -> Result<(), VolumeError> {
+        let index_file = file::open(path).await?;
+        let len = index_file.metadata().await?.len();
+        let mut reader = tokio::io::BufReader::new(index_file);
+        let mut buf: Vec<u8> = vec![0; 16];
+
+        // if there is a not complete entry, will err
+        for _ in 0..(len + 15) / 16 {
+            reader.read_exact(&mut buf).await?;
+            let (key, offset, size) = index_entry(&buf);
+
+            if offset == 0 || size.is_deleted() {
+                self.delete(key)
+                    .await
+                    .map_err(|err| NeedleError::BoxError(err.into()))?;
+            } else {
+                self.set(key, NeedleValue { offset, size })
+                    .await
+                    .map_err(|err| NeedleError::BoxError(err.into()))?;
+            }
+        }
+
+        self.index_file = Some(path.to_string());
         Ok(())
     }
 
-    pub fn set(
+    pub async fn set(
         &mut self,
         key: NeedleId,
         index: NeedleValue,
@@ -99,18 +106,18 @@ impl NeedleMapper {
             self.metric.deleted_bytes += n.size.0 as u64;
         }
 
-        self.append_to_index_file(key, index)?;
+        self.append_to_index_file(key, index).await?;
 
         Ok(old)
     }
 
-    pub fn delete(&mut self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
+    pub async fn delete(&mut self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
         let deleted = self.needle_value_map.delete(key);
 
         if let Some(index) = deleted {
             self.metric.deleted_count += 1;
             self.metric.deleted_bytes += index.size.0 as u64;
-            self.append_to_index_file(key, index)?;
+            self.append_to_index_file(key, index).await?;
             debug!("needle map delete key: {} {}", key, index);
         }
 
@@ -141,26 +148,27 @@ impl NeedleMapper {
         self.metric.file_bytes
     }
 
-    pub fn index_file_size(&self) -> Result<u64, VolumeError> {
+    pub async fn index_file_size(&self) -> Result<u64, VolumeError> {
         let size = match self.index_file.as_ref() {
-            Some(file) => file.metadata()?.len(),
+            Some(path) => tokio::fs::metadata(path).await?.len(),
             None => 0,
         };
         Ok(size)
     }
 
-    pub fn append_to_index_file(
+    pub async fn append_to_index_file(
         &mut self,
         key: NeedleId,
         value: NeedleValue,
     ) -> Result<(), VolumeError> {
-        if let Some(file) = self.index_file.as_mut() {
+        if let Some(path) = self.index_file.as_ref() {
             let mut buf = vec![];
             buf.put_u64(key);
             buf.put_u32(value.offset);
             buf.put_i32(value.size.0);
 
-            if let Err(err) = file.write_all(&buf) {
+            let mut file = file::append(path).await?;
+            if let Err(err) = file.write_all(&buf).await {
                 error!(
                     "failed to write index file, volume {}, error: {err}",
                     self.volume_id
@@ -181,28 +189,9 @@ pub fn index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
     (key, offset, size)
 }
 
-// walks through index file, call fn(key, offset, size), stop with error returned by fn
-pub fn walk_index_file<T>(f: &File, mut walk: T) -> Result<(), VolumeError>
+pub async fn walk_index_file<T>(path: &str, walk: T) -> Result<(), VolumeError>
 where
-    T: FnMut(NeedleId, Offset, Size) -> Result<(), NeedleError>,
-{
-    let mut reader = BufReader::new(f.try_clone()?);
-    let mut buf: Vec<u8> = vec![0; 16];
-
-    // if there is a not complete entry, will err
-    for _ in 0..(f.metadata()?.len() + 15) / 16 {
-        reader.read_exact(&mut buf)?;
-
-        let (key, offset, size) = index_entry(&buf);
-        walk(key, offset, size)?;
-    }
-
-    Ok(())
-}
-
-pub async fn walk_index_file1<T>(path: &str, mut walk: T) -> Result<(), VolumeError>
-    where
-        T: FnMut(NeedleId, Offset, Size) -> BoxFuture<'static, Result<(), NeedleError>>,
+    T: Fn(NeedleId, Offset, Size) -> BoxFuture<'static, Result<(), NeedleError>>,
 {
     let index_file = file::open(path).await?;
     let len = index_file.metadata().await?.len();
