@@ -1,8 +1,8 @@
 use std::{
     fmt::Display,
     fs::{self, metadata, File},
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
+    io::{ErrorKind, Seek, SeekFrom},
+    os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     result::Result as StdResult,
     sync::Arc,
@@ -256,7 +256,7 @@ impl Volume {
             offset = file.seek(SeekFrom::Start(offset))?;
         }
 
-        if let Err(err) = needle.append(file, version) {
+        if let Err(err) = needle.append(file, offset, version) {
             error!(
                 "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
                 needle.id
@@ -296,7 +296,13 @@ impl Volume {
 
         let version = self.version();
         let file = self.file_mut()?;
-        needle.append(file, version)?;
+
+        let mut offset = file.seek(SeekFrom::End(0))?;
+        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+            offset = file.seek(SeekFrom::Start(offset))?;
+        }
+        needle.append(file, offset, version)?;
         Ok(nv.size)
     }
 
@@ -469,15 +475,13 @@ impl Volume {
 
 impl Volume {
     fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
-        let mut file = self.file()?;
-        let meta = file.metadata()?;
-
-        if meta.len() != 0 {
+        let bytes = self.super_block.as_bytes();
+        let file = self.file_mut()?;
+        if file.metadata()?.len() != 0 {
             return Ok(());
         }
 
-        let bytes = self.super_block.as_bytes();
-        file.write_all(&bytes)?;
+        file.write_all_at(&bytes, 0)?;
         debug!("write super block success");
         Ok(())
     }
@@ -486,8 +490,7 @@ impl Volume {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
             let file = self.file_mut()?;
-            file.seek(SeekFrom::Start(0))?;
-            file.read_exact(&mut buf)?;
+            file.read_exact_at(&mut buf, 0)?;
         }
         self.super_block = SuperBlock::parse(buf)?;
 

@@ -1,6 +1,7 @@
 use std::{
     fs::File,
-    io::{BufReader, Read, Write},
+    io::{BufReader, Read, Seek, SeekFrom},
+    os::unix::fs::FileExt,
     result::Result,
 };
 
@@ -60,9 +61,9 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_idx_file(&mut self, index_file: File) -> Result<(), VolumeError> {
+    pub fn load_idx_file(&mut self, mut index_file: File) -> Result<(), VolumeError> {
         walk_index_file(
-            &index_file,
+            &mut index_file,
             |key, offset, size| -> Result<(), NeedleError> {
                 if offset == 0 || size.is_deleted() {
                     self.delete(key)
@@ -157,7 +158,8 @@ impl NeedleMapper {
             buf.put_u32(value.offset);
             buf.put_i32(value.size.0);
 
-            if let Err(err) = file.write_all(&buf) {
+            let offset = file.seek(SeekFrom::End(0))?;
+            if let Err(err) = file.write_all_at(&buf, offset) {
                 error!(
                     "failed to write index file, volume {}, error: {err}",
                     self.volume_id
@@ -179,15 +181,16 @@ pub fn index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
 }
 
 // walks through index file, call fn(key, offset, size), stop with error returned by fn
-pub fn walk_index_file<T>(f: &File, mut walk: T) -> Result<(), VolumeError>
+pub fn walk_index_file<T>(f: &mut File, mut walk: T) -> Result<(), VolumeError>
 where
     T: FnMut(NeedleId, Offset, Size) -> Result<(), NeedleError>,
 {
-    let mut reader = BufReader::new(f.try_clone()?);
+    let len = f.metadata()?.len();
+    let mut reader = BufReader::new(f);
     let mut buf: Vec<u8> = vec![0; 16];
 
     // if there is a not complete entry, will err
-    for _ in 0..(f.metadata()?.len() + 15) / 16 {
+    for _ in 0..(len + 15) / 16 {
         reader.read_exact(&mut buf)?;
 
         let (key, offset, size) = index_entry(&buf);
