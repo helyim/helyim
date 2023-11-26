@@ -10,7 +10,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
 use tokio::{
-    fs::{metadata, remove_file},
+    fs::{metadata, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::RwLock,
 };
@@ -103,7 +103,11 @@ pub struct Volume {
     pub collection: FastStr,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
-    loaded: bool,
+
+    data_file: Option<File>,
+    data_filename: String,
+    index_filename: String,
+
     readonly: bool,
     pub super_block: SuperBlock,
     last_modified: u64,
@@ -147,7 +151,9 @@ impl Volume {
             dir: dir.clone(),
             collection,
             super_block: sb,
-            loaded: false,
+            data_file: None,
+            data_filename: String::default(),
+            index_filename: String::default(),
             needle_map_type,
             needle_mapper: NeedleMapper::new(id, needle_map_type),
             readonly: false,
@@ -166,11 +172,11 @@ impl Volume {
         create_if_missing: bool,
         load_index: bool,
     ) -> StdResult<(), VolumeError> {
-        if self.loaded {
+        if self.data_file.is_some() {
             return Err(VolumeError::HasLoaded(self.id));
         }
 
-        let name = self.data_filename();
+        let name = self.data_file_name();
         debug!("loading volume: {}", name);
 
         let mut has_super_block = false;
@@ -195,12 +201,13 @@ impl Volume {
         };
 
         if meta.permissions().readonly() {
-            self.loaded = true;
+            self.data_file = Some(file::open(&name).await?);
             self.readonly = true;
         } else {
             self.last_modified = get_time(meta.modified()?)?.as_secs();
-            self.loaded = true;
+            self.data_file = Some(file::append(&name).await?);
         }
+        self.data_filename = name;
 
         if has_super_block {
             self.read_super_block().await?;
@@ -209,9 +216,10 @@ impl Volume {
         }
 
         if load_index {
-            let index_file_path = self.index_filename();
-            file::create(&index_file_path).await?;
-            if let Err(err) = check_volume_data_integrity(self, &index_file_path).await {
+            self.index_filename = self.index_file_name();
+            let mut index_file = file::create(self.index_filename()).await?;
+
+            if let Err(err) = check_volume_data_integrity(self, &mut index_file).await {
                 self.readonly = true;
                 error!(
                     "volume data integrity checking failed. volume: {}, filename: {}, {err}",
@@ -220,8 +228,8 @@ impl Volume {
                 );
             }
             self.needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
-            self.needle_mapper.load_idx_file(&index_file_path).await?;
-            info!("load index file `{index_file_path}` success");
+            self.needle_mapper.load_idx_file(index_file).await?;
+            info!("load index file `{}` success", self.index_filename);
         }
 
         Ok(())
@@ -235,7 +243,7 @@ impl Volume {
 
         let version = self.version();
 
-        let mut file = file::append(&self.data_filename()).await?;
+        let mut file = self.data_file()?;
         let mut offset = file.seek(SeekFrom::End(0)).await?;
         if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
@@ -282,7 +290,12 @@ impl Volume {
 
         let version = self.version();
 
-        let mut file = file::append(&self.data_filename()).await?;
+        let mut file = self.data_file()?;
+        let mut offset = file.seek(SeekFrom::End(0)).await?;
+        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+            file.seek(SeekFrom::Start(offset)).await?;
+        }
         needle.append(&mut file, version).await?;
         Ok(nv.size)
     }
@@ -296,7 +309,7 @@ impl Volume {
 
                 let version = self.version();
                 needle
-                    .read_data(&self.data_filename(), nv.offset, nv.size, version)
+                    .read_data(self.data_file()?, nv.offset, nv.size, version)
                     .await?;
 
                 if needle.has_ttl() && needle.has_last_modified_date() {
@@ -379,12 +392,19 @@ impl Volume {
         Ok(metadata(self.data_filename()).await?.len())
     }
 
-    pub fn data_filename(&self) -> String {
-        format!("{}.{DATA_FILE_SUFFIX}", self.filename())
+    pub fn data_file(&mut self) -> StdResult<&mut File, VolumeError> {
+        match self.data_file.as_mut() {
+            Some(file) => Ok(file),
+            None => Err(VolumeError::NotLoad(self.id)),
+        }
     }
 
-    pub fn index_filename(&self) -> String {
-        format!("{}.{IDX_FILE_SUFFIX}", self.filename())
+    pub fn data_filename(&self) -> &str {
+        &self.data_filename
+    }
+
+    pub fn index_filename(&self) -> &str {
+        &self.index_filename
     }
 
     pub fn content_size(&self) -> u64 {
@@ -441,8 +461,18 @@ impl Volume {
 }
 
 impl Volume {
+    fn data_file_name(&self) -> String {
+        format!("{}.{DATA_FILE_SUFFIX}", self.filename())
+    }
+
+    fn index_file_name(&self) -> String {
+        format!("{}.{IDX_FILE_SUFFIX}", self.filename())
+    }
+}
+
+impl Volume {
     async fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
-        let mut file = file::create(&self.data_filename()).await?;
+        let mut file = file::create(self.data_filename()).await?;
         if file.metadata().await?.len() != 0 {
             return Ok(());
         }
@@ -456,7 +486,7 @@ impl Volume {
     async fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let mut file = file::open(&self.data_filename()).await?;
+            let mut file = file::open(self.data_filename()).await?;
             file.seek(SeekFrom::Start(0)).await?;
             file.read_exact(&mut buf).await?;
         }

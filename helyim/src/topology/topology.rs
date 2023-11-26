@@ -232,7 +232,7 @@ pub async fn topology_vacuum_loop(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     info!("topology vacuum loop starting");
-    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
     loop {
         tokio::select! {
             _ = interval.tick() => {

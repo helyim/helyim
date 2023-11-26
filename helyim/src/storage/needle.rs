@@ -2,23 +2,21 @@
 
 use std::{
     fmt::{Display, Formatter},
+    io::SeekFrom,
     result::Result as StdResult,
 };
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::debug;
 
-use crate::{
-    storage::{
-        crc,
-        ttl::Ttl,
-        types::{Cookie, Offset, Size},
-        version::{Version, CURRENT_VERSION, VERSION2},
-        NeedleError, NeedleId,
-    },
-    util::file,
+use crate::storage::{
+    crc,
+    ttl::Ttl,
+    types::{Cookie, Offset, Size},
+    version::{Version, CURRENT_VERSION, VERSION2},
+    NeedleError, NeedleId,
 };
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
@@ -124,17 +122,19 @@ pub fn actual_offset(offset: Offset) -> u64 {
     (offset * NEEDLE_PADDING_SIZE) as u64
 }
 
-pub async fn read_needle_blob(
-    path: &str,
+pub async fn read_needle_blob<F: AsyncReadExt + AsyncSeekExt + Unpin>(
+    reader: &mut F,
     offset: Offset,
     size: Size,
 ) -> StdResult<Bytes, NeedleError> {
     let size = actual_size(size);
-    let mut buffer = vec![0; size as usize];
-
+    let mut buf = vec![0; size as usize];
     let offset = actual_offset(offset);
-    file::read_exact_at(path, &mut buffer, offset).await?;
-    Ok(Bytes::from(buffer))
+
+    reader.seek(SeekFrom::Start(offset)).await?;
+    let size = reader.read_exact(&mut buf).await?;
+
+    Ok(Bytes::from(buf))
 }
 
 impl Needle {
@@ -169,9 +169,9 @@ impl Needle {
         Ok(())
     }
 
-    pub async fn read_needle_body(
+    pub async fn read_needle_body<F: AsyncReadExt + AsyncSeekExt + Unpin>(
         &mut self,
-        data_file_path: &str,
+        reader: &mut F,
         offset: u32,
         body_len: u32,
         version: Version,
@@ -183,7 +183,9 @@ impl Needle {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
 
-                file::read_exact_at(data_file_path, &mut buf, offset as u64).await?;
+                reader.seek(SeekFrom::Start(offset as u64)).await?;
+                reader.read_exact(&mut buf).await?;
+
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
@@ -299,14 +301,14 @@ impl Needle {
         Ok(())
     }
 
-    pub async fn read_data(
+    pub async fn read_data<F: AsyncReadExt + AsyncSeekExt + Unpin>(
         &mut self,
-        path: &str,
+        reader: &mut F,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> StdResult<(), NeedleError> {
-        let bytes = read_needle_blob(path, offset, size).await?;
+        let bytes = read_needle_blob(reader, offset, size).await?;
         self.parse_needle_header(&bytes);
 
         if self.size != size {
@@ -422,8 +424,8 @@ fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     Ok((key, cookie))
 }
 
-pub async fn read_needle_header(
-    path: &str,
+pub async fn read_needle_header<F: AsyncReadExt + AsyncSeekExt + Unpin>(
+    reader: &mut F,
     version: Version,
     offset: Offset,
 ) -> StdResult<(Needle, u32), NeedleError> {
@@ -433,7 +435,9 @@ pub async fn read_needle_header(
     if version == VERSION2 {
         let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
 
-        file::read_exact_at(path, &mut buf, offset as u64).await?;
+        reader.seek(SeekFrom::Start(offset as u64)).await?;
+        reader.read_exact(&mut buf).await?;
+
         needle.parse_needle_header(&buf);
         let padding = padding_len(needle.size);
         body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;
