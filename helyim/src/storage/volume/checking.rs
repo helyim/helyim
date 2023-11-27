@@ -2,7 +2,7 @@ use std::{fs::File, os::unix::fs::FileExt, result::Result};
 
 use crate::storage::{
     index_entry,
-    needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
+    needle::NEEDLE_INDEX_SIZE,
     types::{Offset, Size},
     version::Version,
     volume::Volume,
@@ -12,7 +12,7 @@ use crate::storage::{
 pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError> {
     let meta = index_file.metadata()?;
     let size = meta.len();
-    if size % NEEDLE_PADDING_SIZE as u64 != 0 {
+    if size % NEEDLE_INDEX_SIZE as u64 != 0 {
         return Err(VolumeError::DataIntegrity(format!(
             "index file's size is {size} bytes, maybe corrupted"
         )));

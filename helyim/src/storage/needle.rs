@@ -60,14 +60,14 @@ pub struct NeedleValue {
 impl NeedleValue {
     pub fn deleted() -> Self {
         Self {
-            offset: 0,
+            offset: Offset(0),
             size: Size(-1),
         }
     }
     pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
         let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
         (&mut buf[..]).put_u64(needle_id);
-        (&mut buf[..]).put_u32(self.offset);
+        (&mut buf[..]).put_u32(self.offset.0);
         (&mut buf[..]).put_i32(self.size.0);
         buf
     }
@@ -114,24 +114,15 @@ impl Display for Needle {
     }
 }
 
-pub fn actual_size(size: Size) -> u64 {
-    (NEEDLE_HEADER_SIZE + size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding_len(size)) as u64
-}
-
-pub fn actual_offset(offset: Offset) -> u64 {
-    (offset * NEEDLE_PADDING_SIZE) as u64
-}
-
 pub fn read_needle_blob(
     file: &mut File,
     offset: Offset,
     size: Size,
 ) -> StdResult<Bytes, NeedleError> {
-    let size = actual_size(size);
+    let size = size.actual_size();
     let mut buf = vec![0; size as usize];
 
-    let offset = actual_offset(offset);
-
+    let offset = offset.actual_offset();
     file.read_exact_at(&mut buf, offset)?;
     Ok(Bytes::from(buf))
 }
@@ -171,7 +162,7 @@ impl Needle {
     pub fn read_needle_body(
         &mut self,
         data_file: &File,
-        offset: u32,
+        offset: u64,
         body_len: u32,
         version: Version,
     ) -> StdResult<(), NeedleError> {
@@ -181,7 +172,7 @@ impl Needle {
         match version {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
-                data_file.read_exact_at(&mut buf, offset as u64)?;
+                data_file.read_exact_at(&mut buf, offset)?;
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
@@ -289,9 +280,9 @@ impl Needle {
             (&mut buf[12..16]).put_u32(self.size.0 as u32);
         }
 
-        let padding = padding_len(self.size);
-
         buf.put_u32(self.checksum);
+
+        let padding = self.size.padding_len();
         buf.put_slice(&vec![0; padding as usize]);
         w.write_all_at(&buf, offset)?;
 
@@ -400,7 +391,7 @@ impl Needle {
     }
 
     pub fn disk_size(&self) -> u64 {
-        actual_size(self.size)
+        self.size.actual_size()
     }
 
     pub fn data_size(&self) -> u32 {
@@ -424,25 +415,20 @@ fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
 pub fn read_needle_header(
     file: &File,
     version: Version,
-    offset: Offset,
+    offset: u64,
 ) -> StdResult<(Needle, u32), NeedleError> {
     let mut needle = Needle::default();
     let mut body_len = 0;
 
     if version == VERSION2 {
         let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
-        file.read_exact_at(&mut buf, offset as u64)?;
+        file.read_exact_at(&mut buf, offset)?;
         needle.parse_needle_header(&buf);
-        let padding = padding_len(needle.size);
+        let padding = needle.size.padding_len();
         body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;
     }
 
     Ok((needle, body_len))
-}
-
-pub fn padding_len(needle_size: Size) -> u32 {
-    NEEDLE_PADDING_SIZE
-        - ((NEEDLE_HEADER_SIZE + needle_size.0 as u32 + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE)
 }
 
 #[cfg(test)]

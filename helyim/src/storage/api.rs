@@ -441,7 +441,6 @@ pub async fn parse_upload(extractor: &StorageExtractor) -> Result<ParseUpload> {
                     post_mtype.push('/');
                     post_mtype.push_str(content_type.subtype().as_str());
                 }
-                data.clear();
                 data.extend(field.bytes().await?);
                 break;
             }
