@@ -18,6 +18,7 @@ use crate::{
     storage::{
         needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
         needle_map::{index_entry, walk_index_file},
+        types::Offset,
         volume::{
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
@@ -173,7 +174,7 @@ impl Volume {
                     value.offset, value.size
                 );
                 (&mut index_entry_buf[0..8]).put_u64(key);
-                (&mut index_entry_buf[8..12]).put_u32(value.offset);
+                (&mut index_entry_buf[8..12]).put_u32(value.offset.0);
                 (&mut index_entry_buf[12..16]).put_i32(value.size.0);
 
                 let mut offset = new_data_file.seek(SeekFrom::End(0))?;
@@ -228,7 +229,7 @@ impl Volume {
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
         compact_nm.load_idx_file(compact_index_file)?;
 
-        let mut new_offset = SUPER_BLOCK_SIZE as u32;
+        let mut new_offset = SUPER_BLOCK_SIZE as u64;
         let now = now().as_millis() as u64;
         let version = self.version();
 
@@ -251,14 +252,14 @@ impl Volume {
                     return Ok(());
                 }
                 if let Some(nv) = self.needle_mapper.get(needle.id) {
-                    if nv.offset * NEEDLE_PADDING_SIZE == offset && nv.size > 0 {
+                    if (nv.offset.0 * NEEDLE_PADDING_SIZE) as u64 == offset && nv.size > 0 {
                         let nv = NeedleValue {
-                            offset: new_offset / NEEDLE_PADDING_SIZE,
+                            offset: Offset(new_offset as u32 / NEEDLE_PADDING_SIZE),
                             size: needle.size,
                         };
                         compact_nm.set(needle.id, nv)?;
-                        needle.append(&mut dst, offset as u64, version)?;
-                        new_offset += needle.disk_size() as u32;
+                        needle.append(&mut dst, offset, version)?;
+                        new_offset += needle.disk_size();
                     }
                 }
                 Ok(())
@@ -297,7 +298,7 @@ impl Volume {
 
         self.super_block.compact_revision += 1;
         compact_data_file.write_all_at(&self.super_block.as_bytes(), 0)?;
-        let mut new_offset = SUPER_BLOCK_SIZE as u32;
+        let mut new_offset = SUPER_BLOCK_SIZE as u64;
 
         walk_index_file(
             &mut old_idx_file,
@@ -330,14 +331,14 @@ impl Volume {
 
                 if nv.offset == offset && nv.size > 0 {
                     let nv = NeedleValue {
-                        offset: new_offset / NEEDLE_PADDING_SIZE,
+                        offset: Offset(new_offset as u32 / NEEDLE_PADDING_SIZE),
                         size: needle.size,
                     };
                     compact_nm
                         .set(needle.id, nv)
                         .map_err(|err| NeedleError::BoxError(err.into()))?;
-                    needle.append(&mut compact_data_file, new_offset as u64, version)?;
-                    new_offset += needle.disk_size() as u32;
+                    needle.append(&mut compact_data_file, new_offset, version)?;
+                    new_offset += needle.disk_size();
                 }
 
                 Ok(())

@@ -3,7 +3,9 @@ use std::{
     fmt::{Display, Formatter},
 };
 
-use crate::storage::needle::TOMBSTONE_FILE_SIZE;
+use crate::storage::needle::{
+    NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE, TOMBSTONE_FILE_SIZE,
+};
 
 macro_rules! def_needle_type {
     ($type_name:ident, $typ:ty) => {
@@ -32,13 +34,29 @@ macro_rules! def_needle_type {
 
 pub type VolumeId = u32;
 pub type NeedleId = u64;
-pub type Offset = u32;
+
+def_needle_type!(Offset, u32);
+
+impl Offset {
+    pub fn actual_offset(&self) -> u64 {
+        (self.0 * NEEDLE_PADDING_SIZE) as u64
+    }
+}
 
 def_needle_type!(Size, i32);
 
 impl Size {
     pub fn is_deleted(&self) -> bool {
         self.0 < 0 || self.0 == TOMBSTONE_FILE_SIZE
+    }
+
+    pub fn padding_len(&self) -> u32 {
+        NEEDLE_PADDING_SIZE
+            - ((NEEDLE_HEADER_SIZE + self.0 as u32 + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE)
+    }
+
+    pub fn actual_size(&self) -> u64 {
+        (NEEDLE_HEADER_SIZE + self.0 as u32 + NEEDLE_CHECKSUM_SIZE + self.padding_len()) as u64
     }
 }
 

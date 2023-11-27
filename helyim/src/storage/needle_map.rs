@@ -155,7 +155,7 @@ impl NeedleMapper {
         if let Some(file) = self.index_file.as_mut() {
             let mut buf = vec![];
             buf.put_u64(key);
-            buf.put_u32(value.offset);
+            buf.put_u32(value.offset.0);
             buf.put_i32(value.size.0);
 
             let offset = file.seek(SeekFrom::End(0))?;
@@ -173,7 +173,7 @@ impl NeedleMapper {
 
 pub fn index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
     let key = buf.get_u64();
-    let offset = buf.get_u32();
+    let offset = Offset(buf.get_u32());
     let size = Size(buf.get_i32());
 
     debug!("index entry: key: {key}, offset: {offset}, size: {size}");

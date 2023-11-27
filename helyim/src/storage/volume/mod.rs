@@ -39,6 +39,8 @@ pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
 
+use crate::storage::types::Offset;
+
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
 pub const DATA_FILE_SUFFIX: &str = "dat";
@@ -267,7 +269,7 @@ impl Volume {
 
         offset /= NEEDLE_PADDING_SIZE as u64;
         let nv = NeedleValue {
-            offset: offset as u32,
+            offset: Offset(offset as u32),
             size: needle.size,
         };
         self.needle_mapper.set(needle.id, nv)?;
@@ -288,7 +290,7 @@ impl Volume {
             Some(nv) => nv,
             None => return Ok(Size(0)),
         };
-        nv.offset = 0;
+        nv.offset = Offset(0);
 
         self.needle_mapper.set(needle.id, nv)?;
         needle.set_is_delete();
@@ -526,13 +528,13 @@ pub fn scan_volume_file<VSB, VN>(
 ) -> StdResult<(), VolumeError>
 where
     VSB: FnMut(&mut SuperBlock) -> StdResult<(), VolumeError>,
-    VN: FnMut(&mut Needle, u32) -> StdResult<(), VolumeError>,
+    VN: FnMut(&mut Needle, u64) -> StdResult<(), VolumeError>,
 {
     let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
     visit_super_block(&mut volume.super_block)?;
 
     let version = volume.version();
-    let mut offset = SUPER_BLOCK_SIZE as u32;
+    let mut offset = SUPER_BLOCK_SIZE as u64;
 
     let (mut needle, mut rest) = read_needle_header(volume.file()?, version, offset)?;
 
@@ -540,7 +542,7 @@ where
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
                 volume.file_mut()?,
-                offset + NEEDLE_HEADER_SIZE,
+                offset + NEEDLE_HEADER_SIZE as u64,
                 rest,
                 version,
             ) {
@@ -549,7 +551,7 @@ where
         }
 
         visit_needle(&mut needle, offset)?;
-        offset += NEEDLE_HEADER_SIZE + rest;
+        offset += (NEEDLE_HEADER_SIZE + rest) as u64;
 
         match read_needle_header(volume.file()?, version, offset) {
             Ok((n, body_len)) => {
