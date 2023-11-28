@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufReader, Read},
     os::unix::fs::FileExt,
     result::Result,
 };
@@ -148,17 +148,17 @@ impl NeedleMapper {
     }
 
     pub fn append_to_index_file(
-        &mut self,
+        &self,
         key: NeedleId,
         value: NeedleValue,
     ) -> Result<(), VolumeError> {
-        if let Some(file) = self.index_file.as_mut() {
+        if let Some(file) = self.index_file.as_ref() {
             let mut buf = vec![];
             buf.put_u64(key);
             buf.put_u32(value.offset.0);
             buf.put_i32(value.size.0);
 
-            let offset = file.seek(SeekFrom::End(0))?;
+            let offset = file.metadata()?.len();
             if let Err(err) = file.write_all_at(&buf, offset) {
                 error!(
                     "failed to write index file, volume {}, error: {err}",

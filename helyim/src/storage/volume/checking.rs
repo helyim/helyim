@@ -20,10 +20,7 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError
     Ok(size)
 }
 
-pub fn check_volume_data_integrity(
-    volume: &mut Volume,
-    index_file: &File,
-) -> Result<(), VolumeError> {
+pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result<(), VolumeError> {
     let index_size = verify_index_file_integrity(index_file)?;
     if index_size == 0 {
         return Ok(());
@@ -35,7 +32,7 @@ pub fn check_volume_data_integrity(
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.file_mut()?, version, key, offset, size)
+    verify_needle_integrity(volume.data_file()?, version, key, offset, size)
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {
@@ -45,7 +42,7 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
 }
 
 fn verify_needle_integrity(
-    data_file: &mut File,
+    data_file: &File,
     version: Version,
     key: NeedleId,
     offset: Offset,
@@ -113,6 +110,6 @@ mod tests {
             .open(volume.index_filename())
             .unwrap();
 
-        assert!(check_volume_data_integrity(&mut volume, &index_file).is_ok());
+        assert!(check_volume_data_integrity(&volume, &index_file).is_ok());
     }
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::RwLock;
 
@@ -17,7 +17,7 @@ pub trait NeedleValueMap: Send + Sync {
 
 #[derive(Default)]
 pub struct MemoryNeedleValueMap {
-    map: Arc<RwLock<BTreeMap<NeedleId, NeedleValue>>>,
+    map: Arc<RwLock<HashMap<NeedleId, NeedleValue>>>,
 }
 
 impl MemoryNeedleValueMap {
