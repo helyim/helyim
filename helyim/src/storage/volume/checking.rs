@@ -1,8 +1,8 @@
 use std::{fs::File, os::unix::fs::FileExt, result::Result};
 
 use crate::storage::{
-    index_entry,
     needle::NEEDLE_INDEX_SIZE,
+    read_index_entry,
     types::{Offset, Size},
     version::Version,
     volume::Volume,
@@ -27,7 +27,7 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
     }
     let last_index_entry =
         read_index_entry_at_offset(index_file, index_size - NEEDLE_INDEX_SIZE as u64)?;
-    let (key, offset, size) = index_entry(&last_index_entry);
+    let (key, offset, size) = read_index_entry(&last_index_entry);
     if offset == 0 || size.is_deleted() {
         return Ok(());
     }

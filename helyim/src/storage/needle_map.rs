@@ -171,7 +171,7 @@ impl NeedleMapper {
     }
 }
 
-pub fn index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
+pub fn read_index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
     let key = buf.get_u64();
     let offset = Offset(buf.get_u32());
     let size = Size(buf.get_i32());
@@ -193,7 +193,7 @@ where
     for _ in 0..(len + 15) / 16 {
         reader.read_exact(&mut buf)?;
 
-        let (key, offset, size) = index_entry(&buf);
+        let (key, offset, size) = read_index_entry(&buf);
         walk(key, offset, size)?;
     }
 

@@ -50,8 +50,9 @@ pub const NEEDLE_SIZE_OFFSET: usize = 12;
 /// Needle index
 #[derive(Copy, Clone)]
 pub struct NeedleValue {
-    // pub key: u64,
-    /// needle offset in the store
+    /// needle offset
+    ///
+    /// in data file, the real offset is `offset * NEEDLE_PADDING_SIZE`
     pub offset: Offset,
     /// needle data size
     pub size: Size,

@@ -17,8 +17,7 @@ use tracing::{debug, error, info};
 use crate::{
     storage::{
         needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
-        needle_map::{index_entry, walk_index_file},
-        types::Offset,
+        needle_map::{read_index_entry, walk_index_file},
         volume::{
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
@@ -134,7 +133,7 @@ impl Volume {
             loop {
                 if idx_offset >= self.last_compact_index_offset as i64 {
                     let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
-                    let (key, offset, size) = index_entry(&idx_entry);
+                    let (key, offset, size) = read_index_entry(&idx_entry);
                     incremented_has_updated_index_entry
                         .entry(key)
                         .or_insert(NeedleValue { offset, size });
@@ -253,7 +252,7 @@ impl Volume {
                 if let Some(nv) = self.needle_mapper.get(needle.id) {
                     if (nv.offset.0 * NEEDLE_PADDING_SIZE) as u64 == offset && nv.size > 0 {
                         let nv = NeedleValue {
-                            offset: Offset(new_offset as u32 / NEEDLE_PADDING_SIZE),
+                            offset: new_offset.into(),
                             size: needle.size,
                         };
                         compact_nm.set(needle.id, nv)?;
@@ -330,7 +329,7 @@ impl Volume {
 
                 if nv.offset == offset && nv.size > 0 {
                     let nv = NeedleValue {
-                        offset: Offset(new_offset as u32 / NEEDLE_PADDING_SIZE),
+                        offset: new_offset.into(),
                         size: needle.size,
                     };
                     compact_nm

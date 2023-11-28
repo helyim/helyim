@@ -264,9 +264,8 @@ impl Volume {
             return Err(err.into());
         }
 
-        offset /= NEEDLE_PADDING_SIZE as u64;
         let nv = NeedleValue {
-            offset: Offset(offset as u32),
+            offset: offset.into(),
             size: needle.size,
         };
         self.needle_mapper.set(needle.id, nv)?;
