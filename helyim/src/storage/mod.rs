@@ -7,8 +7,8 @@ mod disk_location;
 mod errors;
 pub use errors::{NeedleError, VolumeError};
 
-mod file_id;
-pub use file_id::FileId;
+mod file;
+pub use file::FileId;
 
 mod needle;
 pub use needle::{Needle, NeedleValue};

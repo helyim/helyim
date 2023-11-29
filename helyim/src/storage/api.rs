@@ -71,7 +71,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in ctx.store.read().await.locations().iter() {
         for (_, volume) in location.read().await.get_volumes().iter() {
-            infos.push(volume.read().await.get_volume_info());
+            infos.push(volume.read().await.get_volume_info().await);
         }
     }
 
@@ -189,7 +189,7 @@ async fn replicate_delete(
     );
     let size = ctx
         .store
-        .write()
+        .read()
         .await
         .delete_volume_needle(vid, needle)
         .await?;
@@ -272,7 +272,7 @@ async fn replicate_write(
     );
     needle = ctx
         .store
-        .write()
+        .read()
         .await
         .write_volume_needle(vid, needle)
         .await?;

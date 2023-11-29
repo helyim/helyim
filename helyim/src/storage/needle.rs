@@ -2,7 +2,6 @@
 
 use std::{
     fmt::{Display, Formatter},
-    fs::File,
     os::unix::fs::FileExt,
     result::Result as StdResult,
 };
@@ -13,6 +12,7 @@ use tracing::debug;
 
 use crate::storage::{
     crc,
+    file::FileRef,
     ttl::Ttl,
     types::{Cookie, Offset, Size},
     version::{Version, CURRENT_VERSION, VERSION2},
@@ -115,12 +115,16 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> StdResult<Bytes, NeedleError> {
+pub async fn read_needle_blob(
+    file: &FileRef,
+    offset: Offset,
+    size: Size,
+) -> StdResult<Bytes, NeedleError> {
     let size = size.actual_size();
     let mut buf = vec![0; size as usize];
 
     let offset = offset.actual_offset();
-    file.read_exact_at(&mut buf, offset)?;
+    file.read().await.read_exact_at(&mut buf, offset)?;
     Ok(Bytes::from(buf))
 }
 
@@ -156,9 +160,9 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_needle_body(
+    pub async fn read_needle_body(
         &mut self,
-        data_file: &File,
+        data_file: &FileRef,
         offset: u64,
         body_len: u32,
         version: Version,
@@ -169,7 +173,7 @@ impl Needle {
         match version {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
-                data_file.read_exact_at(&mut buf, offset)?;
+                data_file.read().await.read_exact_at(&mut buf, offset)?;
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
@@ -223,9 +227,9 @@ impl Needle {
         }
     }
 
-    pub fn append<W: FileExt>(
+    pub async fn append(
         &mut self,
-        w: &W,
+        file: &FileRef,
         offset: u64,
         version: Version,
     ) -> StdResult<(), NeedleError> {
@@ -281,19 +285,19 @@ impl Needle {
 
         let padding = self.size.padding_len();
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all_at(&buf, offset)?;
+        file.write().await.write_all_at(&buf, offset)?;
 
         Ok(())
     }
 
-    pub fn read_data(
+    pub async fn read_data(
         &mut self,
-        file: &File,
+        file: &FileRef,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> StdResult<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
+        let bytes = read_needle_blob(file, offset, size).await?;
         self.parse_needle_header(&bytes);
 
         if self.size != size {
@@ -409,8 +413,8 @@ fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     Ok((key, cookie))
 }
 
-pub fn read_needle_header(
-    file: &File,
+pub async fn read_needle_header(
+    file: &FileRef,
     version: Version,
     offset: u64,
 ) -> StdResult<(Needle, u32), NeedleError> {
@@ -419,7 +423,7 @@ pub fn read_needle_header(
 
     if version == VERSION2 {
         let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
-        file.read_exact_at(&mut buf, offset)?;
+        file.read().await.read_exact_at(&mut buf, offset)?;
         needle.parse_needle_header(&buf);
         let padding = needle.size.padding_len();
         body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;

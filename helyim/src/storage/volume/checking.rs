@@ -1,6 +1,7 @@
 use std::{fs::File, os::unix::fs::FileExt, result::Result};
 
 use crate::storage::{
+    file::FileRef,
     needle::NEEDLE_INDEX_SIZE,
     read_index_entry,
     types::{Offset, Size},
@@ -20,7 +21,10 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError
     Ok(size)
 }
 
-pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result<(), VolumeError> {
+pub async fn check_volume_data_integrity(
+    volume: &Volume,
+    index_file: &File,
+) -> Result<(), VolumeError> {
     let index_size = verify_index_file_integrity(index_file)?;
     if index_size == 0 {
         return Ok(());
@@ -32,7 +36,7 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.data_file()?, version, key, offset, size)
+    verify_needle_integrity(volume.data_file()?, version, key, offset, size).await
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {
@@ -41,15 +45,15 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
     Ok(buf)
 }
 
-fn verify_needle_integrity(
-    data_file: &File,
+async fn verify_needle_integrity(
+    data_file: &FileRef,
     version: Version,
     key: NeedleId,
     offset: Offset,
     size: Size,
 ) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
-    needle.read_data(data_file, offset, size, version)?;
+    needle.read_data(data_file, offset, size, version).await?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
@@ -72,14 +76,14 @@ mod tests {
         FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
-    #[test]
-    pub fn test_check_volume_data_integrity() {
+    #[tokio::test]
+    pub async fn test_check_volume_data_integrity() {
         let dir = Builder::new()
             .prefix("check_volume_data_integrity")
             .tempdir_in(".")
             .unwrap();
         let dir = FastStr::new(dir.path().to_str().unwrap());
-        let mut volume = Volume::new(
+        let volume = Volume::new(
             dir,
             FastStr::empty(),
             1,
@@ -88,6 +92,7 @@ mod tests {
             Ttl::default(),
             0,
         )
+        .await
         .unwrap();
 
         for i in 0..1000 {
@@ -102,7 +107,7 @@ mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(needle).unwrap();
+            volume.write_needle(needle).await.unwrap();
         }
 
         let index_file = std::fs::OpenOptions::new()
@@ -110,6 +115,8 @@ mod tests {
             .open(volume.index_filename())
             .unwrap();
 
-        assert!(check_volume_data_integrity(&volume, &index_file).is_ok());
+        assert!(check_volume_data_integrity(&volume, &index_file)
+            .await
+            .is_ok());
     }
 }
