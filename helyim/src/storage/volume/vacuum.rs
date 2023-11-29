@@ -39,20 +39,7 @@ impl Volume {
         self.deleted_bytes().await as f64 / content_size as f64
     }
 
-    // pub async fn compact(&mut self) -> StdResult<(), VolumeError> {
-    //     let filename = self.filename();
-    //     self.last_compact_index_offset = self.needle_mapper.read().await.index_file_size()?;
-    //     self.last_compact_revision = self.super_block.compact_revision;
-    //     self.readonly = true;
-    //     self.copy_data_and_generate_index_file(
-    //         format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
-    //         format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
-    //     ).await?;
-    //     info!("compact {filename} success");
-    //     Ok(())
-    // }
-
-    pub async fn compact2(&mut self) -> StdResult<(), VolumeError> {
+    pub async fn compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.last_compact_index_offset = self.needle_mapper.read().await.index_file_size()?;
         self.last_compact_revision = self.super_block.compact_revision;
@@ -223,66 +210,6 @@ impl Volume {
 
         Ok(())
     }
-
-    // pub async fn copy_data_and_generate_index_file(
-    //     &mut self,
-    //     compact_data_filename: String,
-    //     compact_index_filename: String,
-    // ) -> StdResult<(), VolumeError> {
-    //     let compact_data_file = fs::OpenOptions::new()
-    //         .write(true)
-    //         .create(true)
-    //         .truncate(true)
-    //         .mode(0o644)
-    //         .open(compact_data_filename)?;
-    //     let compact_index_file = fs::OpenOptions::new()
-    //         .write(true)
-    //         .create(true)
-    //         .truncate(true)
-    //         .mode(0o644)
-    //         .open(compact_index_filename)?;
-    //
-    //     let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-    //     compact_nm.load_idx_file(compact_index_file)?;
-    //
-    //     let mut new_offset = SUPER_BLOCK_SIZE as u64;
-    //     let now = now().as_millis() as u64;
-    //     let version = self.version();
-    //
-    //     let dst = compact_data_file.try_clone()?;
-    //     scan_volume_file(
-    //         self.dir.clone(),
-    //         self.collection.clone(),
-    //         self.id,
-    //         self.needle_map_type,
-    //         true,
-    //         |super_block: &mut SuperBlock| -> StdResult<(), VolumeError> {
-    //             super_block.compact_revision += 1;
-    //             compact_data_file.write_all_at(&super_block.as_bytes(), 0)?;
-    //             Ok(())
-    //         },
-    //         |needle, offset| -> StdResult<(), VolumeError> {
-    //             if needle.has_ttl()
-    //                 && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
-    //             {
-    //                 return Ok(());
-    //             }
-    //             if let Some(nv) = self.needle_mapper.read().await.get(needle.id) {
-    //                 if (nv.offset.0 * NEEDLE_PADDING_SIZE) as u64 == offset && nv.size > 0 {
-    //                     let nv = NeedleValue {
-    //                         offset: new_offset.into(),
-    //                         size: needle.size,
-    //                     };
-    //                     compact_nm.set(needle.id, nv)?;
-    //                     needle.append(&dst, offset, version)?;
-    //                     new_offset += needle.disk_size();
-    //                 }
-    //             }
-    //             Ok(())
-    //         },
-    //     ).await?;
-    //     Ok(())
-    // }
 
     pub async fn copy_data_based_on_index_file(
         &mut self,
