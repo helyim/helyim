@@ -407,13 +407,6 @@ impl Volume {
         }
     }
 
-    pub fn data_file_mut(&mut self) -> StdResult<&mut FileRef, VolumeError> {
-        match self.data_file.as_mut() {
-            Some(data_file) => Ok(data_file),
-            None => Err(VolumeError::NotLoad(self.id)),
-        }
-    }
-
     pub fn data_filename(&self) -> String {
         format!("{}.{DATA_FILE_SUFFIX}", self.filename())
     }
