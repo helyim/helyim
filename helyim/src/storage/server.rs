@@ -1,7 +1,7 @@
 use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
 use async_stream::stream;
-use axum::{response::Html, routing::get, Router};
+use axum::{routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
@@ -26,7 +26,6 @@ use tracing::{debug, error, info};
 
 use crate::{
     errors::{Error, Result},
-    images::FAVICON_ICO,
     operation::Looker,
     rt_spawn,
     storage::{
@@ -34,8 +33,8 @@ use crate::{
         needle_map::NeedleMapType,
         store::StoreRef,
     },
-    util::exit,
-    PHRASE, STOP_INTERVAL,
+    util::{default_handler, exit, favicon_handler},
+    STOP_INTERVAL,
 };
 
 pub struct StorageServer {
@@ -182,14 +181,6 @@ impl StorageServer {
         let mut shutdown_rx = self.shutdown.new_receiver();
 
         self.handles.push(rt_spawn(async move {
-            async fn default_handler() -> Html<&'static str> {
-                Html(PHRASE)
-            }
-
-            pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
-                FAVICON_ICO.bytes()
-            }
-
             let app = Router::new()
                 .route("/", get(default_handler))
                 .route("/status", get(status_handler))
