@@ -7,7 +7,6 @@ use axum::{
     extract::{Query, State},
     headers,
     http::{header::ACCEPT_RANGES, HeaderMap, Response},
-    response::{Html, IntoResponse},
     Json, TypedHeader,
 };
 use axum_macros::FromRequest;
@@ -42,7 +41,6 @@ use tracing::{error, info};
 use crate::{
     anyhow,
     errors::Result,
-    images::FAVICON_ICO,
     operation::{Looker, Upload},
     storage::{
         crc,
@@ -54,7 +52,6 @@ use crate::{
     },
     util,
     util::time::now,
-    PHRASE,
 };
 
 #[derive(Clone)]
@@ -83,55 +80,15 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     Ok(Json(stat))
 }
 
-pub async fn fallback_handler(
-    State(ctx): State<StorageContext>,
-    extractor: StorageExtractor,
-) -> Result<FallbackResponse> {
-    match extractor.method {
-        Method::GET => match extractor.uri.path() {
-            "/" => Ok(FallbackResponse::Default(Html(PHRASE))),
-            "/favicon.ico" => Ok(FallbackResponse::Favicon),
-            _ => get_or_head_handler(State(ctx), extractor).await,
-        },
-        Method::HEAD => get_or_head_handler(State(ctx), extractor).await,
-        Method::POST => post_handler(State(ctx), extractor).await,
-        Method::DELETE => delete_handler(State(ctx), extractor).await,
-        _ => Ok(FallbackResponse::Default(Html(PHRASE))),
-    }
-}
-
-pub enum FallbackResponse {
-    Favicon,
-    Default(Html<&'static str>),
-    GetOrHead(Response<Body>),
-    Post(Json<Upload>),
-    Delete(Json<Value>),
-}
-
-impl IntoResponse for FallbackResponse {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            FallbackResponse::GetOrHead(get) => get.into_response(),
-            FallbackResponse::Post(post) => post.into_response(),
-            FallbackResponse::Delete(delete) => delete.into_response(),
-            FallbackResponse::Default(default) => default.into_response(),
-            FallbackResponse::Favicon => FAVICON_ICO.bytes().into_response(),
-        }
-    }
-}
-
 #[derive(Debug, FromRequest)]
-pub struct StorageExtractor {
+pub struct DeleteExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
     uri: axum::http::Uri,
-    method: Method,
-    headers: HeaderMap,
     #[from_request(via(TypedHeader))]
     host: headers::Host,
     #[from_request(via(Query))]
     query: StorageQuery,
-    body: Bytes,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,8 +103,8 @@ pub struct StorageQuery {
 
 pub async fn delete_handler(
     State(mut ctx): State<StorageContext>,
-    extractor: StorageExtractor,
-) -> Result<FallbackResponse> {
+    extractor: DeleteExtractor,
+) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
@@ -172,7 +129,7 @@ pub async fn delete_handler(
     let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
     let size = json!({ "size": size.0 });
 
-    Ok(FallbackResponse::Delete(Json(size)))
+    Ok(Json(size))
 }
 
 async fn replicate_delete(
@@ -232,10 +189,22 @@ async fn replicate_delete(
     Ok(size)
 }
 
+#[derive(Debug, FromRequest)]
+pub struct PostExtractor {
+    // only the last field can implement `FromRequest`
+    // other fields must only implement `FromRequestParts`
+    uri: axum::http::Uri,
+    method: Method,
+    headers: HeaderMap,
+    #[from_request(via(Query))]
+    query: StorageQuery,
+    body: Bytes,
+}
+
 pub async fn post_handler(
     State(mut ctx): State<StorageContext>,
-    extractor: StorageExtractor,
-) -> Result<FallbackResponse> {
+    extractor: PostExtractor,
+) -> Result<Json<Upload>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
@@ -255,7 +224,7 @@ pub async fn post_handler(
     }
 
     // TODO: add etag support
-    Ok(FallbackResponse::Post(Json(upload)))
+    Ok(Json(upload))
 }
 
 async fn replicate_write(
@@ -319,7 +288,7 @@ async fn replicate_write(
     Ok(needle)
 }
 
-async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle> {
+async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
     let mut parse_upload = parse_upload(extractor).await?;
 
     let mut needle = Needle {
@@ -367,7 +336,7 @@ async fn new_needle_from_request(extractor: &StorageExtractor) -> Result<Needle>
     Ok(needle)
 }
 
-pub fn get_boundary(extractor: &StorageExtractor) -> Result<String> {
+pub fn get_boundary(extractor: &PostExtractor) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
 
     if extractor.method != Method::POST {
@@ -410,7 +379,7 @@ impl Display for ParseUpload {
     }
 }
 
-pub async fn parse_upload(extractor: &StorageExtractor) -> Result<ParseUpload> {
+pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     let mut filename = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
@@ -486,10 +455,16 @@ pub async fn parse_upload(extractor: &StorageExtractor) -> Result<ParseUpload> {
     Ok(resp)
 }
 
+#[derive(Debug, FromRequest)]
+pub struct GetOrHeadExtractor {
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+}
+
 pub async fn get_or_head_handler(
     State(ctx): State<StorageContext>,
-    extractor: StorageExtractor,
-) -> Result<FallbackResponse> {
+    extractor: GetOrHeadExtractor,
+) -> Result<Response<Body>> {
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
     let mut needle = Needle::default();
     needle.parse_path(fid)?;
@@ -502,7 +477,7 @@ pub async fn get_or_head_handler(
         if !ctx.read_redirect {
             info!("volume is not belongs to this server, volume: {}", vid);
             *response.status_mut() = StatusCode::NOT_FOUND;
-            return Ok(FallbackResponse::GetOrHead(response));
+            return Ok(response);
         }
     }
 
@@ -531,7 +506,7 @@ pub async fn get_or_head_handler(
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if since <= modified {
                 *response.status_mut() = StatusCode::NOT_MODIFIED;
-                return Ok(FallbackResponse::GetOrHead(response));
+                return Ok(response);
             }
         }
     }
@@ -540,7 +515,7 @@ pub async fn get_or_head_handler(
     if let Some(not_match) = extractor.headers.get(IF_NONE_MATCH) {
         if not_match == etag.as_str() {
             *response.status_mut() = StatusCode::NOT_MODIFIED;
-            return Ok(FallbackResponse::GetOrHead(response));
+            return Ok(response);
         }
     }
 
@@ -589,7 +564,7 @@ pub async fn get_or_head_handler(
     *response.body_mut() = Body::from(needle.data);
     *response.status_mut() = StatusCode::ACCEPTED;
 
-    Ok(FallbackResponse::GetOrHead(response))
+    Ok(response)
 }
 
 fn parse_url_path(input: &str) -> StdResult<(VolumeId, &str, Option<&str>, &str), VolumeError> {

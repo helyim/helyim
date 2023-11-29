@@ -1,7 +1,7 @@
 use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
 use async_stream::stream;
-use axum::{routing::get, Router};
+use axum::{response::Html, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
@@ -26,15 +26,16 @@ use tracing::{debug, error, info};
 
 use crate::{
     errors::{Error, Result},
+    images::FAVICON_ICO,
     operation::Looker,
     rt_spawn,
     storage::{
-        api::{fallback_handler, status_handler, StorageContext},
+        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
         store::StoreRef,
     },
     util::exit,
-    STOP_INTERVAL,
+    PHRASE, STOP_INTERVAL,
 };
 
 pub struct StorageServer {
@@ -181,9 +182,29 @@ impl StorageServer {
         let mut shutdown_rx = self.shutdown.new_receiver();
 
         self.handles.push(rt_spawn(async move {
+            async fn default_handler() -> Html<&'static str> {
+                Html(PHRASE)
+            }
+
+            pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
+                FAVICON_ICO.bytes()
+            }
+
             let app = Router::new()
+                .route("/", get(default_handler).fallback(default_handler))
                 .route("/status", get(status_handler))
-                .fallback(fallback_handler)
+                .route(
+                    "/favicon.ico",
+                    get(favicon_handler).fallback(favicon_handler),
+                )
+                .fallback_service(
+                    get(get_or_head_handler)
+                        .head(get_or_head_handler)
+                        .post(post_handler)
+                        .delete(delete_handler)
+                        .fallback(default_handler)
+                        .with_state(ctx.clone()),
+                )
                 .with_state(ctx);
 
             match hyper::Server::try_bind(&addr) {
