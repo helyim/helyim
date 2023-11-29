@@ -324,7 +324,7 @@ impl Volume {
                 }
                 Ok(needle)
             }
-            None => Err(NeedleError::NotFound(self.id, needle.id).into()),
+            None => Err(NeedleError::NotFound(needle.id).into()),
         }
     }
 
@@ -397,13 +397,6 @@ impl Volume {
 
     pub fn data_file(&self) -> StdResult<&File, VolumeError> {
         match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
-            None => Err(VolumeError::NotLoad(self.id)),
-        }
-    }
-
-    pub fn data_file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
-        match self.data_file.as_mut() {
             Some(data_file) => Ok(data_file),
             None => Err(VolumeError::NotLoad(self.id)),
         }
@@ -486,7 +479,7 @@ impl Volume {
     fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let file = self.data_file_mut()?;
+            let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
         self.super_block = SuperBlock::parse(buf)?;
@@ -536,7 +529,7 @@ where
     loop {
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
-                volume.data_file_mut()?,
+                volume.data_file()?,
                 offset + NEEDLE_HEADER_SIZE as u64,
                 rest,
                 version,

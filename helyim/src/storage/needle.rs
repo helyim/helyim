@@ -297,7 +297,7 @@ impl Needle {
         self.parse_needle_header(&bytes);
 
         if self.size != size {
-            return Err(NeedleError::NotFound(0, self.id));
+            return Err(NeedleError::NotFound(self.id));
         }
 
         if version == VERSION2 {

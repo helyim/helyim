@@ -314,7 +314,7 @@ impl Volume {
                 let version = self.version();
 
                 needle.read_data(
-                    self.data_file_mut()
+                    self.data_file()
                         .map_err(|err| NeedleError::BoxError(err.into()))?,
                     offset,
                     size,
