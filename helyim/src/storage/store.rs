@@ -111,7 +111,7 @@ impl Store {
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: Needle) -> Result<Needle> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.write().await.read_needle(needle)?),
+            Some(volume) => Ok(volume.read().await.read_needle(needle)?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -239,7 +239,7 @@ impl Store {
                     let super_block = volume.read().await.super_block;
                     let msg = VolumeInformationMessage {
                         id: *vid,
-                        size: volume.read().await.size().unwrap_or(0),
+                        size: volume.read().await.data_file_size().unwrap_or(0),
                         collection: volume.read().await.collection.to_string(),
                         file_count: volume.read().await.file_count(),
                         delete_count: volume.read().await.deleted_count(),

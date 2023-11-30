@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     fs::{self, metadata, File},
-    io::{ErrorKind, Seek, SeekFrom},
+    io::ErrorKind,
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     result::Result as StdResult,
@@ -171,8 +171,6 @@ impl Volume {
         }
 
         let name = self.data_filename();
-        debug!("loading volume: {}", name);
-
         let mut has_super_block = false;
         let meta = match metadata(&name) {
             Ok(m) => {
@@ -182,7 +180,7 @@ impl Volume {
                 m
             }
             Err(err) => {
-                debug!("get metadata err: {err}");
+                debug!("get data file metadata error:{err}, name: {name}");
                 if err.kind() == ErrorKind::NotFound && create_if_missing {
                     // TODO support preallocate
                     fs::OpenOptions::new()
@@ -250,12 +248,11 @@ impl Volume {
         }
 
         let version = self.version();
-        let file = self.file_mut()?;
+        let file = self.data_file()?;
 
-        let mut offset = file.seek(SeekFrom::End(0))?;
+        let mut offset = file.metadata()?.len();
         if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            offset = file.seek(SeekFrom::Start(offset))?;
         }
 
         if let Err(err) = needle.append(file, offset, version) {
@@ -267,9 +264,8 @@ impl Volume {
             return Err(err.into());
         }
 
-        offset /= NEEDLE_PADDING_SIZE as u64;
         let nv = NeedleValue {
-            offset: Offset(offset as u32),
+            offset: offset.into(),
             size: needle.size,
         };
         self.needle_mapper.set(needle.id, nv)?;
@@ -297,18 +293,17 @@ impl Volume {
         needle.data.clear();
 
         let version = self.version();
-        let file = self.file_mut()?;
+        let file = self.data_file()?;
 
-        let mut offset = file.seek(SeekFrom::End(0))?;
+        let mut offset = file.metadata()?.len();
         if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            offset = file.seek(SeekFrom::Start(offset))?;
         }
         needle.append(file, offset, version)?;
         Ok(nv.size)
     }
 
-    pub fn read_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
+    pub fn read_needle(&self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 || nv.size.is_deleted() {
@@ -316,7 +311,7 @@ impl Volume {
                 }
 
                 let version = self.version();
-                let data_file = self.file_mut()?;
+                let data_file = self.data_file()?;
                 needle.read_data(data_file, nv.offset, nv.size, version)?;
 
                 if needle.has_ttl() && needle.has_last_modified_date() {
@@ -329,7 +324,7 @@ impl Volume {
                 }
                 Ok(needle)
             }
-            None => Err(NeedleError::NotFound(self.id, needle.id).into()),
+            None => Err(NeedleError::NotFound(needle.id).into()),
         }
     }
 
@@ -395,20 +390,13 @@ impl Volume {
         self.needle_mapper.file_count()
     }
 
-    pub fn size(&self) -> StdResult<u64, VolumeError> {
-        let file = self.file()?;
+    pub fn data_file_size(&self) -> StdResult<u64, VolumeError> {
+        let file = self.data_file()?;
         Ok(file.metadata()?.len())
     }
 
-    pub fn file(&self) -> StdResult<&File, VolumeError> {
+    pub fn data_file(&self) -> StdResult<&File, VolumeError> {
         match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
-            None => Err(VolumeError::NotLoad(self.id)),
-        }
-    }
-
-    pub fn file_mut(&mut self) -> StdResult<&mut File, VolumeError> {
-        match self.data_file.as_mut() {
             Some(data_file) => Ok(data_file),
             None => Err(VolumeError::NotLoad(self.id)),
         }
@@ -476,9 +464,9 @@ impl Volume {
 }
 
 impl Volume {
-    fn write_super_block(&mut self) -> StdResult<(), VolumeError> {
+    fn write_super_block(&self) -> StdResult<(), VolumeError> {
         let bytes = self.super_block.as_bytes();
-        let file = self.file_mut()?;
+        let file = self.data_file()?;
         if file.metadata()?.len() != 0 {
             return Ok(());
         }
@@ -491,7 +479,7 @@ impl Volume {
     fn read_super_block(&mut self) -> StdResult<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
-            let file = self.file_mut()?;
+            let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
         self.super_block = SuperBlock::parse(buf)?;
@@ -536,12 +524,12 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
 
-    let (mut needle, mut rest) = read_needle_header(volume.file()?, version, offset)?;
+    let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
 
     loop {
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
-                volume.file_mut()?,
+                volume.data_file()?,
                 offset + NEEDLE_HEADER_SIZE as u64,
                 rest,
                 version,
@@ -553,7 +541,7 @@ where
         visit_needle(&mut needle, offset)?;
         offset += (NEEDLE_HEADER_SIZE + rest) as u64;
 
-        match read_needle_header(volume.file()?, version, offset) {
+        match read_needle_header(volume.data_file()?, version, offset) {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;

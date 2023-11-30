@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use helyim_benchmark::FlameGraphProfiler;
 use reqwest::blocking::{multipart::Form, Client};
 use serde_json::Value;
 
@@ -55,9 +56,9 @@ fn read_files_benchmark(c: &mut Criterion) {
     let url = extract_str_value(&params, "url");
     let size = upload_file(&client, url, fid).unwrap();
 
-    let mut group = c.benchmark_group("read-files-bench");
+    let mut group = c.benchmark_group("read_bench");
     group.throughput(Throughput::Bytes(size as u64));
-    group.bench_function("read files", |b| {
+    group.bench_function("read_files", |b| {
         b.iter(|| {
             read_file(&client, url, fid).unwrap();
         })
@@ -74,9 +75,9 @@ fn upload_files_benchmark(c: &mut Criterion) {
     )
     .unwrap();
 
-    let mut group = c.benchmark_group("upload-files-bench");
+    let mut group = c.benchmark_group("write_bench");
     group.throughput(Throughput::Bytes(size as u64));
-    group.bench_function("upload files", |b| {
+    group.bench_function("upload_files", |b| {
         b.iter(|| {
             let params = get_file_id(&client).unwrap();
             upload_file(
@@ -89,15 +90,17 @@ fn upload_files_benchmark(c: &mut Criterion) {
     });
 }
 
-fn short_warmup() -> Criterion {
+fn criterion_warmup() -> Criterion {
     Criterion::default()
-        .warm_up_time(Duration::from_secs(1))
+        .with_profiler(FlameGraphProfiler::new(1))
+        .warm_up_time(Duration::from_secs(5))
+        .profile_time(Some(Duration::from_secs(30)))
         .sample_size(10_0000)
 }
 
 criterion_group! {
     name = benches;
-    config = short_warmup();
+    config = criterion_warmup();
     targets = read_files_benchmark, upload_files_benchmark
 }
 

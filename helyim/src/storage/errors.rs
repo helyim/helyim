@@ -22,8 +22,8 @@ pub enum NeedleError {
     Deleted(VolumeId, u64),
     #[error("Volume {0}: needle {1} has expired.")]
     Expired(VolumeId, u64),
-    #[error("Volume {0}: needle {1} not found.")]
-    NotFound(VolumeId, u64),
+    #[error("Needle {0} not found.")]
+    NotFound(u64),
     #[error("Cookie not match, needle cookie is {0} but got {1}")]
     CookieNotMatch(u32, u32),
     #[error("Unsupported version: {0}")]

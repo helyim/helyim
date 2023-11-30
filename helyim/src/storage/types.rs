@@ -43,6 +43,12 @@ impl Offset {
     }
 }
 
+impl From<u64> for Offset {
+    fn from(value: u64) -> Self {
+        Self(value as u32 / NEEDLE_PADDING_SIZE)
+    }
+}
+
 def_needle_type!(Size, i32);
 
 impl Size {

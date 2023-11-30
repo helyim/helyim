@@ -29,11 +29,11 @@ use crate::{
     operation::Looker,
     rt_spawn,
     storage::{
-        api::{fallback_handler, status_handler, StorageContext},
+        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageContext},
         needle_map::NeedleMapType,
         store::StoreRef,
     },
-    util::exit,
+    util::{default_handler, exit, favicon_handler},
     STOP_INTERVAL,
 };
 
@@ -182,8 +182,17 @@ impl StorageServer {
 
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
+                .route("/", get(default_handler))
                 .route("/status", get(status_handler))
-                .fallback(fallback_handler)
+                .route("/favicon.ico", get(favicon_handler))
+                .fallback_service(
+                    get(get_or_head_handler)
+                        .head(get_or_head_handler)
+                        .post(post_handler)
+                        .delete(delete_handler)
+                        .fallback(default_handler)
+                        .with_state(ctx.clone()),
+                )
                 .with_state(ctx);
 
             match hyper::Server::try_bind(&addr) {

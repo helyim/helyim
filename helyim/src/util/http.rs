@@ -4,7 +4,7 @@ use axum::{
     body::HttpBody,
     extract::{FromRequest, Query},
     http::{header::CONTENT_TYPE, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     BoxError, Form, Json, RequestExt,
 };
 use bytes::Bytes;
@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use tracing::error;
 use url::Url;
 
-use crate::errors::Result;
+use crate::{errors::Result, images::FAVICON_ICO, PHRASE};
 
 pub async fn delete(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
     request(url, params, Method::DELETE, None).await
@@ -118,4 +118,12 @@ where
 
         Err(StatusCode::BAD_REQUEST.into_response())
     }
+}
+
+pub async fn default_handler() -> Html<&'static str> {
+    Html(PHRASE)
+}
+
+pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
+    FAVICON_ICO.bytes()
 }

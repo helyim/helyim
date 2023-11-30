@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "helyim",
+    "benchmark",
     "proto",
 ]
 
@@ -38,6 +39,7 @@ moka = "0.12"
 multer = "2"
 nom = "7"
 parking_lot = "0.12"
+pprof = "0.13"
 prost = "0.12"
 rand = "0.8"
 reqwest = "0.11"

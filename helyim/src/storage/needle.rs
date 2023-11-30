@@ -50,8 +50,9 @@ pub const NEEDLE_SIZE_OFFSET: usize = 12;
 /// Needle index
 #[derive(Copy, Clone)]
 pub struct NeedleValue {
-    // pub key: u64,
-    /// needle offset in the store
+    /// needle offset
+    ///
+    /// in data file, the real offset is `offset * NEEDLE_PADDING_SIZE`
     pub offset: Offset,
     /// needle data size
     pub size: Size,
@@ -114,11 +115,7 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(
-    file: &mut File,
-    offset: Offset,
-    size: Size,
-) -> StdResult<Bytes, NeedleError> {
+pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> StdResult<Bytes, NeedleError> {
     let size = size.actual_size();
     let mut buf = vec![0; size as usize];
 
@@ -228,7 +225,7 @@ impl Needle {
 
     pub fn append<W: FileExt>(
         &mut self,
-        w: &mut W,
+        w: &W,
         offset: u64,
         version: Version,
     ) -> StdResult<(), NeedleError> {
@@ -291,7 +288,7 @@ impl Needle {
 
     pub fn read_data(
         &mut self,
-        file: &mut File,
+        file: &File,
         offset: Offset,
         size: Size,
         version: Version,
@@ -300,7 +297,7 @@ impl Needle {
         self.parse_needle_header(&bytes);
 
         if self.size != size {
-            return Err(NeedleError::NotFound(0, self.id));
+            return Err(NeedleError::NotFound(self.id));
         }
 
         if version == VERSION2 {
