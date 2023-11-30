@@ -1,76 +1,85 @@
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 use axum::{
-    body::HttpBody,
-    extract::{FromRequest, Query},
-    http::{header::CONTENT_TYPE, StatusCode},
+    extract::{FromRequest, Query, Request},
+    http::{header::CONTENT_TYPE, Method, StatusCode},
     response::{Html, IntoResponse},
-    BoxError, Form, Json, RequestExt,
+    Form, Json, RequestExt,
 };
 use bytes::Bytes;
-use hyper::{body::to_bytes, header::CONTENT_LENGTH, Body, Client, Method, Request};
+use once_cell::sync::Lazy;
+use reqwest::{Body, Client, ClientBuilder};
 use serde::de::DeserializeOwned;
 use tracing::error;
 use url::Url;
 
 use crate::{errors::Result, images::FAVICON_ICO, PHRASE};
 
-pub async fn delete(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
-    request(url, params, Method::DELETE, None).await
+pub static HTTP_CLIENT: Lazy<HttpClient> = Lazy::new(HttpClient::new);
+
+pub struct HttpClient {
+    client: OnceLock<Client>,
 }
 
-pub async fn get(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
-    request(url, params, Method::GET, None).await
-}
+impl HttpClient {
+    pub fn new() -> Self {
+        Self {
+            client: OnceLock::new(),
+        }
+    }
 
-pub async fn post(url: &str, params: &[(&str, &str)], body: &[u8]) -> Result<Bytes> {
-    request(url, params, Method::POST, Some(body)).await
-}
+    fn try_init(&self) -> Result<&Client> {
+        Ok(self.client.get_or_init(|| {
+            ClientBuilder::new()
+                .pool_idle_timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap()
+        }))
+    }
 
-async fn request(
-    url: &str,
-    params: &[(&str, &str)],
-    method: Method,
-    body: Option<&[u8]>,
-) -> Result<Bytes> {
-    let url = Url::parse_with_params(url, params)?;
+    pub async fn get<U: AsRef<str>>(&self, url: U, params: &[(&str, &str)]) -> Result<Bytes> {
+        let url = Url::parse_with_params(url.as_ref(), params)?;
+        Ok(self.try_init()?.get(url).send().await?.bytes().await?)
+    }
 
-    let request = Request::builder().method(method).uri(url.as_str());
-    let request = match body {
-        Some(body) => request
-            .header(CONTENT_LENGTH, body.len())
-            .body(Body::from(body.to_vec()))?,
-        None => request.header(CONTENT_LENGTH, 0).body(Body::empty())?,
-    };
+    pub async fn post<U: AsRef<str>, B: Into<Body>>(
+        &self,
+        url: U,
+        params: &[(&str, &str)],
+        body: B,
+    ) -> Result<Bytes> {
+        let url = Url::parse_with_params(url.as_ref(), params)?;
+        Ok(self
+            .try_init()?
+            .post(url)
+            .body(body)
+            .send()
+            .await?
+            .bytes()
+            .await?)
+    }
 
-    let client = Client::builder()
-        .pool_idle_timeout(Duration::from_secs(30))
-        .build_http();
-    let mut response = client.request(request).await?;
-
-    let body = to_bytes(response.body_mut()).await?;
-    Ok(body)
+    pub async fn delete<U: AsRef<str>>(&self, url: U, params: &[(&str, &str)]) -> Result<Bytes> {
+        let url = Url::parse_with_params(url.as_ref(), params)?;
+        Ok(self.try_init()?.delete(url).send().await?.bytes().await?)
+    }
 }
 
 pub struct FormOrJson<T>(pub T);
 
 #[async_trait::async_trait]
-impl<T, S, B> FromRequest<S, B> for FormOrJson<T>
+impl<T, S> FromRequest<S> for FormOrJson<T>
 where
-    Json<T>: FromRequest<S, B>,
-    Form<T>: FromRequest<S, B>,
+    Json<T>: FromRequest<S>,
+    Form<T>: FromRequest<S>,
     T: DeserializeOwned + 'static,
-    B: HttpBody + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
     S: Send + Sync,
 {
     type Rejection = axum::response::Response;
 
-    async fn from_request(
-        req: Request<B>,
-        _state: &S,
-    ) -> std::result::Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, _state: &S) -> std::result::Result<Self, Self::Rejection> {
         match req.method() {
             &Method::GET | &Method::HEAD => {
                 let Query(payload) = req
@@ -124,6 +133,6 @@ pub async fn default_handler() -> Html<&'static str> {
     Html(PHRASE)
 }
 
-pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
+pub async fn favicon_handler<'a>() -> &'a [u8] {
     FAVICON_ICO.bytes()
 }

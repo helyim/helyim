@@ -1,14 +1,18 @@
 use std::net::AddrParseError;
 
 use axum::{
+    http::{
+        header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
+        StatusCode,
+    },
     response::{IntoResponse, Response},
     Json,
 };
 use futures::channel::mpsc::TrySendError;
-use hyper::{
-    header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
-    StatusCode,
-};
+// use hyper::{
+//     header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
+//     StatusCode,
+// };
 use serde_json::json;
 use tracing::error;
 
@@ -60,10 +64,10 @@ pub enum Error {
     UrlParse(#[from] url::ParseError),
     #[error("Timeout")]
     Timeout,
-    #[error("Hyper error: {0}")]
-    Hyper(#[from] hyper::Error),
     #[error("Axum http error: {0}")]
     AxumHttp(#[from] axum::http::Error),
+    #[error("Reqwest http error: {0}")]
+    ReqwestHttp(#[from] reqwest::Error),
 
     // tonic
     #[error("Tonic status: {0}")]

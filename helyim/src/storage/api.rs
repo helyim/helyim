@@ -4,25 +4,24 @@ use std::{
 };
 
 use axum::{
+    body::Body,
     extract::{Query, State},
-    headers,
-    http::{header::ACCEPT_RANGES, HeaderMap, Response},
-    Json, TypedHeader,
+    http::{
+        header::{
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+            IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+        },
+        HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri,
+    },
+    Json,
 };
+use axum_extra::{headers::Host, TypedHeader};
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
 use futures::stream::once;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::helyim_client::HelyimClient;
-use hyper::{
-    header::{
-        HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-        IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
-    },
-    http::HeaderName,
-    Body, Method, StatusCode,
-};
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -49,8 +48,7 @@ use crate::{
         store::StoreRef,
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
-    util,
-    util::time::now,
+    util::{time::now, HTTP_CLIENT},
 };
 
 #[derive(Clone)]
@@ -83,9 +81,9 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
 pub struct DeleteExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
-    uri: axum::http::Uri,
+    uri: Uri,
     #[from_request(via(TypedHeader))]
-    host: headers::Host,
+    host: Host,
     #[from_request(via(Query))]
     query: StorageQuery,
 }
@@ -176,7 +174,7 @@ async fn replicate_delete(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", &location.url, path);
-                    if let Err(err) = util::delete(&url, &params).await.and_then(|body| {
+                    if let Err(err) = HTTP_CLIENT.delete(&url, &params).await.and_then(|body| {
                         let value: Value = serde_json::from_slice(&body)?;
                         if let Some(err) = value["error"].as_str() {
                             if !err.is_empty() {
@@ -198,7 +196,7 @@ async fn replicate_delete(
 pub struct PostExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
-    uri: axum::http::Uri,
+    uri: Uri,
     method: Method,
     headers: HeaderMap,
     #[from_request(via(Query))]
@@ -269,7 +267,7 @@ async fn replicate_write(
     }
 
     let params = vec![("type", "replicate")];
-    let data = bincode::serialize(&needle)?;
+    let data = Bytes::from(bincode::serialize(&needle)?);
 
     let mut volume_locations = ctx.looker.lookup(vec![vid], &mut ctx.client).await?;
 
@@ -281,15 +279,19 @@ async fn replicate_write(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", location.url, path);
-                    if let Err(err) = util::post(&url, &params, &data).await.and_then(|body| {
-                        let value: Value = serde_json::from_slice(&body)?;
-                        if let Some(err) = value["error"].as_str() {
-                            if !err.is_empty() {
-                                return Err(anyhow!("write {} err: {err}", location.url));
+                    if let Err(err) = HTTP_CLIENT
+                        .post(&url, &params, data.clone())
+                        .await
+                        .and_then(|body| {
+                            let value: Value = serde_json::from_slice(&body)?;
+                            if let Some(err) = value["error"].as_str() {
+                                if !err.is_empty() {
+                                    return Err(anyhow!("write {} err: {err}", location.url));
+                                }
                             }
-                        }
-                        Ok(())
-                    }) {
+                            Ok(())
+                        })
+                    {
                         error!("replicate write failed, error: {err}");
                     }
                 });
@@ -469,7 +471,7 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {
-    uri: axum::http::Uri,
+    uri: Uri,
     headers: HeaderMap,
 }
 

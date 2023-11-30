@@ -19,9 +19,10 @@ use helyim_proto::{
     VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
     VolumeEcShardsUnmountResponse,
 };
-use tokio::task::JoinHandle;
+use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -177,8 +178,8 @@ impl StorageServer {
         );
 
         // http server
-        let addr = format!("{}:{}", self.host, self.port).parse()?;
-        let mut shutdown_rx = self.shutdown.new_receiver();
+        let addr = format!("{}:{}", self.host, self.port);
+        let http_listener = TcpListener::bind(&addr).await?;
 
         self.handles.push(rt_spawn(async move {
             let app = Router::new()
@@ -193,24 +194,16 @@ impl StorageServer {
                         .fallback(default_handler)
                         .with_state(ctx.clone()),
                 )
+                .layer((
+                    TraceLayer::new_for_http(),
+                    TimeoutLayer::new(Duration::from_secs(10)),
+                ))
                 .with_state(ctx);
 
-            match hyper::Server::try_bind(&addr) {
-                Ok(builder) => {
-                    let server = builder.serve(app.into_make_service());
-                    let graceful = server.with_graceful_shutdown(async {
-                        let _ = shutdown_rx.recv().await;
-                    });
-                    info!("volume api server starting up. binding addr: {addr}");
-                    match graceful.await {
-                        Ok(()) => info!("storage server shutting down gracefully."),
-                        Err(e) => error!("storage server stop failed, {}", e),
-                    }
-                }
-                Err(err) => {
-                    error!("starting volume api server failed, error: {err}");
-                    exit();
-                }
+            info!("volume api server is starting up. binding addr: {addr}");
+            if let Err(err) = axum::serve(http_listener, app.into_make_service()).await {
+                error!("starting volume api server failed, error: {err}");
+                exit();
             }
         }));
 

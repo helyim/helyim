@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc};
+use std::{
+    net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc,
+    time::Duration,
+};
 
 use axum::{routing::get, Router};
 use faststr::FastStr;
@@ -9,9 +12,10 @@ use helyim_proto::{
     HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
     LookupVolumeRequest, LookupVolumeResponse,
 };
-use tokio::task::JoinHandle;
+use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -130,8 +134,7 @@ impl DirectoryServer {
 
         // http server
         let addr = format!("{}:{}", self.host, self.port);
-        let addr = addr.parse()?;
-        let mut shutdown_rx = self.shutdown.new_receiver();
+        let http_listener = TcpListener::bind(&addr).await?;
 
         let handle = rt_spawn(async move {
             let app = Router::new()
@@ -146,24 +149,16 @@ impl DirectoryServer {
                     get(cluster_status_handler).post(cluster_status_handler),
                 )
                 .fallback(default_handler)
+                .layer((
+                    TraceLayer::new_for_http(),
+                    TimeoutLayer::new(Duration::from_secs(10)),
+                ))
                 .with_state(ctx);
 
-            match hyper::Server::try_bind(&addr) {
-                Ok(builder) => {
-                    let server = builder.serve(app.into_make_service());
-                    let graceful = server.with_graceful_shutdown(async {
-                        let _ = shutdown_rx.recv().await;
-                    });
-                    info!("directory api server starting up. binding addr: {addr}");
-                    match graceful.await {
-                        Ok(()) => info!("directory server shutting down gracefully."),
-                        Err(e) => error!("directory server stop failed, {}", e),
-                    }
-                }
-                Err(err) => {
-                    error!("starting directory api server failed, error: {err}");
-                    exit();
-                }
+            info!("directory api server is starting up. binding addr: {addr}");
+            if let Err(err) = axum::serve(http_listener, app.into_make_service()).await {
+                error!("starting directory api server failed, error: {err}");
+                exit();
             }
         });
         self.handles.push(handle);

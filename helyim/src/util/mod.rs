@@ -6,7 +6,7 @@ pub mod macros;
 
 mod http;
 
-pub use http::{default_handler, delete, favicon_handler, post, FormOrJson};
+pub use http::{default_handler, favicon_handler, FormOrJson, HTTP_CLIENT};
 
 mod sys;
 pub use sys::exit;
