@@ -1,14 +1,14 @@
 use std::net::AddrParseError;
 
 use axum::{
+    http::{
+        header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
+        StatusCode,
+    },
     response::{IntoResponse, Response},
     Json,
 };
 use futures::channel::mpsc::TrySendError;
-use hyper::{
-    header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
-    StatusCode,
-};
 use serde_json::json;
 use tracing::error;
 

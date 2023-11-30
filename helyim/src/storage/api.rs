@@ -5,8 +5,14 @@ use std::{
 
 use axum::{
     extract::{Query, State},
-    headers,
-    http::{header::ACCEPT_RANGES, HeaderMap, Response},
+    headers::{HeaderName, HeaderValue, Host},
+    http::{
+        header::{
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+            IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+        },
+        HeaderMap, Method, Response, StatusCode, Uri,
+    },
     Json, TypedHeader,
 };
 use axum_macros::FromRequest;
@@ -15,14 +21,7 @@ use faststr::FastStr;
 use futures::stream::once;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::helyim_client::HelyimClient;
-use hyper::{
-    header::{
-        HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-        IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
-    },
-    http::HeaderName,
-    Body, Method, StatusCode,
-};
+use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -83,9 +82,9 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
 pub struct DeleteExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
-    uri: axum::http::Uri,
+    uri: Uri,
     #[from_request(via(TypedHeader))]
-    host: headers::Host,
+    host: Host,
     #[from_request(via(Query))]
     query: StorageQuery,
 }
@@ -198,7 +197,7 @@ async fn replicate_delete(
 pub struct PostExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
-    uri: axum::http::Uri,
+    uri: Uri,
     method: Method,
     headers: HeaderMap,
     #[from_request(via(Query))]
@@ -469,7 +468,7 @@ pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {
-    uri: axum::http::Uri,
+    uri: Uri,
     headers: HeaderMap,
 }
 
