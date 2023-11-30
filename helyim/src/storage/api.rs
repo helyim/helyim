@@ -47,7 +47,6 @@ use crate::{
         needle::{Needle, PAIR_NAME_PREFIX},
         needle_map::NeedleMapType,
         store::StoreRef,
-        types::Size,
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     util,
@@ -112,11 +111,10 @@ pub async fn delete_handler(
     needle.parse_path(fid)?;
 
     let cookie = needle.cookie;
-    needle = ctx
-        .store
+    ctx.store
         .read()
         .await
-        .read_volume_needle(vid, needle)
+        .read_volume_needle(vid, &mut needle)
         .await?;
     if cookie != needle.cookie {
         info!(
@@ -126,8 +124,15 @@ pub async fn delete_handler(
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
-    let size = replicate_delete(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
-    let size = json!({ "size": size.0 });
+    let size = replicate_delete(
+        &mut ctx,
+        extractor.uri.path(),
+        vid,
+        &mut needle,
+        is_replicate,
+    )
+    .await?;
+    let size = json!({ "size": size });
 
     Ok(Json(size))
 }
@@ -136,9 +141,9 @@ async fn replicate_delete(
     ctx: &mut StorageContext,
     path: &str,
     vid: VolumeId,
-    needle: Needle,
+    needle: &mut Needle,
     is_replicate: bool,
-) -> Result<Size> {
+) -> Result<u32> {
     let local_url = format!(
         "{}:{}",
         ctx.store.read().await.ip,
@@ -214,9 +219,16 @@ pub async fn post_handler(
         new_needle_from_request(&extractor).await?
     };
 
-    needle = replicate_write(&mut ctx, extractor.uri.path(), vid, needle, is_replicate).await?;
+    let size = replicate_write(
+        &mut ctx,
+        extractor.uri.path(),
+        vid,
+        &mut needle,
+        is_replicate,
+    )
+    .await?;
     let mut upload = Upload {
-        size: needle.data_size(),
+        size,
         ..Default::default()
     };
     if needle.has_name() {
@@ -231,15 +243,15 @@ async fn replicate_write(
     ctx: &mut StorageContext,
     path: &str,
     vid: VolumeId,
-    mut needle: Needle,
+    needle: &mut Needle,
     is_replicate: bool,
-) -> Result<Needle> {
+) -> Result<u32> {
     let local_url = format!(
         "{}:{}",
         ctx.store.read().await.ip,
         ctx.store.read().await.port
     );
-    needle = ctx
+    let size = ctx
         .store
         .write()
         .await
@@ -247,12 +259,12 @@ async fn replicate_write(
         .await?;
     // if the volume is replica, it will return needle directly.
     if is_replicate {
-        return Ok(needle);
+        return Ok(size);
     }
 
     if let Some(volume) = ctx.store.read().await.find_volume(vid).await? {
         if !volume.read().await.need_to_replicate() {
-            return Ok(needle);
+            return Ok(size);
         }
     }
 
@@ -285,7 +297,7 @@ async fn replicate_write(
         });
     }
 
-    Ok(needle)
+    Ok(size)
 }
 
 async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
@@ -471,7 +483,6 @@ pub async fn get_or_head_handler(
     let cookie = needle.cookie;
 
     let mut response = Response::new(Body::empty());
-
     if !ctx.store.read().await.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
@@ -481,11 +492,10 @@ pub async fn get_or_head_handler(
         }
     }
 
-    needle = ctx
-        .store
+    ctx.store
         .read()
         .await
-        .read_volume_needle(vid, needle)
+        .read_volume_needle(vid, &mut needle)
         .await?;
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());

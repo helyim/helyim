@@ -102,7 +102,7 @@ mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(needle).unwrap();
+            volume.write_needle(&mut needle).unwrap();
         }
 
         let index_file = std::fs::OpenOptions::new()
