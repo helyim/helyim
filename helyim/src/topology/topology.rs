@@ -30,8 +30,6 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 }
 
-unsafe impl Send for Topology {}
-
 impl Clone for Topology {
     fn clone(&self) -> Self {
         Self {
