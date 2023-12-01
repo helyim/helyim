@@ -476,7 +476,6 @@ pub async fn get_or_head_handler(
             Utc,
         );
         let last_modified = datetime.format(HTTP_DATE_FORMAT).to_string();
-        println!("last modified: {last_modified}");
         response.headers_mut().insert(
             LAST_MODIFIED,
             HeaderValue::from_str(last_modified.as_str())?,
