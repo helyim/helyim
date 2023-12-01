@@ -362,11 +362,7 @@ fn get_boundary(extractor: &PostExtractor) -> Result<String> {
 }
 
 async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
-    let mut filename = String::new();
-    let mut data = vec![];
-    let mut mime_type = String::new();
     let mut pair_map = HashMap::new();
-
     for (header_name, header_value) in extractor.headers.iter() {
         if header_name.as_str().starts_with(PAIR_NAME_PREFIX) {
             pair_map.insert(
@@ -382,6 +378,8 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     let mut mpart = Multipart::new(stream, boundary);
 
     // get first file with filename
+    let mut filename = String::new();
+    let mut data = vec![];
     let mut post_mtype = String::new();
     while let Ok(Some(field)) = mpart.next_field().await {
         if let Some(name) = field.file_name() {
@@ -413,7 +411,7 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
         }
 
         if !post_mtype.is_empty() && guess_mtype != post_mtype {
-            mime_type = post_mtype.clone();
+            guess_mtype = post_mtype;
         }
     }
 
@@ -427,7 +425,7 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     let resp = ParseUpload {
         filename,
         data,
-        mime_type,
+        mime_type: guess_mtype,
         pair_map,
         modified_time,
         ttl,
