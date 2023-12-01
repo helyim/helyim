@@ -30,7 +30,7 @@ pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
 pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
-pub const PAIR_NAME_PREFIX: &str = "Helyim-";
+pub const PAIR_NAME_PREFIX: &str = "helyim-";
 pub const FLAG_GZIP: u8 = 0x01;
 pub const FLAG_HAS_NAME: u8 = 0x02;
 pub const FLAG_HAS_MIME: u8 = 0x04;
@@ -125,6 +125,12 @@ pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> StdResult<By
 }
 
 impl Needle {
+    pub fn new_with_fid(fid: &str) -> StdResult<Self, NeedleError> {
+        let mut needle = Self::default();
+        needle.parse_path(fid)?;
+        Ok(needle)
+    }
+
     pub fn parse_needle_header(&mut self, mut bytes: &[u8]) {
         self.cookie = bytes.get_u32();
         self.id = bytes.get_u64();

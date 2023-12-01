@@ -15,6 +15,8 @@ use url::Url;
 
 use crate::{errors::Result, images::FAVICON_ICO, PHRASE};
 
+pub const HTTP_DATE_FORMAT: &str = "%a, %d %b %Y %H:%M:%S GMT";
+
 pub async fn delete(url: &str, params: &[(&str, &str)]) -> Result<Bytes> {
     request(url, params, Method::DELETE, None).await
 }

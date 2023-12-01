@@ -1,14 +1,14 @@
 use std::net::AddrParseError;
 
 use axum::{
+    http::{
+        header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
+        StatusCode,
+    },
     response::{IntoResponse, Response},
     Json,
 };
 use futures::channel::mpsc::TrySendError;
-use hyper::{
-    header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
-    StatusCode,
-};
 use serde_json::json;
 use tracing::error;
 
@@ -42,6 +42,8 @@ pub enum Error {
     Nom(String),
     #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
+    #[error("Chrono parse error: {0}")]
+    ChronoParse(#[from] chrono::ParseError),
 
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),

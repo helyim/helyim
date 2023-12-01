@@ -21,7 +21,6 @@ use crate::{
         },
         needle_map::{NeedleMapType, NeedleMapper},
         ttl::Ttl,
-        types::Size,
         version::{Version, CURRENT_VERSION},
         volume::checking::check_volume_data_integrity,
         NeedleError, VolumeError, VolumeId,
@@ -241,7 +240,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&mut self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
+    pub fn write_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         let volume_id = self.id;
         if self.readonly {
             return Err(VolumeError::Readonly(volume_id));
@@ -274,22 +273,25 @@ impl Volume {
             self.last_modified = needle.last_modified;
         }
 
-        Ok(needle)
+        Ok(needle.data_size())
     }
 
-    pub fn delete_needle(&mut self, mut needle: Needle) -> StdResult<Size, VolumeError> {
+    pub fn delete_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         if self.readonly {
             return Err(VolumeError::Readonly(self.id));
         }
 
         let mut nv = match self.needle_mapper.get(needle.id) {
             Some(nv) => nv,
-            None => return Ok(Size(0)),
+            None => return Ok(0),
         };
         nv.offset = Offset(0);
 
         self.needle_mapper.set(needle.id, nv)?;
+        // TODO: can be removed
         needle.set_is_delete();
+
+        let data_size = needle.data_size();
         needle.data.clear();
 
         let version = self.version();
@@ -300,10 +302,10 @@ impl Volume {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
         needle.append(file, offset, version)?;
-        Ok(nv.size)
+        Ok(data_size)
     }
 
-    pub fn read_needle(&self, mut needle: Needle) -> StdResult<Needle, VolumeError> {
+    pub fn read_needle(&self, needle: &mut Needle) -> StdResult<(), VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 || nv.size.is_deleted() {
@@ -322,7 +324,7 @@ impl Volume {
                         return Err(NeedleError::Expired(self.id, needle.id).into());
                     }
                 }
-                Ok(needle)
+                Ok(())
             }
             None => Err(NeedleError::NotFound(needle.id).into()),
         }
@@ -629,7 +631,7 @@ pub mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(needle).unwrap();
+            volume.write_needle(&mut needle).unwrap();
         }
 
         volume
