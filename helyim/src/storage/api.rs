@@ -1,6 +1,6 @@
 use std::{
-    collections::HashMap, convert::Infallible, fmt::Display, io::Read, result::Result as StdResult,
-    str::FromStr, sync::Arc,
+    collections::HashMap, convert::Infallible, io::Read, result::Result as StdResult, str::FromStr,
+    sync::Arc,
 };
 
 use axum::{
@@ -11,7 +11,7 @@ use axum::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
             IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
         },
-        HeaderMap, Method, Response, StatusCode, Uri,
+        HeaderMap, Response, StatusCode, Uri,
     },
     Json, TypedHeader,
 };
@@ -41,7 +41,7 @@ use tracing::{error, info};
 use crate::{
     anyhow,
     errors::Result,
-    operation::{Looker, Upload},
+    operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
         needle::{Needle, PAIR_NAME_PREFIX},
@@ -50,8 +50,7 @@ use crate::{
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     util,
-    util::time::now,
-    HTTP_DATE_FORMAT,
+    util::{time::now, HTTP_DATE_FORMAT},
 };
 
 #[derive(Clone)]
@@ -199,7 +198,6 @@ pub struct PostExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
     uri: Uri,
-    method: Method,
     headers: HeaderMap,
     #[from_request(via(Query))]
     query: StorageQuery,
@@ -324,7 +322,7 @@ async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
     }
 
     if parse_upload.modified_time == 0 {
-        parse_upload.modified_time = now().as_secs();
+        parse_upload.modified_time = now().as_millis() as u64;
     }
     needle.last_modified = parse_upload.modified_time;
     needle.set_has_last_modified_date();
@@ -348,12 +346,8 @@ async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
     Ok(needle)
 }
 
-pub fn get_boundary(extractor: &PostExtractor) -> Result<String> {
+fn get_boundary(extractor: &PostExtractor) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
-
-    if extractor.method != Method::POST {
-        return Err(anyhow!("parse multipart err: not post request"));
-    }
 
     return match extractor.headers.get(CONTENT_TYPE) {
         Some(content_type) => {
@@ -367,31 +361,7 @@ pub fn get_boundary(extractor: &PostExtractor) -> Result<String> {
     };
 }
 
-pub struct ParseUpload {
-    pub filename: String,
-    pub data: Vec<u8>,
-    pub mime_type: String,
-    pub pair_map: HashMap<String, String>,
-    pub modified_time: u64,
-    pub ttl: Ttl,
-    pub is_chunked_file: bool,
-}
-
-impl Display for ParseUpload {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "filename: {}, data_len: {}, mime_type: {}, ttl minutes: {}, is_chunked_file: {}",
-            self.filename,
-            self.data.len(),
-            self.mime_type,
-            self.ttl.minutes(),
-            self.is_chunked_file
-        )
-    }
-}
-
-pub async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
+async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     let mut filename = String::new();
     let mut data = vec![];
     let mut mime_type = String::new();
@@ -478,19 +448,19 @@ pub async fn get_or_head_handler(
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>> {
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
-    let mut needle = Needle::new_with_fid(fid)?;
-    let cookie = needle.cookie;
 
     let mut response = Response::new(Body::empty());
     if !ctx.store.read().await.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
-            info!("volume is not belongs to this server, volume: {}", vid);
+            info!("volume {} is not belongs to this server", vid);
             *response.status_mut() = StatusCode::NOT_FOUND;
             return Ok(response);
         }
     }
 
+    let mut needle = Needle::new_with_fid(fid)?;
+    let cookie = needle.cookie;
     ctx.store
         .read()
         .await
@@ -508,6 +478,7 @@ pub async fn get_or_head_handler(
             Utc,
         );
         let last_modified = datetime.format(HTTP_DATE_FORMAT).to_string();
+        println!("last modified: {last_modified}");
         response.headers_mut().insert(
             LAST_MODIFIED,
             HeaderValue::from_str(last_modified.as_str())?,
