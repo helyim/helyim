@@ -26,6 +26,7 @@ axum-extra.workspace = true
 axum-macros.workspace = true
 bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
+chrono = {workspace = true, features = ["unstable-locales"] }
 clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
 faststr = { workspace = true, features = ["serde"] }
@@ -50,6 +51,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
 tokio-uring = { workspace = true, optional = true }
 tonic.workspace = true
+tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true

@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc};
+use std::{
+    net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc,
+    time::Duration,
+};
 
 use axum::{routing::get, Router};
 use faststr::FastStr;
@@ -12,6 +15,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -129,8 +133,7 @@ impl DirectoryServer {
         };
 
         // http server
-        let addr = format!("{}:{}", self.host, self.port);
-        let addr = addr.parse()?;
+        let addr = format!("{}:{}", self.host, self.port).parse()?;
         let mut shutdown_rx = self.shutdown.new_receiver();
 
         let handle = rt_spawn(async move {
@@ -146,6 +149,10 @@ impl DirectoryServer {
                     get(cluster_status_handler).post(cluster_status_handler),
                 )
                 .fallback(default_handler)
+                .layer((
+                    TimeoutLayer::new(Duration::from_secs(10)),
+                    CompressionLayer::new(),
+                ))
                 .with_state(ctx);
 
             match hyper::Server::try_bind(&addr) {
@@ -156,8 +163,8 @@ impl DirectoryServer {
                     });
                     info!("directory api server starting up. binding addr: {addr}");
                     match graceful.await {
-                        Ok(()) => info!("directory server shutting down gracefully."),
-                        Err(e) => error!("directory server stop failed, {}", e),
+                        Ok(()) => info!("directory api server shutting down gracefully."),
+                        Err(e) => error!("directory api server stop failed, {}", e),
                     }
                 }
                 Err(err) => {

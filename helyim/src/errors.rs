@@ -42,6 +42,8 @@ pub enum Error {
     Nom(String),
     #[error("Multer error: {0}")]
     Multer(#[from] multer::Error),
+    #[error("Chrono parse error: {0}")]
+    ChronoParse(#[from] chrono::ParseError),
 
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),

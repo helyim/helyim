@@ -1,6 +1,6 @@
 use std::{
-    collections::HashMap, convert::Infallible, fmt::Display, io::Read, ops::Add,
-    result::Result as StdResult, str::FromStr, sync::Arc, time, time::Duration,
+    collections::HashMap, convert::Infallible, fmt::Display, io::Read, result::Result as StdResult,
+    str::FromStr, sync::Arc,
 };
 
 use axum::{
@@ -8,7 +8,7 @@ use axum::{
     headers::{HeaderName, HeaderValue, Host},
     http::{
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
             IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
         },
         HeaderMap, Method, Response, StatusCode, Uri,
@@ -17,6 +17,7 @@ use axum::{
 };
 use axum_macros::FromRequest;
 use bytes::Bytes;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use faststr::FastStr;
 use futures::stream::once;
 use ginepro::LoadBalancedChannel;
@@ -50,6 +51,7 @@ use crate::{
     },
     util,
     util::time::now,
+    HTTP_DATE_FORMAT,
 };
 
 #[derive(Clone)]
@@ -106,8 +108,7 @@ pub async fn delete_handler(
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
-    let mut needle = Needle::default();
-    needle.parse_path(fid)?;
+    let mut needle = Needle::new_with_fid(fid)?;
 
     let cookie = needle.cookie;
     ctx.store
@@ -477,8 +478,7 @@ pub async fn get_or_head_handler(
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>> {
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
-    let mut needle = Needle::default();
-    needle.parse_path(fid)?;
+    let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
 
     let mut response = Response::new(Body::empty());
@@ -500,35 +500,44 @@ pub async fn get_or_head_handler(
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
+    // TODO: ignore datetime parsing error
     if needle.last_modified != 0 {
-        let modified = time::UNIX_EPOCH.add(Duration::new(needle.last_modified, 0));
-        let modified = HeaderValue::from(
-            modified
-                .duration_since(time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+        let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
+            NaiveDateTime::from_timestamp_millis(needle.last_modified as i64)
+                .expect("invalid or out-of-range datetime"),
+            Utc,
         );
-        response
-            .headers_mut()
-            .insert(LAST_MODIFIED, modified.clone());
+        let last_modified = datetime.format(HTTP_DATE_FORMAT).to_string();
+        response.headers_mut().insert(
+            LAST_MODIFIED,
+            HeaderValue::from_str(last_modified.as_str())?,
+        );
 
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
-            if since <= modified {
-                *response.status_mut() = StatusCode::NOT_MODIFIED;
-                return Ok(response);
+            if !since.is_empty() {
+                let since = DateTime::parse_from_str(since.to_str()?, HTTP_DATE_FORMAT)?
+                    .with_timezone(&Utc);
+                if since.timestamp() <= needle.last_modified as i64 {
+                    *response.status_mut() = StatusCode::NOT_MODIFIED;
+                    return Ok(response);
+                }
             }
         }
     }
 
     let etag = needle.etag();
-    if let Some(not_match) = extractor.headers.get(IF_NONE_MATCH) {
-        if not_match == etag.as_str() {
+    if let Some(if_none_match) = extractor.headers.get(IF_NONE_MATCH) {
+        if if_none_match == etag.as_str() {
             *response.status_mut() = StatusCode::NOT_MODIFIED;
             return Ok(response);
         }
     }
+    response
+        .headers_mut()
+        .insert(ETAG, HeaderValue::from_str(etag.as_str())?);
 
     if needle.has_pairs() {
+        // only accept string type value
         let pairs: Value = serde_json::from_slice(&needle.pairs)?;
         if let Some(map) = pairs.as_object() {
             for (k, v) in map {
@@ -542,25 +551,22 @@ pub async fn get_or_head_handler(
     }
 
     if needle.is_gzipped() {
-        let all_headers = extractor.headers.get_all(ACCEPT_ENCODING);
-        let mut gzip = false;
-        for value in all_headers.iter() {
-            if value.to_str()?.contains("gzip") {
-                gzip = true;
-                break;
+        match extractor.headers.get(ACCEPT_ENCODING) {
+            Some(value) => {
+                if value.to_str()?.contains("gzip") {
+                    response
+                        .headers_mut()
+                        .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+                }
             }
-        }
-        if gzip {
-            response
-                .headers_mut()
-                .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
-        } else {
-            let mut decoded = Vec::new();
-            {
-                let mut decoder = Decoder::new(&needle.data[..])?;
-                decoder.read_to_end(&mut decoded)?;
+            None => {
+                let mut decoded = Vec::new();
+                {
+                    let mut decoder = Decoder::new(&needle.data[..])?;
+                    decoder.read_to_end(&mut decoded)?;
+                }
+                needle.data = Bytes::from(decoded);
             }
-            needle.data = Bytes::from(decoded);
         }
     }
 

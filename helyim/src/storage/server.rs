@@ -22,6 +22,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -96,8 +97,7 @@ impl StorageServer {
             shutdown,
         };
 
-        let addr = format!("{}:{}", host, port + 1);
-        let addr = addr.parse()?;
+        let addr = format!("{}:{}", host, port + 1).parse()?;
 
         rt_spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");
@@ -193,6 +193,10 @@ impl StorageServer {
                         .fallback(default_handler)
                         .with_state(ctx.clone()),
                 )
+                .layer((
+                    TimeoutLayer::new(Duration::from_secs(10)),
+                    CompressionLayer::new(),
+                ))
                 .with_state(ctx);
 
             match hyper::Server::try_bind(&addr) {
@@ -203,8 +207,8 @@ impl StorageServer {
                     });
                     info!("volume api server starting up. binding addr: {addr}");
                     match graceful.await {
-                        Ok(()) => info!("storage server shutting down gracefully."),
-                        Err(e) => error!("storage server stop failed, {}", e),
+                        Ok(()) => info!("volume api server shutting down gracefully."),
+                        Err(e) => error!("volume api server stop failed, {}", e),
                     }
                 }
                 Err(err) => {
