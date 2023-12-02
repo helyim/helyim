@@ -9,7 +9,7 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, error, instrument};
 
 use crate::storage::{
     crc,
@@ -131,6 +131,7 @@ impl Needle {
         Ok(needle)
     }
 
+    #[instrument(skip(self))]
     pub fn parse_needle_header(&mut self, mut bytes: &[u8]) {
         self.cookie = bytes.get_u32();
         self.id = bytes.get_u64();
@@ -141,8 +142,10 @@ impl Needle {
         );
     }
 
+    #[instrument(skip(self))]
     pub fn parse_path(&mut self, fid: &str) -> StdResult<(), NeedleError> {
         if fid.len() <= 8 {
+            error!("invalid fid: {fid}");
             return Err(NeedleError::InvalidFid(fid.to_string()));
         }
 
@@ -162,6 +165,7 @@ impl Needle {
         Ok(())
     }
 
+    #[instrument(skip(self, data_file))]
     pub fn read_needle_body(
         &mut self,
         data_file: &File,
@@ -179,7 +183,10 @@ impl Needle {
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
-            n => return Err(NeedleError::UnsupportedVersion(n)),
+            n => {
+                error!("unsupported version: {n}");
+                return Err(NeedleError::UnsupportedVersion(n));
+            }
         }
         Ok(())
     }
@@ -292,6 +299,7 @@ impl Needle {
         Ok(())
     }
 
+    #[instrument(skip(self, file))]
     pub fn read_data(
         &mut self,
         file: &File,
@@ -303,6 +311,7 @@ impl Needle {
         self.parse_needle_header(&bytes);
 
         if self.size != size {
+            error!("needle {} is not found", self.id);
             return Err(NeedleError::NotFound(self.id));
         }
 
@@ -317,6 +326,10 @@ impl Needle {
         let checksum = crc::checksum(&self.data);
 
         if self.checksum != checksum {
+            error!(
+                "crc error, read: {}, calculate: {}, may be data on disk corrupted",
+                self.checksum, checksum
+            );
             return Err(NeedleError::Crc(self.checksum, checksum));
         }
 
@@ -404,6 +417,7 @@ impl Needle {
 
 fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
     if hash.len() <= 8 || hash.len() > 24 {
+        error!("invalid key hash: {hash}");
         return Err(NeedleError::InvalidKeyHash(hash.to_string()));
     }
 

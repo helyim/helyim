@@ -2,6 +2,7 @@ use std::{result::Result as StdResult, sync::Arc};
 
 use axum::{extract::State, Json};
 use faststr::FastStr;
+use tracing::error;
 
 use crate::{
     errors::Result,
@@ -41,6 +42,7 @@ pub async fn assign_handler(
         .await
     {
         if ctx.topology.read().await.free_volumes().await <= 0 {
+            error!("find no free volumes");
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
@@ -68,6 +70,7 @@ pub async fn lookup_handler(
     FormOrJson(request): FormOrJson<LookupRequest>,
 ) -> StdResult<Json<Lookup>, VolumeError> {
     if request.volume_id.is_empty() {
+        error!("volume_id can't be empty");
         return Err(VolumeError::String("volume_id can't be empty".to_string()));
     }
     let mut volume_id = request.volume_id;

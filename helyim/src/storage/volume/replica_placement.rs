@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use tracing::error;
 
 use crate::storage::VolumeError;
 
@@ -44,6 +45,7 @@ impl ReplicaPlacement {
 
     pub fn new(s: &str) -> Result<ReplicaPlacement, VolumeError> {
         if s.len() != 3 {
+            error!("invalid replica placement: {}", s);
             return Err(VolumeError::ReplicaPlacement(String::from(s)));
         }
 

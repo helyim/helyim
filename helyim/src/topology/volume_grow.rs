@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use faststr::FastStr;
 use helyim_proto::AllocateVolumeRequest;
 use rand::Rng;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
@@ -191,6 +191,7 @@ async fn find_main_data_center(
     }
 
     if candidates.is_empty() {
+        error!("find main data center failed");
         return Err(VolumeError::NoFreeSpace(
             "find main data center failed".to_string(),
         ));
@@ -249,6 +250,7 @@ async fn find_main_rack(
     }
 
     if candidates.is_empty() {
+        error!("find main rack failed");
         return Err(VolumeError::NoFreeSpace(
             "find main rack failed".to_string(),
         ));
@@ -292,6 +294,7 @@ async fn find_main_node(
         candidates.push(node.clone());
     }
     if candidates.is_empty() {
+        error!("find main data node failed");
         return Err(VolumeError::NoFreeSpace(
             "find main data node failed".to_string(),
         ));

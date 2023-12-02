@@ -164,7 +164,6 @@ fn log_init(level: Level) -> helyim::errors::Result<()> {
         .with_env_filter(filter)
         .with_target(true)
         .with_level(true)
-        // ignore other crate logs
         // .with_max_level(level)
         .with_ansi(true)
         .with_line_number(true)
@@ -186,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
-    log_init(Level::TRACE)?;
+    log_init(Level::DEBUG)?;
 
     let opts = Opts::parse();
     info!("opts: {:?}", opts);

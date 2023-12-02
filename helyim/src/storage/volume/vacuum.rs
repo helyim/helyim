@@ -159,11 +159,13 @@ impl Volume {
 
             let new_compact_revision = fetch_compact_revision_from_data_file(&new_data_file)?;
             if old_compact_revision + 1 != new_compact_revision {
-                return Err(VolumeError::String(format!(
+                let error = format!(
                     "old data file {}'s compact revision is {old_compact_revision} while new data \
                      file {}'s compact revision is {new_compact_revision}",
                     old_data_filename, new_data_filename
-                )));
+                );
+                error!(error);
+                return Err(VolumeError::String(error));
             }
 
             let mut index_entry_buf = [0u8; 16];

@@ -15,7 +15,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -150,6 +150,7 @@ impl DirectoryServer {
                 )
                 .fallback(default_handler)
                 .layer((
+                    TraceLayer::new_for_http(),
                     TimeoutLayer::new(Duration::from_secs(10)),
                     CompressionLayer::new(),
                 ))
@@ -234,6 +235,7 @@ impl Helyim for DirectoryGrpcServer {
     ) -> StdResult<Response<LookupVolumeResponse>, Status> {
         let request = request.into_inner();
         if request.volumes.is_empty() {
+            error!("volumes can't be empty");
             return Err(Status::invalid_argument("volumes can't be empty"));
         }
         let collection = FastStr::from(request.collection);

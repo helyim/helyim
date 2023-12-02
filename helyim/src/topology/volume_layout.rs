@@ -3,6 +3,7 @@ use std::{collections::HashMap, result::Result as StdResult, sync::Arc};
 use rand::{self, Rng};
 use serde::Serialize;
 use tokio::sync::RwLock;
+use tracing::error;
 
 use crate::{
     errors::Result,
@@ -69,6 +70,7 @@ impl VolumeLayout {
         option: &VolumeGrowOption,
     ) -> StdResult<(VolumeId, &Vec<DataNodeRef>), VolumeError> {
         if self.writable_volumes.is_empty() {
+            error!("find no writable volumes.");
             return Err(VolumeError::NoWritableVolumes);
         }
 
@@ -77,7 +79,10 @@ impl VolumeLayout {
             let vid = self.writable_volumes[rand::thread_rng().gen_range(0..len)];
             return match self.locations.get(&vid) {
                 Some(data_nodes) => Ok((vid, data_nodes)),
-                None => Err(VolumeError::NotFound(vid)),
+                None => {
+                    error!("volume {vid} is not found");
+                    Err(VolumeError::NotFound(vid))
+                }
             };
         }
 

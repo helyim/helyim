@@ -12,7 +12,7 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 
 use crate::{
     storage::{
@@ -160,6 +160,7 @@ impl Volume {
         Ok(v)
     }
 
+    #[instrument(skip(self))]
     pub fn load(
         &mut self,
         create_if_missing: bool,
@@ -179,7 +180,6 @@ impl Volume {
                 m
             }
             Err(err) => {
-                debug!("get data file metadata error:{err}, name: {name}");
                 if err.kind() == ErrorKind::NotFound && create_if_missing {
                     // TODO support preallocate
                     fs::OpenOptions::new()
@@ -240,6 +240,7 @@ impl Volume {
         Ok(())
     }
 
+    #[instrument(skip(self, needle))]
     pub fn write_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         let volume_id = self.id;
         if self.readonly {
@@ -276,6 +277,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
+    #[instrument(skip(self, needle))]
     pub fn delete_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         if self.readonly {
             return Err(VolumeError::Readonly(self.id));
@@ -305,6 +307,7 @@ impl Volume {
         Ok(data_size)
     }
 
+    #[instrument(skip(self, needle))]
     pub fn read_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
@@ -329,9 +332,13 @@ impl Volume {
                 if now().as_secs() < (needle.last_modified + minutes as u64 * 60) {
                     return Ok(data_size);
                 }
+                error!("needle {} is expired, volume: {}", needle.id, self.id);
                 Err(NeedleError::Expired(self.id, needle.id).into())
             }
-            None => Err(NeedleError::NotFound(needle.id).into()),
+            None => {
+                error!("needle {} is not found, volume: {}", needle.id, self.id);
+                Err(NeedleError::NotFound(needle.id).into())
+            }
         }
     }
 
@@ -512,6 +519,7 @@ fn load_volume_without_index(
     Ok(volume)
 }
 
+#[instrument(skip(visit_super_block, visit_needle))]
 pub fn scan_volume_file<VSB, VN>(
     dirname: FastStr,
     collection: FastStr,

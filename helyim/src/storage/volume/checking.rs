@@ -1,5 +1,7 @@
 use std::{fs::File, os::unix::fs::FileExt, result::Result};
 
+use tracing::error;
+
 use crate::storage::{
     needle::NEEDLE_INDEX_SIZE,
     read_index_entry,
@@ -13,9 +15,9 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError
     let meta = index_file.metadata()?;
     let size = meta.len();
     if size % NEEDLE_INDEX_SIZE as u64 != 0 {
-        return Err(VolumeError::DataIntegrity(format!(
-            "index file's size is {size} bytes, maybe corrupted"
-        )));
+        let error = format!("index file's size is {size} bytes, maybe corrupted");
+        error!(error);
+        return Err(VolumeError::DataIntegrity(error));
     }
     Ok(size)
 }
@@ -51,10 +53,9 @@ fn verify_needle_integrity(
     let mut needle = Needle::default();
     needle.read_data(data_file, offset, size, version)?;
     if needle.id != key {
-        return Err(VolumeError::DataIntegrity(format!(
-            "index key {key} does not match needle's id {}",
-            needle.id
-        )));
+        let error = format!("index key {key} does not match needle's id {}", needle.id);
+        error!(error);
+        return Err(VolumeError::DataIntegrity(error));
     }
     Ok(())
 }

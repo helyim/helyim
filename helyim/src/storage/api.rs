@@ -36,7 +36,7 @@ use nom::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::{error, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     anyhow,
@@ -250,10 +250,9 @@ pub async fn post_handler(
 
     let mut needle = if is_replicate {
         let needle = bincode::deserialize::<Needle>(&extractor.body)?;
-        trace!(
+        debug!(
             "receive replicate write needle request from {}, needle {}",
-            extractor.host,
-            needle.id
+            extractor.host, needle.id
         );
         needle
     } else {
@@ -276,7 +275,7 @@ pub async fn post_handler(
         upload.name = String::from_utf8(needle.name.to_vec())?;
     }
 
-    trace!("write needle {} success, volume: {vid}", needle.id);
+    debug!("write needle {} success, volume: {vid}", needle.id);
     // TODO: add etag support
     Ok(Json(upload))
 }
