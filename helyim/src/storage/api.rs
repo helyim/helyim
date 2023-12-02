@@ -36,7 +36,7 @@ use nom::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::{error, info};
+use tracing::{error, trace, warn};
 
 use crate::{
     anyhow,
@@ -106,8 +106,13 @@ pub async fn delete_handler(
 ) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
-
     let mut needle = Needle::new_with_fid(fid)?;
+
+    trace!(
+        "delete needle {}, client host: {}",
+        needle.id,
+        extractor.host
+    );
 
     let cookie = needle.cookie;
     ctx.store
@@ -116,9 +121,9 @@ pub async fn delete_handler(
         .read_volume_needle(vid, &mut needle)
         .await?;
     if cookie != needle.cookie {
-        info!(
-            "cookie not match from {:?} recv: {}, file is {}",
-            extractor.host, cookie, needle.cookie
+        error!(
+            "cookie not match, expect {}, but got {}",
+            needle.cookie, cookie
         );
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
@@ -133,6 +138,11 @@ pub async fn delete_handler(
     .await?;
     let size = json!({ "size": size });
 
+    trace!(
+        "delete needle {} success, size: {size}, client host: {}",
+        needle.id,
+        extractor.host
+    );
     Ok(Json(size))
 }
 
@@ -175,16 +185,41 @@ async fn replicate_delete(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", &location.url, path);
+                    trace!(
+                        "replicate delete needle {}, volume: {vid}, location: {}, path: {}",
+                        needle.id,
+                        location.url,
+                        path
+                    );
                     if let Err(err) = util::delete(&url, &params).await.and_then(|body| {
                         let value: Value = serde_json::from_slice(&body)?;
                         if let Some(err) = value["error"].as_str() {
                             if !err.is_empty() {
-                                return Err(anyhow!("delete {} err: {err}", location.url));
+                                error!(
+                                    "failed to delete needle {} in location: {}, volume: {vid}, \
+                                     error: {err}",
+                                    needle.id, location.url
+                                );
+                                return Err(NeedleError::ReplicateDelete(
+                                    vid,
+                                    needle.id,
+                                    location.url.clone(),
+                                    err.to_string(),
+                                )
+                                .into());
                             }
                         }
+                        trace!(
+                            "replicate delete needle {} success, volume: {vid}, location: {}",
+                            needle.id,
+                            location.url
+                        );
                         Ok(())
                     }) {
-                        error!("replicate delete failed, error: {err}");
+                        error!(
+                            "replicate delete needle {} failed, volume: {vid}, error: {err}",
+                            needle.id
+                        );
                     }
                 });
             }
@@ -199,6 +234,8 @@ pub struct PostExtractor {
     // other fields must only implement `FromRequestParts`
     uri: Uri,
     headers: HeaderMap,
+    #[from_request(via(TypedHeader))]
+    host: Host,
     #[from_request(via(Query))]
     query: StorageQuery,
     body: Bytes,
@@ -212,7 +249,13 @@ pub async fn post_handler(
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
     let mut needle = if is_replicate {
-        bincode::deserialize(&extractor.body)?
+        let needle = bincode::deserialize::<Needle>(&extractor.body)?;
+        trace!(
+            "receive replicate write needle request from {}, needle {}",
+            extractor.host,
+            needle.id
+        );
+        needle
     } else {
         new_needle_from_request(&extractor).await?
     };
@@ -233,6 +276,7 @@ pub async fn post_handler(
         upload.name = String::from_utf8(needle.name.to_vec())?;
     }
 
+    trace!("write needle {} success, volume: {vid}", needle.id);
     // TODO: add etag support
     Ok(Json(upload))
 }
@@ -279,16 +323,41 @@ async fn replicate_write(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", location.url, path);
+                    trace!(
+                        "replicate write needle {}, volume: {vid}, location: {}, path: {}",
+                        needle.id,
+                        location.url,
+                        path
+                    );
                     if let Err(err) = util::post(&url, &params, &data).await.and_then(|body| {
                         let value: Value = serde_json::from_slice(&body)?;
                         if let Some(err) = value["error"].as_str() {
                             if !err.is_empty() {
-                                return Err(anyhow!("write {} err: {err}", location.url));
+                                error!(
+                                    "failed to write needle {} in location: {}, volume: {vid}, \
+                                     error: {err}",
+                                    needle.id, location.url
+                                );
+                                return Err(NeedleError::ReplicateWrite(
+                                    vid,
+                                    needle.id,
+                                    location.url.clone(),
+                                    err.to_string(),
+                                )
+                                .into());
                             }
                         }
+                        trace!(
+                            "replicate write needle {} success, volume: {vid}, location: {}",
+                            needle.id,
+                            location.url
+                        );
                         Ok(())
                     }) {
-                        error!("replicate write failed, error: {err}");
+                        error!(
+                            "replicate write needle {} failed, volume: {vid}, error: {err}",
+                            needle.id
+                        );
                     }
                 });
             }
@@ -451,7 +520,7 @@ pub async fn get_or_head_handler(
     if !ctx.store.read().await.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
-            info!("volume {} is not belongs to this server", vid);
+            warn!("volume {} is not belongs to this server", vid);
             *response.status_mut() = StatusCode::NOT_FOUND;
             return Ok(response);
         }
@@ -459,12 +528,17 @@ pub async fn get_or_head_handler(
 
     let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
-    ctx.store
+    let _ = ctx
+        .store
         .read()
         .await
         .read_volume_needle(vid, &mut needle)
         .await?;
     if needle.cookie != cookie {
+        error!(
+            "cookie not match, expect {}, but got {}",
+            needle.cookie, cookie
+        );
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 

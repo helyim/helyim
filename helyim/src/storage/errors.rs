@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::storage::{version::Version, VolumeId};
+use crate::storage::{version::Version, NeedleId, VolumeId};
 
 #[derive(thiserror::Error, Debug)]
 pub enum NeedleError {
@@ -20,6 +20,10 @@ pub enum NeedleError {
 
     #[error("Volume {0}: needle {1} has deleted.")]
     Deleted(VolumeId, u64),
+    #[error("Replicate delete needle {1} failed, volume: {0}, location: {2}, error: {3}")]
+    ReplicateDelete(VolumeId, NeedleId, String, String),
+    #[error("Replicate write needle {1} failed, volume: {0}, location: {2}, error: {3}")]
+    ReplicateWrite(VolumeId, NeedleId, String, String),
     #[error("Volume {0}: needle {1} has expired.")]
     Expired(VolumeId, u64),
     #[error("Needle {0} not found.")]

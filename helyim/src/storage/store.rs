@@ -103,14 +103,28 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.write().await.delete_needle(needle)?),
+            Some(volume) => {
+                let len = volume.write().await.delete_needle(needle)?;
+                info!(
+                    "delete needle {} in volume {vid}, data size: {len}",
+                    needle.id
+                );
+                Ok(len)
+            }
             None => Ok(0),
         }
     }
 
-    pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<()> {
+    pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.read().await.read_needle(needle)?),
+            Some(volume) => {
+                let len = volume.read().await.read_needle(needle)?;
+                info!(
+                    "read needle {} in volume {vid}, data size: {len}",
+                    needle.id
+                );
+                Ok(len)
+            }
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -121,8 +135,12 @@ impl Store {
                 if volume.read().await.is_readonly() {
                     return Err(VolumeError::Readonly(vid).into());
                 }
-
-                Ok(volume.write().await.write_needle(needle)?)
+                let len = volume.write().await.write_needle(needle)?;
+                info!(
+                    "write needle {} in volume {vid}, data size: {len}",
+                    needle.id
+                );
+                Ok(len)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }
