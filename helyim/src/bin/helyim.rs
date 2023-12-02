@@ -5,6 +5,7 @@ use helyim::{
 };
 use tokio::signal;
 use tracing::{info, Level};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]
@@ -154,14 +155,23 @@ async fn shutdown_signal() {
     }
 }
 
-fn log_init(level: Level) {
-    tracing_subscriber::fmt()
+fn log_init(level: Level) -> helyim::errors::Result<()> {
+    // ignore all crates logs
+    std::env::set_var("RUST_LOG", "none");
+    let helyim = env!("CARGO_PKG_NAME");
+    let filter = EnvFilter::from_default_env().add_directive(format!("{helyim}={level}").parse()?);
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
         .with_target(true)
         .with_level(true)
-        .with_max_level(level)
+        // ignore other crate logs
+        // .with_max_level(level)
         .with_ansi(true)
         .with_line_number(true)
-        .init();
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber)?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -176,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
-    log_init(Level::INFO);
+    log_init(Level::TRACE)?;
 
     let opts = Opts::parse();
     info!("opts: {:?}", opts);

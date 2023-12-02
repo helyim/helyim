@@ -5,7 +5,7 @@ use std::time::Duration;
 
 pub mod directory;
 
-mod errors;
+pub mod errors;
 mod filer;
 mod images;
 mod operation;

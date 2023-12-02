@@ -133,7 +133,7 @@ impl Volume {
             loop {
                 if idx_offset >= self.last_compact_index_offset as i64 {
                     let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
-                    let (key, offset, size) = read_index_entry(&idx_entry);
+                    let (key, offset, size) = read_index_entry(&idx_entry, true);
                     incremented_has_updated_index_entry
                         .entry(key)
                         .or_insert(NeedleValue { offset, size });

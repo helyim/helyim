@@ -10,7 +10,8 @@ use axum::{
 };
 use futures::channel::mpsc::TrySendError;
 use serde_json::json;
-use tracing::error;
+use tracing::{error, subscriber::SetGlobalDefaultError};
+use tracing_subscriber::filter::{FromEnvError, ParseError};
 
 use crate::storage::{NeedleError, VolumeError};
 
@@ -38,6 +39,8 @@ pub enum Error {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("Addr parse error: {0}")]
     AddrParse(#[from] AddrParseError),
+    #[error("Parse error: {0}")]
+    Parse(#[from] ParseError),
     #[error("Nom error: {0}")]
     Nom(String),
     #[error("Multer error: {0}")]
@@ -77,6 +80,12 @@ pub enum Error {
     BroadcastSend(#[from] async_broadcast::SendError<()>),
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
+
+    // Log
+    #[error("Tracing error: {0}")]
+    SetGlobalDefault(#[from] SetGlobalDefaultError),
+    #[error("From env error: {0}")]
+    FromEnv(#[from] FromEnvError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

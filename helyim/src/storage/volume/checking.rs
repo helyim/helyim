@@ -27,7 +27,7 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
     }
     let last_index_entry =
         read_index_entry_at_offset(index_file, index_size - NEEDLE_INDEX_SIZE as u64)?;
-    let (key, offset, size) = read_index_entry(&last_index_entry);
+    let (key, offset, size) = read_index_entry(&last_index_entry, true);
     if offset == 0 || size.is_deleted() {
         return Ok(());
     }

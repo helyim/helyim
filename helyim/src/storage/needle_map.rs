@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use crate::storage::{
     needle::NeedleValue,
@@ -84,7 +84,6 @@ impl NeedleMapper {
         key: NeedleId,
         index: NeedleValue,
     ) -> Result<Option<NeedleValue>, VolumeError> {
-        debug!("needle map set key: {}, {}", key, index);
         if key > self.metric.maximum_file_key {
             self.metric.maximum_file_key = key;
         }
@@ -109,7 +108,7 @@ impl NeedleMapper {
             self.metric.deleted_count += 1;
             self.metric.deleted_bytes += index.size.0 as u64;
             self.append_to_index_file(key, index)?;
-            debug!("needle map delete key: {} {}", key, index);
+            debug!("delete key in needle map: {} -> {}", key, index);
         }
 
         Ok(deleted)
@@ -171,12 +170,14 @@ impl NeedleMapper {
     }
 }
 
-pub fn read_index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
+pub fn read_index_entry(mut buf: &[u8], log: bool) -> (NeedleId, Offset, Size) {
     let key = buf.get_u64();
     let offset = Offset(buf.get_u32());
     let size = Size(buf.get_i32());
 
-    debug!("index entry: key: {key}, offset: {offset}, size: {size}");
+    if log {
+        trace!("read index entry: key: {key}, offset: {offset}, size: {size}");
+    }
     (key, offset, size)
 }
 
@@ -193,7 +194,7 @@ where
     for _ in 0..(len + 15) / 16 {
         reader.read_exact(&mut buf)?;
 
-        let (key, offset, size) = read_index_entry(&buf);
+        let (key, offset, size) = read_index_entry(&buf, false);
         walk(key, offset, size)?;
     }
 
