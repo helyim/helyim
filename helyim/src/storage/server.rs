@@ -22,7 +22,7 @@ use helyim_proto::{
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
-use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::timeout::TimeoutLayer;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -193,11 +193,7 @@ impl StorageServer {
                         .fallback(default_handler)
                         .with_state(ctx.clone()),
                 )
-                .layer((
-                    TraceLayer::new_for_http(),
-                    TimeoutLayer::new(Duration::from_secs(10)),
-                    CompressionLayer::new(),
-                ))
+                .layer((TimeoutLayer::new(Duration::from_secs(10)),))
                 .with_state(ctx);
 
             match hyper::Server::try_bind(&addr) {

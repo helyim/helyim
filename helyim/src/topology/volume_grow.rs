@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use faststr::FastStr;
 use helyim_proto::AllocateVolumeRequest;
 use rand::Rng;
-use tracing::{debug, error};
+use tracing::error;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
@@ -199,7 +199,6 @@ async fn find_main_data_center(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dc = candidates[first_idx].clone();
-    debug!("picked main data center: {}", main_dc.read().await.id);
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
     candidates.remove(first_idx);
@@ -258,7 +257,6 @@ async fn find_main_rack(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_rack = candidates[first_idx].clone();
-    debug!("picked main rack: {}", main_rack.read().await.id);
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_rack_count as usize);
     candidates.remove(first_idx);
@@ -301,7 +299,6 @@ async fn find_main_node(
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();
-    debug!("picked main data node: {}", main_dn.read().await.id);
 
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
     candidates.remove(first_idx);

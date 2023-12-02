@@ -185,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
-    log_init(Level::DEBUG)?;
+    log_init(Level::ERROR)?;
 
     let opts = Opts::parse();
     info!("opts: {:?}", opts);

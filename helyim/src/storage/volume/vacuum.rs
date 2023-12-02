@@ -164,7 +164,7 @@ impl Volume {
                      file {}'s compact revision is {new_compact_revision}",
                     old_data_filename, new_data_filename
                 );
-                error!(error);
+                error!("{}", error);
                 return Err(VolumeError::String(error));
             }
 

@@ -9,7 +9,7 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, instrument};
+use tracing::error;
 
 use crate::storage::{
     crc,
@@ -131,18 +131,12 @@ impl Needle {
         Ok(needle)
     }
 
-    #[instrument(skip(self))]
     pub fn parse_needle_header(&mut self, mut bytes: &[u8]) {
         self.cookie = bytes.get_u32();
         self.id = bytes.get_u64();
         self.size = Size(bytes.get_i32());
-        debug!(
-            "parse needle header success, cookie: {}, id: {}, size: {}",
-            self.cookie, self.id, self.size
-        );
     }
 
-    #[instrument(skip(self))]
     pub fn parse_path(&mut self, fid: &str) -> StdResult<(), NeedleError> {
         if fid.len() <= 8 {
             error!("invalid fid: {fid}");
@@ -165,7 +159,6 @@ impl Needle {
         Ok(())
     }
 
-    #[instrument(skip(self, data_file))]
     pub fn read_needle_body(
         &mut self,
         data_file: &File,
@@ -299,7 +292,6 @@ impl Needle {
         Ok(())
     }
 
-    #[instrument(skip(self, file))]
     pub fn read_data(
         &mut self,
         file: &File,

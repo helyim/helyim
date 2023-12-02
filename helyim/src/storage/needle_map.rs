@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 use crate::storage::{
     needle::NeedleValue,
@@ -108,7 +108,6 @@ impl NeedleMapper {
             self.metric.deleted_count += 1;
             self.metric.deleted_bytes += index.size.0 as u64;
             self.append_to_index_file(key, index)?;
-            debug!("delete key in needle map: {} -> {}", key, index);
         }
 
         Ok(deleted)
