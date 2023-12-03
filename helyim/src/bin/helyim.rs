@@ -157,13 +157,18 @@ async fn shutdown_signal() {
     }
 }
 
-fn log_init(level: Level, log_dir: &str, log_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn log_init(
+    level: Level,
+    log_dir: &str,
+    log_prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // ignore all crates logs
     std::env::set_var("RUST_LOG", "none");
     let helyim = env!("CARGO_PKG_NAME");
     let filter = EnvFilter::from_default_env().add_directive(format!("{helyim}={level}").parse()?);
 
-    let file_appender = tracing_appender::rolling::daily(log_dir, format!("helyim-{}.log", log_prefix));
+    let file_appender =
+        tracing_appender::rolling::daily(log_dir, format!("helyim-{}.log", log_prefix));
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_appender)
         .with_env_filter(filter)
@@ -191,8 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
-
-    let level  = Level::INFO;
+    let level = Level::INFO;
 
     let opts = Opts::parse();
     info!("opts: {:?}", opts);
@@ -205,7 +209,11 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
             start_master(&opts.host, master).await
         }
         Command::Volume(volume) => {
-            log_init(level, &opts.log_path, &format!("volume-{}-{}", volume.ip, volume.port))?;
+            log_init(
+                level,
+                &opts.log_path,
+                &format!("volume-{}-{}", volume.ip, volume.port),
+            )?;
 
             info!("starting volume....");
             start_volume(&opts.host, volume).await
