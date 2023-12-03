@@ -305,7 +305,7 @@ impl Volume {
         Ok(data_size)
     }
 
-    pub fn read_needle(&self, needle: &mut Needle) -> StdResult<(), VolumeError> {
+    pub fn read_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         match self.needle_mapper.get(needle.id) {
             Some(nv) => {
                 if nv.offset == 0 || nv.size.is_deleted() {
@@ -315,18 +315,27 @@ impl Volume {
                 let version = self.version();
                 let data_file = self.data_file()?;
                 needle.read_data(data_file, nv.offset, nv.size, version)?;
-
-                if needle.has_ttl() && needle.has_last_modified_date() {
-                    let minutes = needle.ttl.minutes();
-                    if minutes > 0
-                        && now().as_secs() >= (needle.last_modified + minutes as u64 * 60)
-                    {
-                        return Err(NeedleError::Expired(self.id, needle.id).into());
-                    }
+                let data_size = needle.data_size();
+                if !needle.has_ttl() {
+                    return Ok(data_size);
                 }
-                Ok(())
+                let minutes = needle.ttl.minutes();
+                if minutes == 0 {
+                    return Ok(data_size);
+                }
+                if !needle.has_last_modified_date() {
+                    return Ok(data_size);
+                }
+                if now().as_secs() < (needle.last_modified + minutes as u64 * 60) {
+                    return Ok(data_size);
+                }
+                error!("needle {} is expired, volume: {}", needle.id, self.id);
+                Err(NeedleError::Expired(self.id, needle.id).into())
             }
-            None => Err(NeedleError::NotFound(needle.id).into()),
+            None => {
+                error!("needle {} is not found, volume: {}", needle.id, self.id);
+                Err(NeedleError::NotFound(needle.id).into())
+            }
         }
     }
 

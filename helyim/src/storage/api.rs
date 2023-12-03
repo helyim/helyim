@@ -110,7 +110,8 @@ pub async fn delete_handler(
     let mut needle = Needle::new_with_fid(fid)?;
 
     let cookie = needle.cookie;
-    ctx.store
+    let _ = ctx
+        .store
         .read()
         .await
         .read_volume_needle(vid, &mut needle)
@@ -459,7 +460,8 @@ pub async fn get_or_head_handler(
 
     let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
-    ctx.store
+    let _ = ctx
+        .store
         .read()
         .await
         .read_volume_needle(vid, &mut needle)
