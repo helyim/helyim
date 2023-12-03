@@ -309,7 +309,10 @@ async fn handle_heartbeat(
     let data_center = topology
         .write()
         .await
-        .get_or_create_data_center(data_center);
+        .get_or_create_data_center(data_center)
+        .await;
+    data_center.write().await.set_topology(topology.downgrade());
+
     let rack = data_center.write().await.get_or_create_rack(rack);
     rack.write().await.set_data_center(data_center.downgrade());
 

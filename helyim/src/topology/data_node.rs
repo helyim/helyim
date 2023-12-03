@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     result::Result as StdResult,
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use faststr::FastStr;
@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     errors::{Error, Result},
-    storage::{VolumeError, VolumeId, VolumeInfo},
+    storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
     topology::rack::WeakRackRef,
 };
 
@@ -31,8 +31,10 @@ pub struct DataNode {
     pub max_volumes: i64,
     max_volume_id: VolumeId,
     #[serde(skip)]
-    rack: WeakRackRef,
+    pub rack: WeakRackRef,
     volumes: HashMap<VolumeId, VolumeInfo>,
+    pub ec_shards: HashMap<VolumeId, EcVolumeInfo>,
+    pub ec_shard_count: AtomicU64,
     #[serde(skip)]
     client: VolumeServerClient<LoadBalancedChannel>,
 }
@@ -65,6 +67,8 @@ impl DataNode {
             rack: WeakRackRef::new(),
             max_volume_id: 0,
             volumes: HashMap::new(),
+            ec_shards: HashMap::new(),
+            ec_shard_count: AtomicU64::new(0),
             client: VolumeServerClient::new(channel),
         })
     }

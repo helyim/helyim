@@ -36,6 +36,12 @@ pub enum NeedleError {
     InvalidKeyHash(String),
 }
 
+impl From<NeedleError> for tonic::Status {
+    fn from(value: NeedleError) -> Self {
+        tonic::Status::internal(value.to_string())
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum VolumeError {
     #[error("Io error: {0}")]
@@ -50,6 +56,9 @@ pub enum VolumeError {
     String(String),
     #[error("Parse integer error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
+
+    #[error("Serde json error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
 
     #[error("Tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
@@ -72,6 +81,12 @@ pub enum VolumeError {
     Needle(#[from] NeedleError),
     #[error("No free space: {0}")]
     NoFreeSpace(String),
+}
+
+impl From<VolumeError> for tonic::Status {
+    fn from(value: VolumeError) -> Self {
+        tonic::Status::internal(value.to_string())
+    }
 }
 
 impl From<nom::Err<nom::error::Error<&str>>> for VolumeError {

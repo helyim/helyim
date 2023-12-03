@@ -1,4 +1,12 @@
-use std::{collections::HashMap, result::Result as StdResult, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    result::Result as StdResult,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+    },
+    time::Duration,
+};
 
 use faststr::FastStr;
 use serde::Serialize;
@@ -13,8 +21,8 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center::DataCenterRef, volume_grow::VolumeGrowOption,
-        volume_layout::VolumeLayoutRef, DataNodeRef,
+        collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
+        volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
     },
 };
 
@@ -23,6 +31,9 @@ pub struct Topology {
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
+    #[serde(skip)]
+    pub ec_shards: HashMap<VolumeId, EcShardLocations>,
+    pub ec_shard_count: AtomicU64,
     pulse: u64,
     volume_size_limit: u64,
     // children
@@ -35,6 +46,8 @@ impl Clone for Topology {
         Self {
             sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
+            ec_shards: self.ec_shards.clone(),
+            ec_shard_count: AtomicU64::new(self.ec_shard_count.load(Ordering::Relaxed)),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
@@ -47,18 +60,19 @@ impl Topology {
         Topology {
             sequencer,
             collections: HashMap::new(),
+            ec_shards: HashMap::new(),
+            ec_shard_count: AtomicU64::new(0),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
         }
     }
 
-    pub fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
+    pub async fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
         match self.data_centers.get(&name) {
             Some(data_node) => data_node.clone(),
             None => {
                 let data_center = DataCenterRef::new(name.clone());
-
                 self.data_centers.insert(name, data_center.clone());
                 data_center
             }
@@ -266,5 +280,28 @@ impl TopologyRef {
 
     pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Topology> {
         self.0.write().await
+    }
+
+    pub fn downgrade(&self) -> WeakTopologyRef {
+        WeakTopologyRef(Arc::downgrade(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct WeakTopologyRef(Weak<RwLock<Topology>>);
+
+impl WeakTopologyRef {
+    pub fn new() -> Self {
+        Self(Weak::new())
+    }
+
+    pub fn upgrade(&self) -> Option<TopologyRef> {
+        self.0.upgrade().map(TopologyRef)
+    }
+}
+
+impl Default for WeakTopologyRef {
+    fn default() -> Self {
+        Self::new()
     }
 }

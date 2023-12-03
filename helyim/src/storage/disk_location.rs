@@ -11,6 +11,7 @@ use crate::{
     errors::Result,
     rt_spawn,
     storage::{
+        erasure_coding::EcVolumeRef,
         needle_map::NeedleMapType,
         ttl::Ttl,
         volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
@@ -22,6 +23,7 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: HashMap<VolumeId, VolumeRef>,
+    pub ec_volumes: HashMap<VolumeId, EcVolumeRef>,
 }
 
 impl DiskLocation {
@@ -30,6 +32,7 @@ impl DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
             volumes: HashMap::new(),
+            ec_volumes: HashMap::new(),
         }
     }
 

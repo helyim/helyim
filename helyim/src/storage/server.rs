@@ -1,4 +1,7 @@
-use std::{pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
+use std::{
+    ffi::OsString, fs, os::unix::fs::FileExt, path::Path, pin::Pin, result::Result as StdResult,
+    sync::Arc, time::Duration,
+};
 
 use async_stream::stream;
 use axum::{routing::get, Router};
@@ -17,10 +20,10 @@ use helyim_proto::{
     VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
     VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
     VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
-    VolumeEcShardsUnmountResponse,
+    VolumeEcShardsUnmountResponse, VolumeInfo,
 };
 use tokio::task::JoinHandle;
-use tokio_stream::Stream;
+use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info};
@@ -28,13 +31,21 @@ use tracing::{debug, error, info};
 use crate::{
     errors::{Error, Result},
     operation::Looker,
+    proto::save_volume_info,
     rt_spawn,
     storage::{
         api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageContext},
+        erasure_coding::{
+            ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
+            write_data_file, write_ec_files, write_idx_file_from_ec_index,
+            write_sorted_file_from_idx, ShardId,
+        },
         needle_map::NeedleMapType,
         store::StoreRef,
+        version::Version,
+        BUFFER_SIZE_LIMIT,
     },
-    util::{default_handler, exit, favicon_handler},
+    util::{default_handler, exit, favicon_handler, file::file_exists},
     STOP_INTERVAL,
 };
 
@@ -388,14 +399,59 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+        match self
+            .store
+            .read()
+            .await
+            .find_volume(request.volume_id)
+            .await?
+        {
+            Some(volume) => {
+                let base_filename = volume.read().await.filename();
+                let collection = volume.read().await.collection.clone();
+                if collection != request.collection {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid collection, expect: {collection}"
+                    )));
+                }
+                write_ec_files(&base_filename)?;
+                write_sorted_file_from_idx(&base_filename, ".ecx")?;
+                let volume_info = VolumeInfo {
+                    version: volume.read().await.version() as u32,
+                    ..Default::default()
+                };
+                save_volume_info(&format!("{}.vif", base_filename), volume_info)?;
+                Ok(Response::new(VolumeEcShardsGenerateResponse::default()))
+            }
+            None => Err(Status::not_found(format!(
+                "volume {} is not found.",
+                request.volume_id
+            ))),
+        }
     }
 
     async fn volume_ec_shards_rebuild(
         &self,
         request: Request<VolumeEcShardsRebuildRequest>,
     ) -> StdResult<Response<VolumeEcShardsRebuildResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+        let base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
+
+        let mut rebuilt_shard_ids = Vec::new();
+        for location in self.store.read().await.locations().iter() {
+            let ecx_filename = format!("{}{}.ecx", location.read().await.directory, base_filename);
+            if file_exists(&ecx_filename)? {
+                let base_filename = format!("{}{}", location.read().await.directory, base_filename);
+                rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
+                rebuild_ecx_file(&base_filename)?;
+                break;
+            }
+        }
+
+        Ok(Response::new(VolumeEcShardsRebuildResponse {
+            rebuilt_shard_ids,
+        }))
     }
 
     async fn volume_ec_shards_copy(
@@ -409,7 +465,75 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsDeleteRequest>,
     ) -> StdResult<Response<VolumeEcShardsDeleteResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+        let mut base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
+        let mut found = false;
+
+        for location in self.store.read().await.locations().iter() {
+            let ecx_filename = format!("{}{}.ecx", location.read().await.directory, base_filename);
+            if file_exists(&ecx_filename)? {
+                found = true;
+                base_filename = format!("{}{}", location.read().await.directory, base_filename);
+                for shard in request.shard_ids {
+                    fs::remove_file(format!("{}{}", base_filename, to_ext(shard as ShardId)))?;
+                }
+                break;
+            }
+        }
+
+        if !found {
+            return Ok(Response::new(VolumeEcShardsDeleteResponse {}));
+        }
+
+        let mut has_ecx_file = false;
+        let mut has_idx_file = false;
+        let mut existing_shard_count = 0;
+
+        let filename = Path::new(&base_filename)
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or(OsString::from("."));
+        let filename = filename.to_string_lossy().to_string();
+
+        let ecx_filename = format!("{}.ecx", filename);
+        let ecj_filename = format!("{}.ecj", filename);
+        let idx_filename = format!("{}.idx", filename);
+        let ec_prefix = format!("{}.ec", filename);
+
+        for location in self.store.read().await.locations().iter() {
+            let read_dir = fs::read_dir(location.read().await.directory.to_string())?;
+            for entry in read_dir {
+                match entry?.file_name().into_string() {
+                    Ok(entry_name) => {
+                        if entry_name == ecx_filename || entry_name == ecj_filename {
+                            has_ecx_file = true;
+                            continue;
+                        }
+                        if entry_name == idx_filename {
+                            has_idx_file = true;
+                            continue;
+                        }
+                        if entry_name.starts_with(&ec_prefix) {
+                            existing_shard_count += 1;
+                        }
+                    }
+                    Err(err) => {
+                        return Err(Status::internal(err.to_string_lossy().to_string()));
+                    }
+                }
+            }
+        }
+
+        if has_ecx_file && existing_shard_count == 0 {
+            fs::remove_file(format!("{}.ecx", base_filename))?;
+            fs::remove_file(format!("{}.ecj", base_filename))?;
+        }
+
+        if !has_idx_file {
+            fs::remove_file(format!("{}.vif", base_filename))?;
+        }
+
+        Ok(Response::new(VolumeEcShardsDeleteResponse {}))
     }
 
     async fn volume_ec_shards_mount(
@@ -433,14 +557,104 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardReadRequest>,
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
-        todo!()
+        let request = request.into_inner();
+
+        if let Some(volume) = self
+            .store
+            .read()
+            .await
+            .find_ec_volume(request.volume_id)
+            .await
+        {
+            if let Some(shard) = volume.read().await.find_shard(request.shard_id as ShardId) {
+                if request.file_key != 0 {
+                    let needle_value =
+                        volume.read().await.find_needle_from_ecx(request.file_key)?;
+                    if needle_value.size.is_deleted() {
+                        let response = VolumeEcShardReadResponse {
+                            is_deleted: true,
+                            ..Default::default()
+                        };
+                        let stream = Box::pin(futures::stream::iter(vec![Ok(response)]));
+                        return Ok(Response::new(stream as Self::VolumeEcShardReadStream));
+                    }
+                }
+
+                let mut buf_size = request.size as usize;
+                if buf_size > BUFFER_SIZE_LIMIT {
+                    buf_size = BUFFER_SIZE_LIMIT;
+                }
+
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+                tokio::spawn(async move {
+                    let mut buffer = vec![0u8; buf_size];
+                    let mut start_offset = request.offset as u64;
+                    let mut bytes_to_read = request.size as usize;
+                    while bytes_to_read > 0 {
+                        let mut buffer_size = buf_size;
+                        if buffer_size > bytes_to_read {
+                            buffer_size = bytes_to_read;
+                        }
+                        let mut bytes_read = shard
+                            .ecd_file
+                            .read_at(&mut buffer[0..buffer_size], start_offset)
+                            .unwrap_or_default();
+                        if bytes_read > 0 {
+                            if bytes_read > bytes_to_read {
+                                bytes_read = bytes_to_read;
+                            }
+                            if let Err(err) = tx.send(Ok(VolumeEcShardReadResponse {
+                                is_deleted: false,
+                                data: buffer[..bytes_read].to_vec(),
+                            })) {
+                                error!("send VolumeEcShardReadResponse error: {err}");
+                                break;
+                            }
+
+                            start_offset += bytes_read as u64;
+                            bytes_to_read -= bytes_read;
+                        }
+                    }
+                });
+
+                let stream = UnboundedReceiverStream::new(rx);
+                return Ok(Response::new(
+                    Box::pin(stream) as Self::VolumeEcShardReadStream
+                ));
+            }
+        }
+
+        Err(Status::not_found(format!(
+            "ec volume {} is not found",
+            request.volume_id
+        )))
     }
 
     async fn volume_ec_blob_delete(
         &self,
         request: Request<VolumeEcBlobDeleteRequest>,
     ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+
+        for location in self.store.read().await.locations().iter() {
+            if let Some(volume) = location.read().await.find_ec_volume(request.volume_id) {
+                let (needle_value, intervals) = volume
+                    .read()
+                    .await
+                    .locate_ec_shard_needle(request.file_key, request.version as Version)?;
+                if needle_value.size.is_deleted() {
+                    return Ok(Response::new(VolumeEcBlobDeleteResponse::default()));
+                }
+
+                volume
+                    .write()
+                    .await
+                    .delete_needle_from_ecx(request.file_key)?;
+                break;
+            }
+        }
+        Ok(Response::new(VolumeEcBlobDeleteResponse::default()))
     }
 
     /// generate the .idx, .dat, files from .ecx, .ecj and .ec01 - .ec14 files
@@ -448,6 +662,30 @@ impl VolumeServer for StorageGrpcServer {
         &self,
         request: Request<VolumeEcShardsToVolumeRequest>,
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+
+        match self
+            .store
+            .read()
+            .await
+            .find_ec_volume(request.volume_id)
+            .await
+        {
+            Some(volume) => {
+                if volume.read().await.collection() == request.collection {
+                    return Err(Status::invalid_argument("unexpected collection"));
+                }
+                let base_filename = volume.read().await.filename();
+                let data_filesize = find_data_filesize(&base_filename)?;
+                write_data_file(&base_filename, data_filesize)?;
+                write_idx_file_from_ec_index(&base_filename)?;
+
+                Ok(Response::new(VolumeEcShardsToVolumeResponse::default()))
+            }
+            None => Err(Status::not_found(format!(
+                "ec volume {} not found",
+                request.volume_id
+            ))),
+        }
     }
 }

@@ -4,6 +4,8 @@ use faststr::FastStr;
 #[macro_use]
 pub mod macros;
 
+pub mod file;
+
 mod http;
 
 pub use http::{default_handler, delete, favicon_handler, post, FormOrJson, HTTP_DATE_FORMAT};
