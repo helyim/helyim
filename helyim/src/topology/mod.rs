@@ -4,6 +4,8 @@ mod data_center;
 mod data_node;
 pub use data_node::DataNodeRef;
 
+mod erasure_coding;
+
 mod rack;
 #[allow(clippy::module_inception)]
 mod topology;

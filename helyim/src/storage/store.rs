@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use faststr::FastStr;
-use helyim_proto::{HeartbeatRequest, VolumeInformationMessage};
+use futures::channel::mpsc::Sender;
+use helyim_proto::{
+    HeartbeatRequest, VolumeEcShardInformationMessage, VolumeInformationMessage,
+    VolumeShortInformationMessage,
+};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -33,6 +37,11 @@ pub struct Store {
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
+
+    pub new_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
+    pub deleted_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
+    pub new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
+    pub deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
 }
 
 unsafe impl Send for Store {}
@@ -68,6 +77,10 @@ impl Store {
             rack: FastStr::empty(),
             connected: false,
             volume_size_limit: 0,
+            new_volumes_tx: None,
+            deleted_volumes_tx: None,
+            new_ec_shards_tx: None,
+            deleted_ec_shards_tx: None,
         })
     }
 

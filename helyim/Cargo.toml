@@ -29,6 +29,7 @@ bytes = { workspace = true, features = ["serde"] }
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
+dashmap.workspace = true
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true
@@ -40,8 +41,11 @@ mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
 multer.workspace = true
 nom.workspace = true
+once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
+reed-solomon-erasure = { workspace = true, features = [ "simd-accel" ] }
+regex.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -53,7 +57,7 @@ tokio-uring = { workspace = true, optional = true }
 tonic.workspace = true
 tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"]}
 url.workspace = true
 
 [dev-dependencies]

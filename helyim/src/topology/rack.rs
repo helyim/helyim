@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     result::Result as StdResult,
-    sync::{Arc, Weak},
+    sync::{atomic::AtomicU64, Arc, Weak},
 };
 
 use faststr::FastStr;
@@ -22,9 +22,10 @@ pub struct Rack {
     #[serde(skip)]
     pub data_nodes: HashMap<FastStr, DataNodeRef>,
     max_volume_id: VolumeId,
+    pub ec_shard_count: AtomicU64,
     // parent
     #[serde(skip)]
-    data_center: WeakDataCenterRef,
+    pub data_center: WeakDataCenterRef,
 }
 
 impl Rack {
@@ -33,6 +34,7 @@ impl Rack {
             id: id.clone(),
             data_nodes: HashMap::new(),
             max_volume_id: 0,
+            ec_shard_count: AtomicU64::new(0),
             data_center: WeakDataCenterRef::new(),
         }
     }

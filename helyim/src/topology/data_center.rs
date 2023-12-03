@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Weak},
+    sync::{atomic::AtomicU64, Arc, Weak},
 };
 
 use faststr::FastStr;
@@ -10,13 +10,17 @@ use tokio::sync::RwLock;
 
 use crate::{
     storage::{VolumeError, VolumeId},
-    topology::{rack::RackRef, DataNodeRef},
+    topology::{rack::RackRef, topology::WeakTopologyRef, DataNodeRef},
 };
 
 #[derive(Serialize)]
 pub struct DataCenter {
     pub id: FastStr,
     pub max_volume_id: VolumeId,
+    pub ec_shard_count: AtomicU64,
+    // parent
+    #[serde(skip)]
+    pub topology: WeakTopologyRef,
     // children
     #[serde(skip)]
     pub racks: HashMap<FastStr, RackRef>,
@@ -26,9 +30,15 @@ impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
         Self {
             id: id.clone(),
+            topology: WeakTopologyRef::new(),
             racks: HashMap::new(),
             max_volume_id: 0,
+            ec_shard_count: AtomicU64::new(0),
         }
+    }
+
+    pub fn set_topology(&mut self, topology: WeakTopologyRef) {
+        self.topology = topology;
     }
 
     pub fn adjust_max_volume_id(&mut self, vid: VolumeId) {

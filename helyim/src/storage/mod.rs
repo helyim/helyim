@@ -4,6 +4,7 @@ mod api;
 mod crc;
 mod disk_location;
 
+pub mod erasure_coding;
 mod errors;
 pub use errors::{NeedleError, VolumeError};
 
