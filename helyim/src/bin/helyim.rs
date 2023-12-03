@@ -13,6 +13,8 @@ use tracing_subscriber::EnvFilter;
 struct Opts {
     #[arg(long, default_value("0.0.0.0"))]
     host: String,
+    #[arg(long, default_value("./target/logs"))]
+    log_path: String,
     #[command(subcommand)]
     command: Command,
 }
@@ -30,7 +32,7 @@ struct MasterOptions {
     #[arg(long, default_value_t = 9333)]
     port: u16,
     #[arg(long, default_value("./"))]
-    meta_dir: String,
+    meta_path: String,
     #[arg(long, default_value_t = 5)]
     pulse_seconds: u64,
     #[arg(long, default_value_t = 30000)]
@@ -73,7 +75,7 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
         host,
         &master.ip,
         master.port,
-        &master.meta_dir,
+        &master.meta_path,
         master.volume_size_limit_mb,
         master.pulse_seconds,
         &master.default_replication,
@@ -155,12 +157,15 @@ async fn shutdown_signal() {
     }
 }
 
-fn log_init(level: Level) -> Result<(), Box<dyn std::error::Error>> {
+fn log_init(level: Level, log_dir: &str, log_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
     // ignore all crates logs
     std::env::set_var("RUST_LOG", "none");
     let helyim = env!("CARGO_PKG_NAME");
     let filter = EnvFilter::from_default_env().add_directive(format!("{helyim}={level}").parse()?);
+
+    let file_appender = tracing_appender::rolling::daily(log_dir, format!("helyim-{}.log", log_prefix));
     let subscriber = tracing_subscriber::fmt()
+        .with_writer(file_appender)
         .with_env_filter(filter)
         .with_target(true)
         .with_level(true)
@@ -186,17 +191,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
-    log_init(Level::INFO)?;
+
+    let level  = Level::INFO;
 
     let opts = Opts::parse();
     info!("opts: {:?}", opts);
 
     match opts.command {
         Command::Master(master) => {
+            log_init(level, &opts.log_path, "master")?;
+
             info!("starting master server....");
             start_master(&opts.host, master).await
         }
         Command::Volume(volume) => {
+            log_init(level, &opts.log_path, &format!("volume-{}-{}", volume.ip, volume.port))?;
+
             info!("starting volume....");
             start_volume(&opts.host, volume).await
         }
