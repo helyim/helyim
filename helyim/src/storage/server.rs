@@ -40,7 +40,7 @@ use crate::{
             write_data_file, write_ec_files, write_idx_file_from_ec_index,
             write_sorted_file_from_idx, ShardId,
         },
-        needle_map::NeedleMapType,
+        needle::NeedleMapType,
         store::StoreRef,
         version::Version,
         BUFFER_SIZE_LIMIT,

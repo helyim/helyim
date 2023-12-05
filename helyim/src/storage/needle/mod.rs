@@ -16,8 +16,16 @@ use crate::storage::{
     ttl::Ttl,
     types::{Cookie, Offset, Size},
     version::{Version, CURRENT_VERSION, VERSION2},
-    NeedleError, NeedleId,
+    NeedleId, VolumeId,
 };
+
+mod metric;
+
+mod needle_map;
+pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
+
+mod needle_value_map;
+pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
@@ -48,7 +56,7 @@ pub const NEEDLE_ID_OFFSET: usize = 4;
 pub const NEEDLE_SIZE_OFFSET: usize = 12;
 
 /// Needle index
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct NeedleValue {
     /// needle offset
     ///
@@ -56,6 +64,30 @@ pub struct NeedleValue {
     pub offset: Offset,
     /// needle data size
     pub size: Size,
+}
+
+impl leapfrog::Value for NeedleValue {
+    fn is_redirect(&self) -> bool {
+        self.offset.0.is_redirect() && self.size.0.is_redirect()
+    }
+
+    fn is_null(&self) -> bool {
+        self.offset.0.is_null() && self.size.0.is_null()
+    }
+
+    fn redirect() -> Self {
+        Self {
+            offset: Offset(u32::redirect()),
+            size: Size(i32::redirect()),
+        }
+    }
+
+    fn null() -> Self {
+        Self {
+            offset: Offset(u32::null()),
+            size: Size(i32::null()),
+        }
+    }
 }
 
 impl NeedleValue {
@@ -399,6 +431,39 @@ impl Needle {
 
     pub fn data_size(&self) -> u32 {
         self.data.len() as u32
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum NeedleError {
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Parse integer error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Volume {0}: needle {1} has deleted.")]
+    Deleted(VolumeId, u64),
+    #[error("Volume {0}: needle {1} has expired.")]
+    Expired(VolumeId, u64),
+    #[error("Needle {0} not found.")]
+    NotFound(u64),
+    #[error("Cookie not match, needle cookie is {0} but got {1}")]
+    CookieNotMatch(u32, u32),
+    #[error("Unsupported version: {0}")]
+    UnsupportedVersion(Version),
+    #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
+    Crc(u32, u32),
+    #[error("Invalid file id: {0}")]
+    InvalidFid(String),
+    #[error("key hash: {0} is too short or too long")]
+    InvalidKeyHash(String),
+}
+
+impl From<NeedleError> for tonic::Status {
+    fn from(value: NeedleError) -> Self {
+        tonic::Status::internal(value.to_string())
     }
 }
 
