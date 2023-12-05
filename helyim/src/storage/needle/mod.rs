@@ -16,7 +16,7 @@ use crate::storage::{
     ttl::Ttl,
     types::{Cookie, Offset, Size},
     version::{Version, CURRENT_VERSION, VERSION2},
-    NeedleError, NeedleId,
+    NeedleId, VolumeId,
 };
 
 mod metric;
@@ -431,6 +431,39 @@ impl Needle {
 
     pub fn data_size(&self) -> u32 {
         self.data.len() as u32
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum NeedleError {
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Parse integer error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Volume {0}: needle {1} has deleted.")]
+    Deleted(VolumeId, u64),
+    #[error("Volume {0}: needle {1} has expired.")]
+    Expired(VolumeId, u64),
+    #[error("Needle {0} not found.")]
+    NotFound(u64),
+    #[error("Cookie not match, needle cookie is {0} but got {1}")]
+    CookieNotMatch(u32, u32),
+    #[error("Unsupported version: {0}")]
+    UnsupportedVersion(Version),
+    #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
+    Crc(u32, u32),
+    #[error("Invalid file id: {0}")]
+    InvalidFid(String),
+    #[error("key hash: {0} is too short or too long")]
+    InvalidKeyHash(String),
+}
+
+impl From<NeedleError> for tonic::Status {
+    fn from(value: NeedleError) -> Self {
+        tonic::Status::internal(value.to_string())
     }
 }
 

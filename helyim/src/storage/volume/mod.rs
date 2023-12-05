@@ -6,11 +6,18 @@ use std::{
     path::Path,
     result::Result as StdResult,
     sync::Arc,
+    time::SystemTimeError,
 };
 
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use rustix::fs::ftruncate;
+use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -23,7 +30,7 @@ use crate::{
         ttl::Ttl,
         version::{Version, CURRENT_VERSION},
         volume::checking::check_volume_data_integrity,
-        NeedleError, VolumeError, VolumeId,
+        VolumeId,
     },
     util::time::{get_time, now},
 };
@@ -38,7 +45,7 @@ pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
 
-use crate::storage::types::Offset;
+use crate::storage::{needle::NeedleError, types::Offset};
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -499,6 +506,70 @@ impl Volume {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum VolumeError {
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Errno: {0}")]
+    Errno(#[from] rustix::io::Errno),
+    #[error("System time error: {0}")]
+    SystemTimeError(#[from] SystemTimeError),
+    #[error("Raw volume error: {0}")]
+    String(String),
+    #[error("Parse integer error: {0}")]
+    ParseInt(#[from] std::num::ParseIntError),
+
+    #[error("Serde json error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("Tonic status: {0}")]
+    TonicStatus(#[from] tonic::Status),
+
+    #[error("Invalid replica placement: {0}")]
+    ReplicaPlacement(String),
+    #[error("No writable volumes.")]
+    NoWritableVolumes,
+    #[error("Volume {0} is not found.")]
+    NotFound(VolumeId),
+    #[error("Data integrity error: {0}")]
+    DataIntegrity(String),
+    #[error("Volume {0} is not loaded.")]
+    NotLoad(VolumeId),
+    #[error("Volume {0} has loaded.")]
+    HasLoaded(VolumeId),
+    #[error("Volume {0} is readonly.")]
+    Readonly(VolumeId),
+    #[error("Needle error: {0}")]
+    Needle(#[from] NeedleError),
+    #[error("No free space: {0}")]
+    NoFreeSpace(String),
+}
+
+impl From<VolumeError> for tonic::Status {
+    fn from(value: VolumeError) -> Self {
+        tonic::Status::internal(value.to_string())
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for VolumeError {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl IntoResponse for VolumeError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
+    }
+}
+
 fn load_volume_without_index(
     dirname: FastStr,
     collection: FastStr,
@@ -613,8 +684,8 @@ pub mod tests {
     use crate::storage::{
         crc,
         needle::NeedleMapType,
-        volume::{scan_volume_file, SuperBlock, Volume},
-        FileId, Needle, ReplicaPlacement, Ttl, VolumeError,
+        volume::{scan_volume_file, SuperBlock, Volume, VolumeError},
+        FileId, Needle, ReplicaPlacement, Ttl,
     };
 
     pub fn setup(dir: FastStr) -> Volume {

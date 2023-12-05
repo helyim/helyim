@@ -76,10 +76,11 @@ impl NeedleMapper {
         index: NeedleValue,
     ) -> Result<Option<NeedleValue>, VolumeError> {
         debug!("needle map set key: {}, {}", key, index);
+
         self.metric.compare_max_file_key(key);
         self.metric.add_file(index.size);
-        let old = self.needle_value_map.set(key, index);
 
+        let old = self.needle_value_map.set(key, index);
         if let Some(n) = old {
             self.metric.delete_file(n.size);
         }
@@ -95,7 +96,7 @@ impl NeedleMapper {
         if let Some(index) = deleted {
             self.metric.delete_file(index.size);
             self.append_to_index_file(key, index)?;
-            debug!("needle map delete key: {} {}", key, index);
+            debug!("needle map delete key: {} -> {}", key, index);
         }
 
         Ok(deleted)
