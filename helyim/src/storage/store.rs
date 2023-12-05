@@ -14,8 +14,7 @@ use crate::{
     errors::{Error, Result},
     storage::{
         disk_location::{DiskLocation, DiskLocationRef},
-        needle::Needle,
-        needle_map::NeedleMapType,
+        needle::{Needle, NeedleMapType},
         volume::VolumeRef,
         ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
@@ -116,7 +115,7 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.write().await.delete_needle(needle)?),
+            Some(volume) => Ok(volume.read().await.delete_needle(needle)?),
             None => Ok(0),
         }
     }
@@ -135,7 +134,7 @@ impl Store {
                     return Err(VolumeError::Readonly(vid).into());
                 }
 
-                Ok(volume.write().await.write_needle(needle)?)
+                Ok(volume.read().await.write_needle(needle)?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }

@@ -44,8 +44,7 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
-        needle::{Needle, PAIR_NAME_PREFIX},
-        needle_map::NeedleMapType,
+        needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
     },

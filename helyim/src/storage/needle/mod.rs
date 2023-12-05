@@ -19,6 +19,14 @@ use crate::storage::{
     NeedleError, NeedleId,
 };
 
+mod metric;
+
+mod needle_map;
+pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
+
+mod needle_value_map;
+pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
+
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
 pub const NEEDLE_PADDING_SIZE: u32 = 8;
@@ -48,7 +56,7 @@ pub const NEEDLE_ID_OFFSET: usize = 4;
 pub const NEEDLE_SIZE_OFFSET: usize = 12;
 
 /// Needle index
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct NeedleValue {
     /// needle offset
     ///
@@ -56,6 +64,30 @@ pub struct NeedleValue {
     pub offset: Offset,
     /// needle data size
     pub size: Size,
+}
+
+impl leapfrog::Value for NeedleValue {
+    fn is_redirect(&self) -> bool {
+        self.offset.0.is_redirect() && self.size.0.is_redirect()
+    }
+
+    fn is_null(&self) -> bool {
+        self.offset.0.is_null() && self.size.0.is_null()
+    }
+
+    fn redirect() -> Self {
+        Self {
+            offset: Offset(u32::redirect()),
+            size: Size(i32::redirect()),
+        }
+    }
+
+    fn null() -> Self {
+        Self {
+            offset: Offset(u32::null()),
+            size: Size(i32::null()),
+        }
+    }
 }
 
 impl NeedleValue {

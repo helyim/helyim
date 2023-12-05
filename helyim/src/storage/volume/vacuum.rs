@@ -16,14 +16,16 @@ use tracing::{debug, error, info};
 
 use crate::{
     storage::{
-        needle::{read_needle_blob, NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
-        needle_map::{read_index_entry, walk_index_file},
+        needle::{
+            read_index_entry, read_needle_blob, walk_index_file, NeedleMapper, NEEDLE_INDEX_SIZE,
+            NEEDLE_PADDING_SIZE,
+        },
         volume::{
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
             COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
-        Needle, NeedleError, NeedleMapper, NeedleValue, VolumeError, VolumeId,
+        Needle, NeedleError, NeedleValue, VolumeError, VolumeId,
     },
     topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
     util::time::now,

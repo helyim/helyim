@@ -12,13 +12,10 @@ mod file_id;
 pub use file_id::FileId;
 
 mod needle;
-pub use needle::{Needle, NeedleValue};
-
-mod needle_map;
-pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
-
-mod needle_value_map;
-pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
+pub use needle::{
+    read_index_entry, walk_index_file, MemoryNeedleValueMap, Needle, NeedleMapType, NeedleMapper,
+    NeedleValue, NeedleValueMap,
+};
 
 mod server;
 pub use server::StorageServer;

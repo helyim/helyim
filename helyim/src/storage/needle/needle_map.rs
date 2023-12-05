@@ -3,14 +3,14 @@ use std::{
     io::{BufReader, Read},
     os::unix::fs::FileExt,
     result::Result,
+    sync::Arc,
 };
 
 use bytes::{Buf, BufMut};
 use tracing::{debug, error};
 
 use crate::storage::{
-    needle::NeedleValue,
-    needle_value_map::{MemoryNeedleValueMap, NeedleValueMap},
+    needle::{metric::Metric, MemoryNeedleValueMap, NeedleValue, NeedleValueMap},
     types::{Offset, Size},
     NeedleError, NeedleId, VolumeError, VolumeId,
 };
@@ -21,20 +21,11 @@ pub enum NeedleMapType {
     NeedleMapInMemory = 0,
 }
 
-#[derive(Default)]
-struct Metric {
-    maximum_file_key: NeedleId,
-    file_count: u64,
-    deleted_count: u64,
-    deleted_bytes: u64,
-    file_bytes: u64,
-}
-
 pub struct NeedleMapper {
     volume_id: VolumeId,
     needle_value_map: Box<dyn NeedleValueMap>,
     index_file: Option<File>,
-    metric: Metric,
+    metric: Arc<Metric>,
 }
 
 impl Default for NeedleMapper {
@@ -42,7 +33,7 @@ impl Default for NeedleMapper {
         NeedleMapper {
             volume_id: 0,
             needle_value_map: Box::new(MemoryNeedleValueMap::new()),
-            metric: Metric::default(),
+            metric: Arc::new(Metric::default()),
             index_file: None,
         }
     }
@@ -80,21 +71,17 @@ impl NeedleMapper {
     }
 
     pub fn set(
-        &mut self,
+        &self,
         key: NeedleId,
         index: NeedleValue,
     ) -> Result<Option<NeedleValue>, VolumeError> {
         debug!("needle map set key: {}, {}", key, index);
-        if key > self.metric.maximum_file_key {
-            self.metric.maximum_file_key = key;
-        }
-        self.metric.file_count += 1;
-        self.metric.file_bytes += index.size.0 as u64;
+        self.metric.compare_max_file_key(key);
+        self.metric.add_file(index.size);
         let old = self.needle_value_map.set(key, index);
 
         if let Some(n) = old {
-            self.metric.deleted_count += 1;
-            self.metric.deleted_bytes += n.size.0 as u64;
+            self.metric.delete_file(n.size);
         }
 
         self.append_to_index_file(key, index)?;
@@ -102,12 +89,11 @@ impl NeedleMapper {
         Ok(old)
     }
 
-    pub fn delete(&mut self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
+    pub fn delete(&self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
         let deleted = self.needle_value_map.delete(key);
 
         if let Some(index) = deleted {
-            self.metric.deleted_count += 1;
-            self.metric.deleted_bytes += index.size.0 as u64;
+            self.metric.delete_file(index.size);
             self.append_to_index_file(key, index)?;
             debug!("needle map delete key: {} {}", key, index);
         }
@@ -120,23 +106,23 @@ impl NeedleMapper {
     }
 
     pub fn file_count(&self) -> u64 {
-        self.metric.file_count
+        self.metric.file_count()
     }
 
     pub fn deleted_count(&self) -> u64 {
-        self.metric.deleted_count
+        self.metric.deleted_count()
     }
 
     pub fn deleted_bytes(&self) -> u64 {
-        self.metric.deleted_bytes
+        self.metric.deleted_bytes()
     }
 
     pub fn max_file_key(&self) -> NeedleId {
-        self.metric.maximum_file_key
+        self.metric.max_file_key()
     }
 
     pub fn content_size(&self) -> u64 {
-        self.metric.file_bytes
+        self.metric.file_bytes()
     }
 
     pub fn index_file_size(&self) -> Result<u64, VolumeError> {

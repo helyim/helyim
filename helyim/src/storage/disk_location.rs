@@ -12,7 +12,7 @@ use crate::{
     rt_spawn,
     storage::{
         erasure_coding::EcVolumeRef,
-        needle_map::NeedleMapType,
+        needle::NeedleMapType,
         ttl::Ttl,
         volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
         VolumeError, VolumeId,

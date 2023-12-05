@@ -29,9 +29,11 @@ pub fn write_sorted_file_from_idx(base_filename: &str, ext: &str) -> Result<(), 
         .truncate(true)
         .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
-    for (key, value) in nm.iter() {
-        let buf = value.as_bytes(*key);
-        ecx_file.write_all(&buf)?;
+    for mut entry in nm.map.iter() {
+        if let Some((key, value)) = entry.key_value() {
+            let buf = value.as_bytes(key);
+            ecx_file.write_all(&buf)?;
+        }
     }
     Ok(())
 }

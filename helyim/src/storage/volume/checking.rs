@@ -79,7 +79,7 @@ mod tests {
             .tempdir_in(".")
             .unwrap();
         let dir = FastStr::new(dir.path().to_str().unwrap());
-        let mut volume = Volume::new(
+        let volume = Volume::new(
             dir,
             FastStr::empty(),
             1,

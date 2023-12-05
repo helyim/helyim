@@ -17,9 +17,9 @@ use tracing::{debug, error, info};
 use crate::{
     storage::{
         needle::{
-            read_needle_header, Needle, NeedleValue, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
+            read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue,
+            NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
         },
-        needle_map::{NeedleMapType, NeedleMapper},
         ttl::Ttl,
         version::{Version, CURRENT_VERSION},
         volume::checking::check_volume_data_integrity,
@@ -240,7 +240,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
+    pub fn write_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         let volume_id = self.id;
         if self.readonly {
             return Err(VolumeError::Readonly(volume_id));
@@ -269,14 +269,14 @@ impl Volume {
         };
         self.needle_mapper.set(needle.id, nv)?;
 
-        if self.last_modified < needle.last_modified {
-            self.last_modified = needle.last_modified;
-        }
+        // if self.last_modified < needle.last_modified {
+        //     self.last_modified = needle.last_modified;
+        // }
 
         Ok(needle.data_size())
     }
 
-    pub fn delete_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
+    pub fn delete_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         if self.readonly {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -612,12 +612,13 @@ pub mod tests {
 
     use crate::storage::{
         crc,
+        needle::NeedleMapType,
         volume::{scan_volume_file, SuperBlock, Volume},
-        FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl, VolumeError,
+        FileId, Needle, ReplicaPlacement, Ttl, VolumeError,
     };
 
     pub fn setup(dir: FastStr) -> Volume {
-        let mut volume = Volume::new(
+        let volume = Volume::new(
             dir,
             FastStr::empty(),
             1,
