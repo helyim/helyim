@@ -5,7 +5,10 @@ use std::{
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     result::Result as StdResult,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        Arc,
+    },
     time::SystemTimeError,
 };
 
@@ -54,12 +57,12 @@ pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
 pub const IDX_FILE_SUFFIX: &str = "idx";
 pub const COMPACT_IDX_FILE_SUFFIX: &str = "cpx";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct SuperBlock {
     pub version: Version,
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
-    pub compact_revision: u16,
+    compact_revision: AtomicU16,
 }
 
 impl Default for SuperBlock {
@@ -68,7 +71,7 @@ impl Default for SuperBlock {
             version: CURRENT_VERSION,
             replica_placement: ReplicaPlacement::default(),
             ttl: Ttl::default(),
-            compact_revision: 0,
+            compact_revision: AtomicU16::new(0),
         }
     }
 }
@@ -78,6 +81,7 @@ impl SuperBlock {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
         let ttl = Ttl::from(&buf[2..4]);
         let compact_revision = (&buf[4..6]).get_u16();
+        let compact_revision = AtomicU16::new(compact_revision);
 
         Ok(SuperBlock {
             version: buf[0],
@@ -97,8 +101,16 @@ impl SuperBlock {
             buf[idx] = u;
             idx += 1;
         }
-        (&mut buf[4..6]).put_u16(self.compact_revision);
+        (&mut buf[4..6]).put_u16(self.compact_revision());
         buf
+    }
+
+    pub fn compact_revision(&self) -> u16 {
+        self.compact_revision.load(Ordering::Relaxed)
+    }
+
+    pub fn add_compact_revision(&self, revision: u16) -> u16 {
+        self.compact_revision.fetch_add(revision, Ordering::Relaxed)
     }
 }
 
@@ -110,11 +122,12 @@ pub struct Volume {
     data_file: Option<File>,
     needle_mapper: NeedleMapper,
     needle_map_type: NeedleMapType,
-    readonly: bool,
-    pub super_block: SuperBlock,
-    last_modified: u64,
-    last_compact_index_offset: u64,
-    last_compact_revision: u16,
+    pub super_block: Arc<SuperBlock>,
+
+    readonly: Arc<AtomicBool>,
+    last_modified: Arc<AtomicU64>,
+    last_compact_index_offset: Arc<AtomicU64>,
+    last_compact_revision: Arc<AtomicU16>,
 }
 
 impl Display for Volume {
@@ -127,7 +140,7 @@ impl Display for Volume {
             self.collection,
             self.super_block.replica_placement,
             self.super_block.ttl,
-            self.readonly
+            self.readonly()
         )
     }
 }
@@ -152,14 +165,14 @@ impl Volume {
             id,
             dir: dir.clone(),
             collection,
-            super_block: sb,
+            super_block: Arc::new(sb),
             data_file: None,
             needle_map_type,
             needle_mapper: NeedleMapper::new(id, needle_map_type),
-            readonly: false,
-            last_compact_index_offset: 0,
-            last_compact_revision: 0,
-            last_modified: 0,
+            readonly: Arc::new(AtomicBool::new(false)),
+            last_compact_index_offset: Arc::new(AtomicU64::new(0)),
+            last_compact_revision: Arc::new(AtomicU16::new(0)),
+            last_modified: Arc::new(AtomicU64::new(0)),
         };
 
         v.load(true, true)?;
@@ -206,7 +219,7 @@ impl Volume {
         if meta.permissions().readonly() {
             let file = fs::OpenOptions::new().read(true).open(&name)?;
             self.data_file = Some(file);
-            self.readonly = true;
+            self.set_readonly(true);
         } else {
             let file = fs::OpenOptions::new()
                 .read(true)
@@ -214,7 +227,7 @@ impl Volume {
                 .mode(0o644)
                 .open(&name)?;
 
-            self.last_modified = get_time(meta.modified()?)?.as_secs();
+            self.set_last_modified(get_time(meta.modified()?)?.as_secs());
             self.data_file = Some(file);
         }
 
@@ -232,7 +245,7 @@ impl Volume {
                 .open(self.index_filename())?;
 
             if let Err(err) = check_volume_data_integrity(self, &index_file) {
-                self.readonly = true;
+                self.set_readonly(true);
                 error!(
                     "volume data integrity checking failed. volume: {}, filename: {}, {err}",
                     self.id,
@@ -247,9 +260,9 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
+    pub fn write_needle(&mut self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
         let volume_id = self.id;
-        if self.readonly {
+        if self.readonly() {
             return Err(VolumeError::Readonly(volume_id));
         }
 
@@ -276,15 +289,15 @@ impl Volume {
         };
         self.needle_mapper.set(needle.id, nv)?;
 
-        // if self.last_modified < needle.last_modified {
-        //     self.last_modified = needle.last_modified;
-        // }
+        if self.last_modified() < needle.last_modified {
+            self.set_last_modified(needle.last_modified);
+        }
 
         Ok(needle.data_size())
     }
 
     pub fn delete_needle(&self, needle: &mut Needle) -> StdResult<u32, VolumeError> {
-        if self.readonly {
+        if self.readonly() {
             return Err(VolumeError::Readonly(self.id));
         }
 
@@ -373,16 +386,12 @@ impl Volume {
             file_count: self.needle_mapper.file_count() as i64,
             delete_count: self.needle_mapper.deleted_count() as i64,
             delete_bytes: self.needle_mapper.deleted_bytes(),
-            read_only: self.readonly,
+            read_only: self.readonly(),
         }
     }
 
-    pub fn is_readonly(&self) -> bool {
-        self.readonly
-    }
-
     pub fn destroy(&self) -> StdResult<(), VolumeError> {
-        if self.readonly {
+        if self.readonly() {
             return Err(VolumeError::Readonly(self.id));
         }
 
@@ -450,7 +459,7 @@ impl Volume {
             return false;
         }
 
-        if now().as_secs() > self.last_modified + self.super_block.ttl.minutes() as u64 * 60 {
+        if now().as_secs() > self.last_modified() + self.super_block.ttl.minutes() as u64 * 60 {
             return true;
         }
 
@@ -473,7 +482,7 @@ impl Volume {
             delay = max_delay_minutes;
         }
 
-        if (ttl.minutes() as u64 + delay) * 60 + self.last_modified < now().as_secs() {
+        if (ttl.minutes() as u64 + delay) * 60 + self.last_modified() < now().as_secs() {
             return true;
         }
 
@@ -500,9 +509,45 @@ impl Volume {
             let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
-        self.super_block = SuperBlock::parse(buf)?;
+        self.super_block = Arc::new(SuperBlock::parse(buf)?);
 
         Ok(())
+    }
+}
+
+impl Volume {
+    pub fn set_readonly(&self, readonly: bool) {
+        self.readonly.store(readonly, Ordering::Relaxed)
+    }
+
+    pub fn readonly(&self) -> bool {
+        self.readonly.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_modified(&self, last_modified: u64) {
+        self.last_modified.store(last_modified, Ordering::Relaxed)
+    }
+
+    pub fn last_modified(&self) -> u64 {
+        self.last_modified.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_compact_index_offset(&self, last_compact_index_offset: u64) {
+        self.last_compact_index_offset
+            .store(last_compact_index_offset, Ordering::Relaxed)
+    }
+
+    pub fn last_compact_index_offset(&self) -> u64 {
+        self.last_compact_index_offset.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_compact_revision(&self, last_compact_revision: u16) {
+        self.last_compact_revision
+            .store(last_compact_revision, Ordering::Relaxed)
+    }
+
+    pub fn last_compact_revision(&self) -> u16 {
+        self.last_compact_revision.load(Ordering::Relaxed)
     }
 }
 
@@ -597,11 +642,11 @@ pub fn scan_volume_file<VSB, VN>(
     mut visit_needle: VN,
 ) -> StdResult<(), VolumeError>
 where
-    VSB: FnMut(&mut SuperBlock) -> StdResult<(), VolumeError>,
+    VSB: FnMut(&Arc<SuperBlock>) -> StdResult<(), VolumeError>,
     VN: FnMut(&mut Needle, u64) -> StdResult<(), VolumeError>,
 {
-    let mut volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
-    visit_super_block(&mut volume.super_block)?;
+    let volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
+    visit_super_block(&volume.super_block)?;
 
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
@@ -675,6 +720,7 @@ impl VolumeRef {
 
 #[cfg(test)]
 pub mod tests {
+    use std::sync::Arc;
 
     use bytes::Bytes;
     use faststr::FastStr;
@@ -689,7 +735,7 @@ pub mod tests {
     };
 
     pub fn setup(dir: FastStr) -> Volume {
-        let volume = Volume::new(
+        let mut volume = Volume::new(
             dir,
             FastStr::empty(),
             1,
@@ -733,7 +779,7 @@ pub mod tests {
             volume.id,
             volume.needle_map_type,
             true,
-            |super_block: &mut SuperBlock| -> Result<(), VolumeError> { Ok(()) },
+            |super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> { Ok(()) },
             |needle, offset| -> Result<(), VolumeError> {
                 assert_eq!(needle.data_size, 11);
                 Ok(())

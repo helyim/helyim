@@ -130,11 +130,11 @@ impl Store {
     pub async fn write_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                if volume.read().await.is_readonly() {
+                if volume.read().await.readonly() {
                     return Err(VolumeError::Readonly(vid).into());
                 }
 
-                Ok(volume.read().await.write_needle(needle)?)
+                Ok(volume.write().await.write_needle(needle)?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }
@@ -247,7 +247,7 @@ impl Store {
                 }
 
                 if !volume.read().await.expired(self.volume_size_limit) {
-                    let super_block = volume.read().await.super_block;
+                    let super_block = volume.read().await.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: volume.read().await.data_file_size().unwrap_or(0),
@@ -255,7 +255,7 @@ impl Store {
                         file_count: volume.read().await.file_count(),
                         delete_count: volume.read().await.deleted_count(),
                         deleted_bytes: volume.read().await.deleted_bytes(),
-                        read_only: volume.read().await.is_readonly(),
+                        read_only: volume.read().await.readonly(),
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.read().await.version() as u32,
                         ttl: super_block.ttl.into(),
