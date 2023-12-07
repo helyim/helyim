@@ -75,8 +75,6 @@ pub enum Error {
 
     #[error("Broadcast channel closed")]
     BroadcastSend(#[from] async_broadcast::SendError<()>),
-    #[error("JoinHandle error: {0}")]
-    TaskJoin(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

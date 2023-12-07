@@ -4,7 +4,7 @@ use crate::storage::{types::Size, NeedleId};
 
 #[derive(Default)]
 pub struct Metric {
-    maximum_file_key: AtomicU64,
+    max_file_key: AtomicU64,
     file_count: AtomicU64,
     deleted_count: AtomicU64,
     deleted_bytes: AtomicU64,
@@ -25,12 +25,12 @@ impl Metric {
     }
 
     pub fn max_file_key(&self) -> NeedleId {
-        self.maximum_file_key.load(Ordering::Relaxed)
+        self.max_file_key.load(Ordering::Relaxed)
     }
 
     pub fn compare_max_file_key(&self, key: u64) {
         if key > self.max_file_key() {
-            self.maximum_file_key.store(key, Ordering::Relaxed);
+            self.max_file_key.store(key, Ordering::Relaxed);
         }
     }
 

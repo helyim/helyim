@@ -37,8 +37,8 @@ use crate::{
         api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageContext},
         erasure_coding::{
             ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
-            write_data_file, write_ec_files, write_idx_file_from_ec_index,
-            write_sorted_file_from_idx, ShardId,
+            write_data_file, write_ec_files, write_index_file_from_ec_index,
+            write_sorted_file_from_index, ShardId,
         },
         needle::NeedleMapType,
         store::StoreRef,
@@ -416,7 +416,7 @@ impl VolumeServer for StorageGrpcServer {
                     )));
                 }
                 write_ec_files(&base_filename)?;
-                write_sorted_file_from_idx(&base_filename, ".ecx")?;
+                write_sorted_file_from_index(&base_filename, ".ecx")?;
                 let volume_info = VolumeInfo {
                     version: volume.read().await.version() as u32,
                     ..Default::default()
@@ -678,7 +678,7 @@ impl VolumeServer for StorageGrpcServer {
                 let base_filename = volume.read().await.filename();
                 let data_filesize = find_data_filesize(&base_filename)?;
                 write_data_file(&base_filename, data_filesize)?;
-                write_idx_file_from_ec_index(&base_filename)?;
+                write_index_file_from_ec_index(&base_filename)?;
 
                 Ok(Response::new(VolumeEcShardsToVolumeResponse::default()))
             }

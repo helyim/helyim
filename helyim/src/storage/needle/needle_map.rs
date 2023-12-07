@@ -52,7 +52,7 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_idx_file(&mut self, mut index_file: File) -> Result<(), VolumeError> {
+    pub fn load_index_file(&mut self, mut index_file: File) -> Result<(), VolumeError> {
         walk_index_file(
             &mut index_file,
             |key, offset, size| -> Result<(), NeedleError> {

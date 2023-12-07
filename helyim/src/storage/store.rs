@@ -241,20 +241,20 @@ impl Store {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.read().await.max_volume_count;
             for (vid, volume) in location.read().await.get_volumes().iter() {
-                let volume_max_file_key = volume.read().await.max_file_key();
+                let volume_max_file_key = volume.read().await.max_file_key()?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.read().await.expired(self.volume_size_limit) {
+                if !volume.read().await.expired(self.volume_size_limit)? {
                     let super_block = volume.read().await.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: volume.read().await.data_file_size().unwrap_or(0),
                         collection: volume.read().await.collection.to_string(),
-                        file_count: volume.read().await.file_count(),
-                        delete_count: volume.read().await.deleted_count(),
-                        deleted_bytes: volume.read().await.deleted_bytes(),
+                        file_count: volume.read().await.file_count()?,
+                        delete_count: volume.read().await.deleted_count()?,
+                        deleted_bytes: volume.read().await.deleted_bytes()?,
                         read_only: volume.read().await.readonly(),
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.read().await.version() as u32,
@@ -293,7 +293,7 @@ impl Store {
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                let garbage_level = volume.read().await.garbage_level();
+                let garbage_level = volume.read().await.garbage_level()?;
                 if garbage_level > 0.0 {
                     info!("volume {vid} garbage level: {garbage_level}");
                 }

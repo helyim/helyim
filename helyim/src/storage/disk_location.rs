@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path, result::Result as StdResult, sync::Arc};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
 use faststr::FastStr;
 use futures::future::join_all;
@@ -7,9 +7,7 @@ use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::info;
 
 use crate::{
-    anyhow,
-    errors::Result,
-    rt_spawn,
+    anyhow, rt_spawn,
     storage::{
         erasure_coding::EcVolumeRef,
         needle::NeedleMapType,
@@ -37,11 +35,14 @@ impl DiskLocation {
     }
 
     /// concurrent loading volumes
-    pub async fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
+    pub async fn load_existing_volumes(
+        &mut self,
+        needle_map_type: NeedleMapType,
+    ) -> Result<(), VolumeError> {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
 
-        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef)>>> = vec![];
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef), VolumeError>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
@@ -95,7 +96,7 @@ impl DiskLocation {
         self.volumes.len()
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some(v) = self.volumes.remove(&vid) {
             v.read().await.destroy()?;
             info!(
@@ -107,7 +108,7 @@ impl DiskLocation {
     }
 }
 
-fn parse_volume_id_from_path(path: &Path) -> StdResult<(VolumeId, &str), VolumeError> {
+fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeError> {
     if path.is_dir() {
         return Err(anyhow!(
             "invalid data file: {}",

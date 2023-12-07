@@ -33,16 +33,16 @@ use crate::{
 };
 
 impl Volume {
-    pub fn garbage_level(&self) -> f64 {
-        if self.content_size() == 0 {
-            return 0.0;
+    pub fn garbage_level(&self) -> Result<f64, VolumeError> {
+        if self.content_size()? == 0 {
+            return Ok(0.0);
         }
-        self.deleted_bytes() as f64 / self.content_size() as f64
+        Ok(self.deleted_bytes()? as f64 / self.content_size()? as f64)
     }
 
     pub fn compact(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper.index_file_size()?);
+        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_and_generate_index_file(
@@ -55,7 +55,7 @@ impl Volume {
 
     pub fn compact2(&mut self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper.index_file_size()?);
+        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_based_on_index_file(
@@ -93,11 +93,12 @@ impl Volume {
             }
         }
         self.data_file = None;
+        self.needle_mapper = None;
         self.set_readonly(false);
         self.load(false, true)
     }
 
-    pub fn cleanup_compact(&mut self) -> StdResult<(), VolumeError> {
+    pub fn cleanup_compact(&self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
         fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
@@ -105,7 +106,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn makeup_diff(
+    fn makeup_diff(
         &self,
         new_data_filename: &str,
         new_idx_filename: &str,
@@ -209,7 +210,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn copy_data_and_generate_index_file(
+    fn copy_data_and_generate_index_file(
         &mut self,
         compact_data_filename: String,
         compact_index_filename: String,
@@ -228,7 +229,7 @@ impl Volume {
             .open(compact_index_filename)?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-        compact_nm.load_idx_file(compact_index_file)?;
+        compact_nm.load_index_file(compact_index_file)?;
 
         let mut new_offset = SUPER_BLOCK_SIZE as u64;
         let now = now().as_millis() as u64;
@@ -252,7 +253,7 @@ impl Volume {
                 {
                     return Ok(());
                 }
-                if let Some(nv) = self.needle_mapper.get(needle.id) {
+                if let Some(nv) = self.needle_mapper()?.get(needle.id) {
                     if (nv.offset.0 * NEEDLE_PADDING_SIZE) as u64 == offset && nv.size > 0 {
                         let nv = NeedleValue {
                             offset: new_offset.into(),
@@ -269,7 +270,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn copy_data_based_on_index_file(
+    fn copy_data_based_on_index_file(
         &mut self,
         compact_data_filename: String,
         compact_index_filename: String,
@@ -293,7 +294,7 @@ impl Volume {
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
-        compact_nm.load_idx_file(compact_index_file)?;
+        compact_nm.load_index_file(compact_index_file)?;
 
         let now = now().as_millis() as u64;
 
@@ -308,7 +309,11 @@ impl Volume {
                     return Ok(());
                 }
 
-                let nv = match self.needle_mapper.get(key) {
+                let nv = match self
+                    .needle_mapper()
+                    .map_err(|err| NeedleError::BoxError(err.into()))?
+                    .get(key)
+                {
                     Some(nv) => nv,
                     None => return Ok(()),
                 };
