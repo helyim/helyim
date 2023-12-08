@@ -18,9 +18,9 @@ use axum::{
 };
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
+use parking_lot::Mutex;
 use rustix::fs::ftruncate;
 use serde_json::json;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -119,6 +119,7 @@ pub struct Volume {
     dir: FastStr,
     pub collection: FastStr,
     data_file: Option<File>,
+    data_file_lock: Mutex<()>,
     needle_mapper: Option<Arc<NeedleMapper>>,
     needle_map_type: NeedleMapType,
     pub super_block: Arc<SuperBlock>,
@@ -160,12 +161,13 @@ impl Volume {
             ..Default::default()
         };
 
-        let mut v = Volume {
+        let v = Volume {
             id,
             dir: dir.clone(),
             collection,
             super_block: Arc::new(sb),
             data_file: None,
+            data_file_lock: Mutex::new(()),
             needle_map_type,
             needle_mapper: None,
             readonly: Arc::new(AtomicBool::new(true)),
@@ -179,7 +181,7 @@ impl Volume {
         Ok(v)
     }
 
-    pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<(), VolumeError> {
+    pub fn load(&self, create_if_missing: bool, load_index: bool) -> Result<(), VolumeError> {
         if self.data_file.is_some() {
             return Err(VolumeError::HasLoaded(self.id));
         }
@@ -222,7 +224,7 @@ impl Volume {
                 .mode(0o644)
                 .open(&name)?
         };
-        self.data_file = Some(file);
+        self.set_data_file(Some(file));
 
         if has_super_block {
             self.read_super_block()?;
@@ -247,7 +249,7 @@ impl Volume {
             }
             let mut needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
             needle_mapper.load_index_file(index_file)?;
-            self.needle_mapper = Some(Arc::new(needle_mapper));
+            self.set_needle_mapper(Some(Arc::new(needle_mapper)));
             info!("load index file `{}` success", self.index_filename());
         }
 
@@ -268,13 +270,16 @@ impl Volume {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
 
-        if let Err(err) = needle.append(file, offset, version) {
-            error!(
-                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                needle.id
-            );
-            ftruncate(file, offset)?;
-            return Err(err.into());
+        {
+            let _lock = self.data_file_lock.lock();
+            if let Err(err) = needle.append(file, offset, version) {
+                error!(
+                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                    needle.id
+                );
+                ftruncate(file, offset)?;
+                return Err(err.into());
+            }
         }
 
         let nv = NeedleValue {
@@ -315,7 +320,10 @@ impl Volume {
         if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
-        needle.append(file, offset, version)?;
+        {
+            let _lock = self.data_file_lock.lock();
+            needle.append(file, offset, version)?;
+        }
         Ok(data_size)
     }
 
@@ -426,13 +434,6 @@ impl Volume {
         Ok(file.metadata()?.len())
     }
 
-    pub fn set_data_file(&self, file: Option<File>) {
-        unsafe {
-            let volume = self as *const Self as *mut Self;
-            (*volume).data_file = file;
-        }
-    }
-
     pub fn data_file(&self) -> Result<&File, VolumeError> {
         match self.data_file.as_ref() {
             Some(data_file) => Ok(data_file),
@@ -514,14 +515,13 @@ impl Volume {
         Ok(())
     }
 
-    fn read_super_block(&mut self) -> Result<(), VolumeError> {
+    fn read_super_block(&self) -> Result<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
             let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
-        self.super_block = Arc::new(SuperBlock::parse(buf)?);
-
+        self.set_super_block(SuperBlock::parse(buf)?);
         Ok(())
     }
 }
@@ -559,6 +559,29 @@ impl Volume {
 
     pub fn last_compact_revision(&self) -> u16 {
         self.last_compact_revision.load(Ordering::Relaxed)
+    }
+}
+
+impl Volume {
+    pub fn set_data_file(&self, file: Option<File>) {
+        unsafe {
+            let volume = self as *const Self as *mut Self;
+            (*volume).data_file = file;
+        }
+    }
+
+    pub fn set_needle_mapper(&self, needle_mapper: Option<Arc<NeedleMapper>>) {
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).needle_mapper = needle_mapper;
+        }
+    }
+
+    pub fn set_super_block(&self, super_block: SuperBlock) {
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).super_block = Arc::new(super_block);
+        }
     }
 }
 
@@ -637,7 +660,7 @@ fn load_volume_without_index(
     id: VolumeId,
     needle_map_type: NeedleMapType,
 ) -> Result<Volume, VolumeError> {
-    let mut volume = Volume {
+    let volume = Volume {
         dir: dirname,
         collection,
         id,
@@ -698,39 +721,6 @@ where
                 return Err(VolumeError::Needle(err));
             }
         }
-    }
-}
-
-#[derive(Clone)]
-pub struct VolumeRef(Arc<RwLock<Volume>>);
-
-impl VolumeRef {
-    pub fn new(
-        dir: FastStr,
-        collection: FastStr,
-        id: VolumeId,
-        needle_map_type: NeedleMapType,
-        replica_placement: ReplicaPlacement,
-        ttl: Ttl,
-        preallocate: i64,
-    ) -> Result<VolumeRef, VolumeError> {
-        Ok(Self(Arc::new(RwLock::new(Volume::new(
-            dir,
-            collection,
-            id,
-            needle_map_type,
-            replica_placement,
-            ttl,
-            preallocate,
-        )?))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Volume> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Volume> {
-        self.0.write().await
     }
 }
 

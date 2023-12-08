@@ -40,7 +40,7 @@ impl Volume {
         Ok(self.deleted_bytes()? as f64 / self.content_size()? as f64)
     }
 
-    pub fn compact(&mut self) -> StdResult<(), VolumeError> {
+    pub fn compact(&self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
@@ -53,7 +53,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn compact2(&mut self) -> StdResult<(), VolumeError> {
+    pub fn compact2(&self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
@@ -66,7 +66,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&mut self) -> StdResult<(), VolumeError> {
+    pub fn commit_compact(&self) -> StdResult<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -92,8 +92,8 @@ impl Volume {
                 fs::remove_file(compact_index_filename)?;
             }
         }
-        self.data_file = None;
-        self.needle_mapper = None;
+        self.set_data_file(None);
+        self.set_needle_mapper(None);
         self.set_readonly(false);
         self.load(false, true)
     }
@@ -211,7 +211,7 @@ impl Volume {
     }
 
     fn copy_data_and_generate_index_file(
-        &mut self,
+        &self,
         compact_data_filename: String,
         compact_index_filename: String,
     ) -> StdResult<(), VolumeError> {
@@ -271,7 +271,7 @@ impl Volume {
     }
 
     fn copy_data_based_on_index_file(
-        &mut self,
+        &self,
         compact_data_filename: String,
         compact_index_filename: String,
     ) -> StdResult<(), VolumeError> {

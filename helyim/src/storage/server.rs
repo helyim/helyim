@@ -408,8 +408,8 @@ impl VolumeServer for StorageGrpcServer {
             .await?
         {
             Some(volume) => {
-                let base_filename = volume.read().await.filename();
-                let collection = volume.read().await.collection.clone();
+                let base_filename = volume.filename();
+                let collection = volume.collection.clone();
                 if collection != request.collection {
                     return Err(Status::invalid_argument(format!(
                         "invalid collection, expect: {collection}"
@@ -418,7 +418,7 @@ impl VolumeServer for StorageGrpcServer {
                 write_ec_files(&base_filename)?;
                 write_sorted_file_from_index(&base_filename, ".ecx")?;
                 let volume_info = VolumeInfo {
-                    version: volume.read().await.version() as u32,
+                    version: volume.version() as u32,
                     ..Default::default()
                 };
                 save_volume_info(&format!("{}.vif", base_filename), volume_info)?;

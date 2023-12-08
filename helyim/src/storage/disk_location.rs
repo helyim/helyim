@@ -12,7 +12,7 @@ use crate::{
         erasure_coding::EcVolumeRef,
         needle::NeedleMapType,
         ttl::Ttl,
-        volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
+        volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
         VolumeError, VolumeId,
     },
 };
@@ -20,7 +20,7 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, VolumeRef>,
+    pub volumes: HashMap<VolumeId, Arc<Volume>>,
     pub ec_volumes: HashMap<VolumeId, EcVolumeRef>,
 }
 
@@ -42,7 +42,8 @@ impl DiskLocation {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
 
-        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef), VolumeError>>> = vec![];
+        #[allow(clippy::type_complexity)]
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, Arc<Volume>), VolumeError>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
@@ -55,7 +56,7 @@ impl DiskLocation {
                     let collection = FastStr::new(collection);
 
                     let handle = rt_spawn(async move {
-                        let volume = VolumeRef::new(
+                        let volume = Volume::new(
                             dir,
                             collection,
                             vid,
@@ -65,7 +66,7 @@ impl DiskLocation {
                             0,
                         )?;
 
-                        Ok((vid, volume))
+                        Ok((vid, Arc::new(volume)))
                     });
                     handles.push(handle);
                 }
@@ -80,15 +81,15 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeRef) {
+    pub fn add_volume(&mut self, vid: VolumeId, volume: Arc<Volume>) {
         self.volumes.insert(vid, volume);
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeRef> {
+    pub fn get_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
         self.volumes.get(&vid).cloned()
     }
 
-    pub fn get_volumes(&self) -> HashMap<VolumeId, VolumeRef> {
+    pub fn get_volumes(&self) -> HashMap<VolumeId, Arc<Volume>> {
         self.volumes.clone()
     }
 
@@ -98,7 +99,7 @@ impl DiskLocation {
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.read().await.destroy()?;
+            v.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory
