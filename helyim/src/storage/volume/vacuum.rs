@@ -4,7 +4,6 @@ use std::{
     fs::File,
     io::{Seek, SeekFrom},
     os::unix::fs::{FileExt, OpenOptionsExt},
-    result::Result as StdResult,
     sync::Arc,
 };
 
@@ -40,7 +39,7 @@ impl Volume {
         Ok(self.deleted_bytes()? as f64 / self.content_size()? as f64)
     }
 
-    pub fn compact(&self) -> StdResult<(), VolumeError> {
+    pub fn compact(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
@@ -53,7 +52,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn compact2(&self) -> StdResult<(), VolumeError> {
+    pub fn compact2(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
@@ -66,7 +65,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&self) -> StdResult<(), VolumeError> {
+    pub fn commit_compact(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -92,13 +91,16 @@ impl Volume {
                 fs::remove_file(compact_index_filename)?;
             }
         }
-        self.set_data_file(None);
-        self.set_needle_mapper(None);
-        self.set_readonly(false);
-        self.load(false, true)
+
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).data_file = None;
+            (*this).needle_mapper = None;
+            (*this).load(false, true)
+        }
     }
 
-    pub fn cleanup_compact(&self) -> StdResult<(), VolumeError> {
+    pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {
         let filename = self.filename();
         fs::remove_file(format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename))?;
         fs::remove_file(format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename))?;
@@ -112,7 +114,7 @@ impl Volume {
         new_idx_filename: &str,
         old_data_filename: &str,
         old_idx_filename: &str,
-    ) -> StdResult<(), VolumeError> {
+    ) -> Result<(), VolumeError> {
         let old_idx_file = fs::OpenOptions::new().read(true).open(old_idx_filename)?;
         let old_data_file = fs::OpenOptions::new().read(true).open(old_data_filename)?;
 
@@ -214,7 +216,7 @@ impl Volume {
         &self,
         compact_data_filename: String,
         compact_index_filename: String,
-    ) -> StdResult<(), VolumeError> {
+    ) -> Result<(), VolumeError> {
         let compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -242,12 +244,12 @@ impl Volume {
             self.id,
             self.needle_map_type,
             true,
-            |super_block: &Arc<SuperBlock>| -> StdResult<(), VolumeError> {
+            |super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> {
                 super_block.add_compact_revision(1);
                 compact_data_file.write_all_at(&super_block.as_bytes(), 0)?;
                 Ok(())
             },
-            |needle, offset| -> StdResult<(), VolumeError> {
+            |needle, offset| -> Result<(), VolumeError> {
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
                 {
@@ -274,7 +276,7 @@ impl Volume {
         &self,
         compact_data_filename: String,
         compact_index_filename: String,
-    ) -> StdResult<(), VolumeError> {
+    ) -> Result<(), VolumeError> {
         let compact_data_file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -304,7 +306,7 @@ impl Volume {
 
         walk_index_file(
             &mut old_idx_file,
-            |key, offset, size| -> StdResult<(), NeedleError> {
+            |key, offset, size| -> Result<(), NeedleError> {
                 if offset == 0 {
                     return Ok(());
                 }
@@ -355,7 +357,7 @@ impl Volume {
     }
 }
 
-fn fetch_compact_revision_from_data_file(file: &File) -> StdResult<u16, VolumeError> {
+fn fetch_compact_revision_from_data_file(file: &File) -> Result<u16, VolumeError> {
     let mut buf = [0u8; SUPER_BLOCK_SIZE];
     file.read_exact_at(&mut buf, 0)?;
     let sb = SuperBlock::parse(buf)?;
@@ -366,7 +368,7 @@ pub async fn batch_vacuum_volume_check(
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
     garbage_ratio: f64,
-) -> StdResult<bool, VolumeError> {
+) -> bool {
     let mut need_vacuum = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
@@ -391,7 +393,7 @@ pub async fn batch_vacuum_volume_check(
             }
         }
     }
-    Ok(need_vacuum)
+    need_vacuum
 }
 
 pub async fn batch_vacuum_volume_compact(
@@ -399,7 +401,7 @@ pub async fn batch_vacuum_volume_compact(
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
     preallocate: u64,
-) -> StdResult<bool, VolumeError> {
+) -> bool {
     volume_layout.write().await.remove_from_writable(volume_id);
     let mut compact_success = true;
     for data_node in data_nodes {
@@ -425,14 +427,14 @@ pub async fn batch_vacuum_volume_compact(
             }
         }
     }
-    Ok(compact_success)
+    compact_success
 }
 
 pub async fn batch_vacuum_volume_commit(
     volume_layout: &mut VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
-) -> StdResult<bool, VolumeError> {
+) -> bool {
     let mut commit_success = true;
     let mut is_readonly = false;
     for data_node in data_nodes {
@@ -463,19 +465,15 @@ pub async fn batch_vacuum_volume_commit(
                 .write()
                 .await
                 .set_volume_available(volume_id, data_node, is_readonly)
-                .await
-                .map_err(|err| VolumeError::BoxError(err.into()))?;
+                .await;
         }
     }
 
-    Ok(commit_success)
+    commit_success
 }
 
 #[allow(dead_code)]
-async fn batch_vacuum_volume_cleanup(
-    volume_id: VolumeId,
-    data_nodes: &[DataNodeRef],
-) -> StdResult<bool, VolumeError> {
+async fn batch_vacuum_volume_cleanup(volume_id: VolumeId, data_nodes: &[DataNodeRef]) -> bool {
     let mut cleanup_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };
@@ -493,5 +491,5 @@ async fn batch_vacuum_volume_cleanup(
             }
         }
     }
-    Ok(cleanup_success)
+    cleanup_success
 }

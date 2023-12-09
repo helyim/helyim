@@ -118,8 +118,10 @@ pub struct Volume {
     id: VolumeId,
     dir: FastStr,
     pub collection: FastStr,
+
     data_file: Option<File>,
-    data_file_lock: Mutex<()>,
+    data_file_mutex: Mutex<()>,
+
     needle_mapper: Option<Arc<NeedleMapper>>,
     needle_map_type: NeedleMapType,
     pub super_block: Arc<SuperBlock>,
@@ -161,13 +163,13 @@ impl Volume {
             ..Default::default()
         };
 
-        let v = Volume {
+        let mut v = Volume {
             id,
             dir: dir.clone(),
             collection,
             super_block: Arc::new(sb),
             data_file: None,
-            data_file_lock: Mutex::new(()),
+            data_file_mutex: Mutex::new(()),
             needle_map_type,
             needle_mapper: None,
             readonly: Arc::new(AtomicBool::new(true)),
@@ -181,7 +183,7 @@ impl Volume {
         Ok(v)
     }
 
-    pub fn load(&self, create_if_missing: bool, load_index: bool) -> Result<(), VolumeError> {
+    pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<(), VolumeError> {
         if self.data_file.is_some() {
             return Err(VolumeError::HasLoaded(self.id));
         }
@@ -224,7 +226,7 @@ impl Volume {
                 .mode(0o644)
                 .open(&name)?
         };
-        self.set_data_file(Some(file));
+        self.data_file = Some(file);
 
         if has_super_block {
             self.read_super_block()?;
@@ -249,7 +251,7 @@ impl Volume {
             }
             let mut needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
             needle_mapper.load_index_file(index_file)?;
-            self.set_needle_mapper(Some(Arc::new(needle_mapper)));
+            self.needle_mapper = Some(Arc::new(needle_mapper));
             info!("load index file `{}` success", self.index_filename());
         }
 
@@ -271,7 +273,7 @@ impl Volume {
         }
 
         {
-            let _lock = self.data_file_lock.lock();
+            let _lock = self.data_file_mutex.lock();
             if let Err(err) = needle.append(file, offset, version) {
                 error!(
                     "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
@@ -321,7 +323,7 @@ impl Volume {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
         {
-            let _lock = self.data_file_lock.lock();
+            let _lock = self.data_file_mutex.lock();
             needle.append(file, offset, version)?;
         }
         Ok(data_size)
@@ -515,13 +517,13 @@ impl Volume {
         Ok(())
     }
 
-    fn read_super_block(&self) -> Result<(), VolumeError> {
+    fn read_super_block(&mut self) -> Result<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
             let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
-        self.set_super_block(SuperBlock::parse(buf)?);
+        self.super_block = Arc::new(SuperBlock::parse(buf)?);
         Ok(())
     }
 }
@@ -563,20 +565,6 @@ impl Volume {
 }
 
 impl Volume {
-    pub fn set_data_file(&self, file: Option<File>) {
-        unsafe {
-            let volume = self as *const Self as *mut Self;
-            (*volume).data_file = file;
-        }
-    }
-
-    pub fn set_needle_mapper(&self, needle_mapper: Option<Arc<NeedleMapper>>) {
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).needle_mapper = needle_mapper;
-        }
-    }
-
     pub fn set_super_block(&self, super_block: SuperBlock) {
         unsafe {
             let this = self as *const Self as *mut Self;
@@ -660,7 +648,7 @@ fn load_volume_without_index(
     id: VolumeId,
     needle_map_type: NeedleMapType,
 ) -> Result<Volume, VolumeError> {
-    let volume = Volume {
+    let mut volume = Volume {
         dir: dirname,
         collection,
         id,

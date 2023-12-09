@@ -4,7 +4,6 @@ use std::{
     fmt::{Display, Formatter},
     fs::File,
     os::unix::fs::FileExt,
-    result::Result as StdResult,
 };
 
 use bytes::{Buf, BufMut, Bytes};
@@ -147,7 +146,7 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> StdResult<Bytes, NeedleError> {
+pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> Result<Bytes, NeedleError> {
     let size = size.actual_size();
     let mut buf = vec![0; size as usize];
 
@@ -157,7 +156,7 @@ pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> StdResult<By
 }
 
 impl Needle {
-    pub fn new_with_fid(fid: &str) -> StdResult<Self, NeedleError> {
+    pub fn new_with_fid(fid: &str) -> Result<Self, NeedleError> {
         let mut needle = Self::default();
         needle.parse_path(fid)?;
         Ok(needle)
@@ -173,7 +172,7 @@ impl Needle {
         );
     }
 
-    pub fn parse_path(&mut self, fid: &str) -> StdResult<(), NeedleError> {
+    pub fn parse_path(&mut self, fid: &str) -> Result<(), NeedleError> {
         if fid.len() <= 8 {
             return Err(NeedleError::InvalidFid(fid.to_string()));
         }
@@ -200,7 +199,7 @@ impl Needle {
         offset: u64,
         body_len: u32,
         version: Version,
-    ) -> StdResult<(), NeedleError> {
+    ) -> Result<(), NeedleError> {
         if body_len == 0 {
             return Ok(());
         }
@@ -266,7 +265,7 @@ impl Needle {
         w: &W,
         offset: u64,
         version: Version,
-    ) -> StdResult<(), NeedleError> {
+    ) -> Result<(), NeedleError> {
         if version != CURRENT_VERSION {
             return Err(NeedleError::UnsupportedVersion(version));
         }
@@ -330,7 +329,7 @@ impl Needle {
         offset: Offset,
         size: Size,
         version: Version,
-    ) -> StdResult<(), NeedleError> {
+    ) -> Result<(), NeedleError> {
         let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
@@ -467,7 +466,7 @@ impl From<NeedleError> for tonic::Status {
     }
 }
 
-fn parse_key_hash(hash: &str) -> StdResult<(NeedleId, Cookie), NeedleError> {
+fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie), NeedleError> {
     if hash.len() <= 8 || hash.len() > 24 {
         return Err(NeedleError::InvalidKeyHash(hash.to_string()));
     }
@@ -484,7 +483,7 @@ pub fn read_needle_header(
     file: &File,
     version: Version,
     offset: u64,
-) -> StdResult<(Needle, u32), NeedleError> {
+) -> Result<(Needle, u32), NeedleError> {
     let mut needle = Needle::default();
     let mut body_len = 0;
 

@@ -11,10 +11,9 @@ use std::{
 use faststr::FastStr;
 use serde::Serialize;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::{
-    errors::Result,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -182,7 +181,7 @@ impl Topology {
         self.clone()
     }
 
-    pub async fn vacuum(&mut self, garbage_threshold: f64, preallocate: u64) -> Result<()> {
+    pub async fn vacuum(&mut self, garbage_threshold: f64, preallocate: u64) {
         for (_name, collection) in self.collections.iter_mut() {
             for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
                 // TODO: avoid cloning the HashMap
@@ -197,18 +196,16 @@ impl Topology {
                         continue;
                     }
 
-                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await?
+                    if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await
                         && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
-                            .await?
+                            .await
                     {
-                        batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await?;
+                        batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
             }
         }
-
-        Ok(())
     }
 }
 
@@ -249,10 +246,8 @@ pub async fn topology_vacuum_loop(
         tokio::select! {
             _ = interval.tick() => {
                 debug!("topology vacuum starting.");
-                match topology.write().await.vacuum(garbage_threshold, preallocate).await {
-                    Ok(_) => debug!("topology vacuum success."),
-                    Err(err) => error!("topology vacuum failed, {err}")
-                }
+                topology.write().await.vacuum(garbage_threshold, preallocate).await;
+                debug!("topology vacuum success.")
             }
             _ = shutdown.recv() => {
                 break;
