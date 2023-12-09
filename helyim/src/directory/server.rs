@@ -325,7 +325,7 @@ async fn handle_heartbeat(
             FastStr::new(ip),
             heartbeat.port as u16,
             FastStr::new(heartbeat.public_url),
-            heartbeat.max_volume_count as i64,
+            heartbeat.max_volume_count as u64,
         )
         .await?;
     node.write().await.set_rack(rack.downgrade());

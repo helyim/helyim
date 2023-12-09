@@ -160,7 +160,7 @@ async fn find_main_data_center(
     let mut candidates = vec![];
 
     for (_, data_center) in data_centers.iter() {
-        if !option.data_center.is_empty() && data_center.read().await.id != option.data_center {
+        if !option.data_center.is_empty() && data_center.read().await.id() != option.data_center {
             continue;
         }
         let racks = data_center.read().await.racks.clone();
@@ -168,7 +168,7 @@ async fn find_main_data_center(
             continue;
         }
         if data_center.read().await.free_volumes().await
-            < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1
+            < rp.diff_rack_count as u64 + rp.same_rack_count as u64 + 1
         {
             continue;
         }
@@ -198,7 +198,7 @@ async fn find_main_data_center(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dc = candidates[first_idx].clone();
-    debug!("picked main data center: {}", main_dc.read().await.id);
+    debug!("picked main data center: {}", main_dc.read().await.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
     candidates.remove(first_idx);
@@ -229,7 +229,7 @@ async fn find_main_rack(
         if !option.rack.is_empty() && option.rack != rack.read().await.id {
             continue;
         }
-        if rack.read().await.free_volumes().await < rp.same_rack_count as i64 + 1 {
+        if rack.read().await.free_volumes().await < rp.same_rack_count as u64 + 1 {
             continue;
         }
         let data_nodes = rack.read().await.data_nodes.clone();
@@ -256,7 +256,7 @@ async fn find_main_rack(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_rack = candidates[first_idx].clone();
-    debug!("picked main rack: {}", main_rack.read().await.id);
+    debug!("picked main rack: {}", main_rack.read().await.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_rack_count as usize);
     candidates.remove(first_idx);
@@ -298,7 +298,7 @@ async fn find_main_node(
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();
-    debug!("picked main data node: {}", main_dn.read().await.id);
+    debug!("picked main data node: {}", main_dn.read().await.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
     candidates.remove(first_idx);

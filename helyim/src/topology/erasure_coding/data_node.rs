@@ -1,19 +1,8 @@
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::collections::HashMap;
 
 use crate::{storage::erasure_coding::EcVolumeInfo, topology::data_node::DataNode};
 
 impl DataNode {
-    pub async fn up_adjust_ec_shard_count_delta(&self, ec_shard_count_delta: u64) {
-        self.ec_shard_count
-            .fetch_add(ec_shard_count_delta, Ordering::Relaxed);
-        if let Some(rack) = self.rack.upgrade() {
-            rack.write()
-                .await
-                .up_adjust_ec_shard_count_delta(ec_shard_count_delta)
-                .await;
-        }
-    }
-
     pub fn get_ec_shards(&self) -> Vec<&EcVolumeInfo> {
         let mut volumes = Vec::new();
         for (_, ec_volume) in self.ec_shards.iter() {
@@ -68,7 +57,7 @@ impl DataNode {
 
         if !new_shards.is_empty() || !deleted_shards.is_empty() {
             self.ec_shards = actual_ec_shard_map;
-            self.up_adjust_ec_shard_count_delta(new_shard_count - deleted_shard_count)
+            self.adjust_ec_shard_count(new_shard_count as i64 - deleted_shard_count as i64)
                 .await;
         }
 
@@ -101,7 +90,7 @@ impl DataNode {
                 delta
             }
         };
-        self.up_adjust_ec_shard_count_delta(delta).await;
+        self.adjust_ec_shard_count(delta as i64).await;
     }
 
     pub async fn delete_ec_shard(&mut self, volume: &mut EcVolumeInfo) {
@@ -112,7 +101,7 @@ impl DataNode {
             if ec_shard.shard_bits.shard_id_count() == 0 {
                 self.ec_shards.remove(&volume.volume_id);
             }
-            self.up_adjust_ec_shard_count_delta(delta).await;
+            self.adjust_ec_shard_count(delta as i64).await;
         }
     }
 }

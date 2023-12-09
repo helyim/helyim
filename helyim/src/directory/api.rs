@@ -40,7 +40,7 @@ pub async fn assign_handler(
         .has_writable_volume(option.clone())
         .await
     {
-        if ctx.topology.read().await.free_volumes().await <= 0 {
+        if ctx.topology.read().await.free_volumes().await == 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow

@@ -1,10 +1,8 @@
 use std::{
     collections::HashMap,
+    ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Weak,
-    },
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -22,18 +20,18 @@ use crate::{
     },
     topology::{
         collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
-        volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
+        node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
     },
 };
 
 #[derive(Serialize)]
 pub struct Topology {
+    node: Node,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
     #[serde(skip)]
     pub ec_shards: HashMap<VolumeId, EcShardLocations>,
-    pub ec_shard_count: AtomicU64,
     pulse: u64,
     volume_size_limit: u64,
     // children
@@ -47,10 +45,10 @@ pub struct Topology {
 impl Clone for Topology {
     fn clone(&self) -> Self {
         Self {
+            node: self.node.clone(),
             sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
             ec_shards: self.ec_shards.clone(),
-            ec_shard_count: AtomicU64::new(self.ec_shard_count.load(Ordering::Relaxed)),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
@@ -61,11 +59,12 @@ impl Clone for Topology {
 
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
+        let node = Node::new(FastStr::new("topo"));
         Topology {
+            node,
             sequencer,
             collections: HashMap::new(),
             ec_shards: HashMap::new(),
-            ec_shard_count: AtomicU64::new(0),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
@@ -114,15 +113,6 @@ impl Topology {
         );
 
         vl.read().await.active_volume_count(option).await > 0
-    }
-
-    pub async fn free_volumes(&self) -> i64 {
-        let mut free = 0;
-        for data_center in self.data_centers.values() {
-            free += data_center.read().await.max_volumes().await
-                - data_center.read().await.has_volumes().await;
-        }
-        free
     }
 
     pub async fn pick_for_write(
@@ -231,12 +221,72 @@ impl Topology {
     async fn get_max_volume_id(&self) -> VolumeId {
         let mut vid = 0;
         for (_, data_center) in self.data_centers.iter() {
-            let other = data_center.read().await.max_volume_id;
+            let other = data_center.read().await.max_volume_id();
             if other > vid {
                 vid = other;
             }
         }
         vid
+    }
+}
+
+impl Topology {
+    pub async fn volume_count(&self) -> u64 {
+        let mut count = 0;
+        for dc in self.data_centers.values() {
+            count += dc.read().await.volume_count().await;
+        }
+        count
+    }
+
+    pub async fn max_volume_count(&self) -> u64 {
+        let mut max_volumes = 0;
+        for dc in self.data_centers.values() {
+            max_volumes += dc.read().await.max_volume_count().await;
+        }
+        max_volumes
+    }
+
+    pub async fn free_volumes(&self) -> u64 {
+        let mut free_volumes = 0;
+        for dc in self.data_centers.values() {
+            free_volumes += dc.read().await.free_volumes().await;
+        }
+        free_volumes
+    }
+
+    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self._adjust_volume_count(volume_count_delta);
+    }
+
+    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self._adjust_active_volume_count(active_volume_count_delta);
+    }
+
+    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self._adjust_ec_shard_count(ec_shard_count_delta);
+    }
+
+    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self._adjust_max_volume_count(max_volume_count_delta);
+    }
+
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
+        self._adjust_max_volume_id(vid);
+    }
+}
+
+impl Deref for Topology {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+
+impl DerefMut for Topology {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
     }
 }
 

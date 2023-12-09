@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU64, Arc, Weak},
+    ops::{Deref, DerefMut},
+    sync::{Arc, Weak},
 };
 
 use faststr::FastStr;
@@ -10,14 +11,12 @@ use tokio::sync::RwLock;
 
 use crate::{
     storage::{VolumeError, VolumeId},
-    topology::{rack::RackRef, topology::WeakTopologyRef, DataNodeRef},
+    topology::{node::Node, rack::RackRef, topology::WeakTopologyRef, DataNodeRef},
 };
 
 #[derive(Serialize)]
 pub struct DataCenter {
-    pub id: FastStr,
-    pub max_volume_id: VolumeId,
-    pub ec_shard_count: AtomicU64,
+    node: Node,
     // parent
     #[serde(skip)]
     pub topology: WeakTopologyRef,
@@ -28,23 +27,16 @@ pub struct DataCenter {
 
 impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
+        let node = Node::new(id);
         Self {
-            id: id.clone(),
+            node,
             topology: WeakTopologyRef::new(),
             racks: HashMap::new(),
-            max_volume_id: 0,
-            ec_shard_count: AtomicU64::new(0),
         }
     }
 
     pub fn set_topology(&mut self, topology: WeakTopologyRef) {
         self.topology = topology;
-    }
-
-    pub fn adjust_max_volume_id(&mut self, vid: VolumeId) {
-        if vid > self.max_volume_id {
-            self.max_volume_id = vid;
-        }
     }
 
     pub fn get_or_create_rack(&mut self, id: FastStr) -> RackRef {
@@ -56,30 +48,6 @@ impl DataCenter {
                 rack
             }
         }
-    }
-
-    pub async fn has_volumes(&self) -> i64 {
-        let mut has_volumes = 0;
-        for rack in self.racks.values() {
-            has_volumes += rack.read().await.has_volumes().await;
-        }
-        has_volumes
-    }
-
-    pub async fn max_volumes(&self) -> i64 {
-        let mut max_volumes = 0;
-        for rack in self.racks.values() {
-            max_volumes += rack.read().await.max_volumes().await;
-        }
-        max_volumes
-    }
-
-    pub async fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
-        for rack in self.racks.values() {
-            free_volumes += rack.read().await.free_volumes().await;
-        }
-        free_volumes
     }
 
     pub async fn reserve_one_volume(&self) -> Result<DataNodeRef, VolumeError> {
@@ -100,8 +68,103 @@ impl DataCenter {
 
         Err(VolumeError::NoFreeSpace(format!(
             "no free volumes found on data center {}",
-            self.id
+            self.id()
         )))
+    }
+}
+
+impl DataCenter {
+    pub async fn volume_count(&self) -> u64 {
+        let mut count = 0;
+        for rack in self.racks.values() {
+            count += rack.read().await.volume_count().await;
+        }
+        count
+    }
+
+    pub async fn max_volume_count(&self) -> u64 {
+        let mut max_volumes = 0;
+        for rack in self.racks.values() {
+            max_volumes += rack.read().await.max_volume_count().await;
+        }
+        max_volumes
+    }
+
+    pub async fn free_volumes(&self) -> u64 {
+        let mut free_volumes = 0;
+        for rack in self.racks.values() {
+            free_volumes += rack.read().await.free_volumes().await;
+        }
+        free_volumes
+    }
+
+    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self._adjust_volume_count(volume_count_delta);
+
+        if let Some(topo) = self.topology.upgrade() {
+            topo.write()
+                .await
+                .adjust_volume_count(volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self._adjust_active_volume_count(active_volume_count_delta);
+
+        if let Some(topo) = self.topology.upgrade() {
+            topo.write()
+                .await
+                .adjust_active_volume_count(active_volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self._adjust_ec_shard_count(ec_shard_count_delta);
+
+        if let Some(topo) = self.topology.upgrade() {
+            topo.write()
+                .await
+                .adjust_ec_shard_count(ec_shard_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self._adjust_max_volume_count(max_volume_count_delta);
+
+        if let Some(topo) = self.topology.upgrade() {
+            topo.write()
+                .await
+                .adjust_max_volume_count(max_volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
+        self._adjust_max_volume_id(vid);
+
+        if let Some(topo) = self.topology.upgrade() {
+            topo.write()
+                .await
+                .adjust_max_volume_id(self.max_volume_id())
+                .await;
+        }
+    }
+}
+
+impl Deref for DataCenter {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+
+impl DerefMut for DataCenter {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
     }
 }
 

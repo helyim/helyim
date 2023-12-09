@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use std::sync::atomic::Ordering;
-
 use faststr::FastStr;
 use helyim_proto::VolumeEcShardInformationMessage;
 
@@ -10,9 +8,7 @@ use crate::{
     topology::{DataNodeRef, Topology},
 };
 
-mod data_center;
 mod data_node;
-mod rack;
 
 #[derive(Clone)]
 pub struct EcShardLocations {
@@ -31,7 +27,7 @@ impl EcShardLocations {
     pub async fn add_shard(&mut self, shard_id: ShardId, data_node: DataNodeRef) -> bool {
         let data_nodes = &self.locations[shard_id as usize];
         for node in data_nodes {
-            if node.read().await.id == data_node.read().await.id {
+            if node.read().await.id() == data_node.read().await.id() {
                 return false;
             }
         }
@@ -43,7 +39,7 @@ impl EcShardLocations {
         let data_nodes = &self.locations[shard_id as usize];
         let mut index = -1;
         for (i, node) in data_nodes.iter().enumerate() {
-            if node.read().await.id == data_node.read().await.id {
+            if node.read().await.id() == data_node.read().await.id() {
                 index = i as i32;
                 break;
             }
@@ -57,11 +53,6 @@ impl EcShardLocations {
 }
 
 impl Topology {
-    pub async fn up_adjust_ec_shard_count_delta(&self, ec_shard_count_delta: u64) {
-        self.ec_shard_count
-            .fetch_add(ec_shard_count_delta, Ordering::Relaxed);
-    }
-
     pub async fn sync_data_node_ecshards(
         &mut self,
         shard_infos: &[VolumeEcShardInformationMessage],
