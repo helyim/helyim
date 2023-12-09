@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
+    raft::{NodeId, Raft},
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -38,6 +39,9 @@ pub struct Topology {
     // children
     #[serde(skip)]
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
+
+    #[serde(skip)]
+    pub raft: Option<Raft>,
 }
 
 impl Clone for Topology {
@@ -50,6 +54,7 @@ impl Clone for Topology {
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
+            raft: None,
         }
     }
 }
@@ -64,6 +69,7 @@ impl Topology {
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
+            raft: None,
         }
     }
 
@@ -127,7 +133,7 @@ impl Topology {
         let file_id = self
             .sequencer
             .next_file_id(count)
-            .map_err(|err| VolumeError::BoxError(Box::new(err)))?;
+            .map_err(|err| VolumeError::Box(Box::new(err)))?;
 
         let (volume_id, node) = {
             let layout = self.get_volume_layout(
@@ -232,6 +238,28 @@ impl Topology {
         }
         vid
     }
+}
+
+impl Topology {
+    pub async fn is_leader(&self) -> bool {
+        match self.raft.as_ref() {
+            Some(raft) => raft.is_leader().await.is_ok(),
+            None => false,
+        }
+    }
+
+    pub async fn leader(&self) -> Option<NodeId> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.current_leader().await,
+            None => None,
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum TopologyError {
+    #[error("Other error: {0}")]
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
 }
 
 pub async fn topology_vacuum_loop(

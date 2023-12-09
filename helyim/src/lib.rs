@@ -10,6 +10,9 @@ mod filer;
 mod images;
 mod operation;
 mod proto;
+
+pub mod raft;
+
 pub mod storage;
 
 mod sequence;

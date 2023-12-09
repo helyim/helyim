@@ -256,7 +256,7 @@ impl Volume {
                     return Ok(());
                 }
                 if let Some(nv) = self.needle_mapper()?.get(needle.id) {
-                    if (nv.offset.0 * NEEDLE_PADDING_SIZE) as u64 == offset && nv.size > 0 {
+                    if nv.offset.actual_offset() == offset && nv.size > 0 {
                         let nv = NeedleValue {
                             offset: new_offset.into(),
                             size: needle.size,
@@ -313,7 +313,7 @@ impl Volume {
 
                 let nv = match self
                     .needle_mapper()
-                    .map_err(|err| NeedleError::BoxError(err.into()))?
+                    .map_err(|err| NeedleError::Box(err.into()))?
                     .get(key)
                 {
                     Some(nv) => nv,
@@ -325,7 +325,7 @@ impl Volume {
 
                 needle.read_data(
                     self.data_file()
-                        .map_err(|err| NeedleError::BoxError(err.into()))?,
+                        .map_err(|err| NeedleError::Box(err.into()))?,
                     offset,
                     size,
                     version,
@@ -344,7 +344,7 @@ impl Volume {
                     };
                     compact_nm
                         .set(needle.id, nv)
-                        .map_err(|err| NeedleError::BoxError(err.into()))?;
+                        .map_err(|err| NeedleError::Box(err.into()))?;
                     needle.append(&compact_data_file, new_offset, version)?;
                     new_offset += needle.disk_size();
                 }

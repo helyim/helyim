@@ -58,10 +58,10 @@ impl NeedleMapper {
             |key, offset, size| -> Result<(), NeedleError> {
                 if offset == 0 || size.is_deleted() {
                     self.delete(key)
-                        .map_err(|err| NeedleError::BoxError(err.into()))?;
+                        .map_err(|err| NeedleError::Box(err.into()))?;
                 } else {
                     self.set(key, NeedleValue { offset, size })
-                        .map_err(|err| NeedleError::BoxError(err.into()))?;
+                        .map_err(|err| NeedleError::Box(err.into()))?;
                 }
                 Ok(())
             },

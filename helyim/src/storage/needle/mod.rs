@@ -438,7 +438,7 @@ pub enum NeedleError {
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
-    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Parse integer error: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 

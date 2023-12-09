@@ -28,8 +28,8 @@ pub enum Error {
     ParseInt(#[from] std::num::ParseIntError),
     #[error("Bincode error: {0}")]
     Bincode(#[from] Box<bincode::ErrorKind>),
-    #[error("Other error: {0}")]
-    Other(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("error: {0}")]
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
     #[error("{0}")]
