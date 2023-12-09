@@ -1,11 +1,10 @@
-use std::{collections::HashMap, result::Result as StdResult, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use rand::{self, Rng};
 use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
     topology::{data_node::DataNodeRef, volume_grow::VolumeGrowOption},
 };
@@ -67,7 +66,7 @@ impl VolumeLayout {
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> StdResult<(VolumeId, &Vec<DataNodeRef>), VolumeError> {
+    ) -> Result<(VolumeId, &Vec<DataNodeRef>), VolumeError> {
         if self.writable_volumes.is_empty() {
             return Err(VolumeError::NoWritableVolumes);
         }
@@ -189,23 +188,23 @@ impl VolumeLayout {
         vid: VolumeId,
         data_node: &DataNodeRef,
         readonly: bool,
-    ) -> Result<bool> {
+    ) -> bool {
         if let Some(volume_info) = data_node.read().await.get_volume(vid) {
             if let Some(locations) = self.locations.get_mut(&vid) {
                 VolumeLayout::set_node(locations, data_node.clone()).await;
             }
 
             if volume_info.read_only || readonly {
-                return Ok(false);
+                return false;
             }
 
             if let Some(locations) = self.locations.get_mut(&vid) {
                 if locations.len() >= self.rp.copy_count() {
-                    return Ok(self.set_volume_writable(vid));
+                    return self.set_volume_writable(vid);
                 }
             }
         }
-        Ok(false)
+        false
     }
 
     pub fn set_volume_writable(&mut self, vid: VolumeId) -> bool {

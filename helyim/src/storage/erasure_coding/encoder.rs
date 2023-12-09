@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// generates .ecx file from existing .idx file all keys are sorted in ascending order
-pub fn write_sorted_file_from_idx(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
+pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
     let nm = MemoryNeedleValueMap::load_from_index(&format!("{}.idx", base_filename))?;
     let mut ecx_file = fs::OpenOptions::new()
         .write(true)

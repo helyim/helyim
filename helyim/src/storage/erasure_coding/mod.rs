@@ -19,10 +19,10 @@ use crate::{
 };
 
 mod decoder;
-pub use decoder::{find_data_filesize, write_data_file, write_idx_file_from_ec_index};
+pub use decoder::{find_data_filesize, write_data_file, write_index_file_from_ec_index};
 
 mod encoder;
-pub use encoder::{rebuild_ec_files, write_ec_files, write_sorted_file_from_idx};
+pub use encoder::{rebuild_ec_files, write_ec_files, write_sorted_file_from_index};
 
 mod disk_location;
 

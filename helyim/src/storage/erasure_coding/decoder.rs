@@ -24,7 +24,7 @@ use crate::{
     util::file::file_exists,
 };
 
-pub fn write_idx_file_from_ec_index(base_filename: &str) -> Result<()> {
+pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)
         .mode(0o644)

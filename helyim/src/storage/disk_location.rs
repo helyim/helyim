@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path, result::Result as StdResult, sync::Arc};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
 use faststr::FastStr;
 use futures::future::join_all;
@@ -7,14 +7,12 @@ use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::info;
 
 use crate::{
-    anyhow,
-    errors::Result,
-    rt_spawn,
+    anyhow, rt_spawn,
     storage::{
         erasure_coding::EcVolumeRef,
         needle::NeedleMapType,
         ttl::Ttl,
-        volume::{ReplicaPlacement, VolumeRef, DATA_FILE_SUFFIX},
+        volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
         VolumeError, VolumeId,
     },
 };
@@ -22,7 +20,7 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, VolumeRef>,
+    pub volumes: HashMap<VolumeId, Arc<Volume>>,
     pub ec_volumes: HashMap<VolumeId, EcVolumeRef>,
 }
 
@@ -37,11 +35,15 @@ impl DiskLocation {
     }
 
     /// concurrent loading volumes
-    pub async fn load_existing_volumes(&mut self, needle_map_type: NeedleMapType) -> Result<()> {
+    pub async fn load_existing_volumes(
+        &mut self,
+        needle_map_type: NeedleMapType,
+    ) -> Result<(), VolumeError> {
         let dir = self.directory.to_string();
         let dir = Path::new(&dir);
 
-        let mut handles: Vec<JoinHandle<Result<(VolumeId, VolumeRef)>>> = vec![];
+        #[allow(clippy::type_complexity)]
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, Arc<Volume>), VolumeError>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
@@ -54,7 +56,7 @@ impl DiskLocation {
                     let collection = FastStr::new(collection);
 
                     let handle = rt_spawn(async move {
-                        let volume = VolumeRef::new(
+                        let volume = Volume::new(
                             dir,
                             collection,
                             vid,
@@ -64,7 +66,7 @@ impl DiskLocation {
                             0,
                         )?;
 
-                        Ok((vid, volume))
+                        Ok((vid, Arc::new(volume)))
                     });
                     handles.push(handle);
                 }
@@ -79,15 +81,15 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub fn add_volume(&mut self, vid: VolumeId, volume: VolumeRef) {
+    pub fn add_volume(&mut self, vid: VolumeId, volume: Arc<Volume>) {
         self.volumes.insert(vid, volume);
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeRef> {
+    pub fn get_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
         self.volumes.get(&vid).cloned()
     }
 
-    pub fn get_volumes(&self) -> HashMap<VolumeId, VolumeRef> {
+    pub fn get_volumes(&self) -> HashMap<VolumeId, Arc<Volume>> {
         self.volumes.clone()
     }
 
@@ -95,9 +97,9 @@ impl DiskLocation {
         self.volumes.len()
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some(v) = self.volumes.remove(&vid) {
-            v.read().await.destroy()?;
+            v.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory
@@ -107,7 +109,7 @@ impl DiskLocation {
     }
 }
 
-fn parse_volume_id_from_path(path: &Path) -> StdResult<(VolumeId, &str), VolumeError> {
+fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeError> {
     if path.is_dir() {
         return Err(anyhow!(
             "invalid data file: {}",
