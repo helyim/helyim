@@ -45,7 +45,11 @@ use crate::{
         version::Version,
         BUFFER_SIZE_LIMIT,
     },
-    util::{default_handler, exit, favicon_handler, file::file_exists},
+    util::{
+        exit,
+        file::file_exists,
+        http::{default_handler, favicon_handler},
+    },
     STOP_INTERVAL,
 };
 

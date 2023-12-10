@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    raft::RaftServer,
+    raft::{store::Request, RaftServer},
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -39,7 +39,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    pub raft: Option<RaftServer>,
+    raft: Option<RaftServer>,
 }
 
 impl Clone for Topology {
@@ -70,6 +70,10 @@ impl Topology {
             data_centers: HashMap::new(),
             raft: None,
         }
+    }
+
+    pub fn set_raft_server(&mut self, raft: RaftServer) {
+        self.raft = Some(raft);
     }
 
     pub async fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
@@ -165,8 +169,14 @@ impl Topology {
 
     pub async fn next_volume_id(&self) -> VolumeId {
         let vid = self.max_volume_id();
-
-        vid + 1
+        let next = vid + 1;
+        if let Some(raft) = self.raft.as_ref() {
+            raft.raft
+                .client_write(Request::MaxVolumeId(next))
+                .await
+                .unwrap();
+        }
+        next
     }
 
     pub fn set_max_sequence(&mut self, seq: u64) {

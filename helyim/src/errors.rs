@@ -107,3 +107,9 @@ impl From<Error> for tonic::Status {
         tonic::Status::internal(value.to_string())
     }
 }
+
+impl From<nom::Err<nom::error::Error<&str>>> for Error {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::String(value.to_string())
+    }
+}

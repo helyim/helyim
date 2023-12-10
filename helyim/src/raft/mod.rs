@@ -1,7 +1,9 @@
-use std::{io::Cursor, sync::Arc};
+use std::{collections::HashMap, io::Cursor, sync::Arc};
 
-use actix_web::{middleware, middleware::Logger, web::Data, HttpServer};
+use actix_web::{middleware, middleware::Logger, rt::System, web::Data, HttpServer};
+use once_cell::sync::Lazy;
 use openraft::{storage::Adaptor, BasicNode, Config, TokioRuntime};
+use parking_lot::RwLock;
 
 use crate::raft::{
     network::{api, management, raft, Network},
@@ -14,8 +16,11 @@ pub mod store;
 
 pub type NodeId = u64;
 
+pub static RAFT_NODE_MAPPER: Lazy<RwLock<HashMap<NodeId, String>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 openraft::declare_raft_types!(
-    /// Declare the type configuration for example K/V store.
+    /// Declare the type configuration for helyim.
     pub TypeConfig: D = Request, R = Response, NodeId = NodeId, Node = BasicNode,
     Entry = openraft::Entry<TypeConfig>, SnapshotData = Cursor<Vec<u8>>, AsyncRuntime = TokioRuntime
 );
@@ -26,6 +31,7 @@ pub type Raft = openraft::Raft<TypeConfig>;
 
 // Representation of an application state. This struct can be shared around to share
 // instances of raft, store and more.
+#[derive(Clone)]
 pub struct RaftServer {
     pub id: NodeId,
     pub addr: String,
@@ -51,7 +57,7 @@ pub mod typ {
     pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
 }
 
-pub async fn start_raft_node(node_id: NodeId, http_addr: String) -> std::io::Result<()> {
+pub async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<RaftServer> {
     // Create a configuration for the raft instance.
     let config = Config {
         heartbeat_interval: 500,
@@ -76,15 +82,17 @@ pub async fn start_raft_node(node_id: NodeId, http_addr: String) -> std::io::Res
         .await
         .unwrap();
 
-    // Create an application that will store all the instances created above, this will
-    // be later used on the actix-web services.
-    let app_data = Data::new(RaftServer {
+    let raft_server = RaftServer {
         id: node_id,
-        addr: http_addr.clone(),
+        addr: http_addr.to_string(),
         raft,
         store,
         config,
-    });
+    };
+
+    // Create an application that will store all the instances created above, this will
+    // be later used on the actix-web services.
+    let app_data = Data::new(raft_server.clone());
 
     // Start the actix-web server.
     let server = HttpServer::new(move || {
@@ -106,7 +114,13 @@ pub async fn start_raft_node(node_id: NodeId, http_addr: String) -> std::io::Res
             .service(api::write)
             .service(api::read)
     });
+    let server = server.bind(http_addr)?.run();
 
-    let raft = server.bind(http_addr)?;
-    raft.run().await
+    // stop the server
+    // let server_handle = server.handle();
+    // server_handle.stop(true).await;
+
+    std::thread::spawn(move || System::new().block_on(server));
+
+    Ok(raft_server)
 }

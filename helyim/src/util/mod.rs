@@ -6,9 +6,9 @@ pub mod macros;
 
 pub mod file;
 
-mod http;
+pub mod http;
 
-pub use http::{default_handler, delete, favicon_handler, post, FormOrJson, HTTP_DATE_FORMAT};
+pub mod parser;
 
 mod sys;
 pub use sys::exit;

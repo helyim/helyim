@@ -26,14 +26,6 @@ use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
-use nom::{
-    branch::alt,
-    bytes::complete::take_till,
-    character::complete::{alphanumeric1, char, digit1},
-    combinator::opt,
-    sequence::{pair, tuple},
-    IResult,
-};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{error, info};
@@ -46,10 +38,10 @@ use crate::{
         crc,
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
-        NeedleError, Ttl, VolumeError, VolumeId, VolumeInfo,
+        NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
-    util::{time::now, HTTP_DATE_FORMAT},
+    util::{http::HTTP_DATE_FORMAT, parser::parse_url_path, time::now},
 };
 
 #[derive(Clone)]
@@ -175,7 +167,7 @@ async fn replicate_delete(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", &location.url, path);
-                    if let Err(err) = util::delete(&url, &params).await.and_then(|body| {
+                    if let Err(err) = util::http::delete(&url, &params).await.and_then(|body| {
                         let value: Value = serde_json::from_slice(&body)?;
                         if let Some(err) = value["error"].as_str() {
                             if !err.is_empty() {
@@ -279,15 +271,19 @@ async fn replicate_write(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", location.url, path);
-                    if let Err(err) = util::post(&url, &params, &data).await.and_then(|body| {
-                        let value: Value = serde_json::from_slice(&body)?;
-                        if let Some(err) = value["error"].as_str() {
-                            if !err.is_empty() {
-                                return Err(anyhow!("write {} err: {err}", location.url));
-                            }
-                        }
-                        Ok(())
-                    }) {
+                    if let Err(err) =
+                        util::http::post(&url, &params, &data)
+                            .await
+                            .and_then(|body| {
+                                let value: Value = serde_json::from_slice(&body)?;
+                                if let Some(err) = value["error"].as_str() {
+                                    if !err.is_empty() {
+                                        return Err(anyhow!("write {} err: {err}", location.url));
+                                    }
+                                }
+                                Ok(())
+                            })
+                    {
                         error!("replicate write failed, error: {err}");
                     }
                 });
@@ -549,110 +545,4 @@ pub async fn get_or_head_handler(
     *response.status_mut() = StatusCode::ACCEPTED;
 
     Ok(response)
-}
-
-fn parse_url_path(input: &str) -> StdResult<(VolumeId, &str, Option<&str>, &str), VolumeError> {
-    let (vid, fid, filename, ext) = tuple((
-        char('/'),
-        parse_vid_fid,
-        opt(pair(char('/'), parse_filename)),
-    ))(input)
-    .map(|(input, (_, (vid, fid), filename))| {
-        (vid, fid, filename.map(|(_, filename)| filename), input)
-    })?;
-    Ok((vid.parse()?, fid, filename, ext))
-}
-
-fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
-    let (input, (vid, _, fid)) =
-        tuple((digit1, alt((char('/'), char(','))), alphanumeric1))(input)?;
-    Ok((input, (vid, fid)))
-}
-
-fn parse_filename(input: &str) -> IResult<&str, &str> {
-    let (input, filename) = take_till(|c| c == '.')(input)?;
-    Ok((input, filename))
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::storage::api::{parse_filename, parse_url_path, parse_vid_fid};
-
-    #[test]
-    pub fn test_parse_vid_fid() {
-        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6").unwrap();
-        assert_eq!(vid, "3");
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(input, "");
-
-        let (input, (vid, fid)) = parse_vid_fid("3/01637037d6/").unwrap();
-        assert_eq!(vid, "3");
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(input, "/");
-
-        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6").unwrap();
-        assert_eq!(vid, "3");
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(input, "");
-
-        let (input, (vid, fid)) = parse_vid_fid("3,01637037d6/").unwrap();
-        assert_eq!(vid, "3");
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(input, "/");
-    }
-
-    #[test]
-    pub fn test_parse_filename() {
-        let (input, filename) = parse_filename("my_preferred_name.jpg").unwrap();
-        assert_eq!(filename, "my_preferred_name");
-        assert_eq!(input, ".jpg");
-
-        let (input, filename) = parse_filename("my_preferred_name").unwrap();
-        assert_eq!(filename, "my_preferred_name");
-        assert_eq!(input, "");
-
-        let (input, filename) = parse_filename("").unwrap();
-        assert_eq!(filename, "");
-        assert_eq!(input, "");
-    }
-
-    #[test]
-    pub fn test_parse_path() {
-        let (vid, fid, filename, ext) =
-            parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
-        assert_eq!(vid, 3);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, Some("my_preferred_name"));
-        assert_eq!(ext, ".jpg");
-
-        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name").unwrap();
-        assert_eq!(vid, 3);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, Some("my_preferred_name"));
-        assert_eq!(ext, "");
-
-        let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6.jpg").unwrap();
-        assert_eq!(vid, 3);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
-        assert_eq!(ext, ".jpg");
-
-        let (vid, fid, filename, ext) = parse_url_path("/30,01637037d6.jpg").unwrap();
-        assert_eq!(vid, 30);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
-        assert_eq!(ext, ".jpg");
-
-        let (vid, fid, filename, ext) = parse_url_path("/300/01637037d6").unwrap();
-        assert_eq!(vid, 300);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
-        assert_eq!(ext, "");
-
-        let (vid, fid, filename, ext) = parse_url_path("/300,01637037d6").unwrap();
-        assert_eq!(vid, 300);
-        assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
-        assert_eq!(ext, "");
-    }
 }

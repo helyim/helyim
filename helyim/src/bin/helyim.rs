@@ -40,6 +40,8 @@ struct MasterOptions {
     /// default replication if not specified
     #[arg(long, default_value("000"))]
     default_replication: String,
+    #[arg(long)]
+    peers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -79,6 +81,7 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
         master.volume_size_limit_mb,
         master.pulse_seconds,
         &master.default_replication,
+        &master.peers,
         0.3,
         Sequencer::new(SequencerType::Memory)?,
     )

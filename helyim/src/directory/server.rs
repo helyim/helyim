@@ -12,6 +12,7 @@ use helyim_proto::{
     HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
     LookupVolumeRequest, LookupVolumeResponse,
 };
+use openraft::BasicNode;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
@@ -23,12 +24,13 @@ use crate::{
         assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
         DirectoryContext,
     },
-    errors::Result,
+    errors::{Error, Result},
+    raft::{start_raft_node, RaftServer},
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{default_handler, exit, get_or_default},
+    util::{exit, get_or_default, http::default_handler, parser::parse_raft_peer},
     STOP_INTERVAL,
 };
 
@@ -57,14 +59,18 @@ impl DirectoryServer {
         volume_size_limit_mb: u64,
         pulse_seconds: u64,
         default_replication: &str,
+        peers: &[String],
         garbage_threshold: f64,
         sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
+        let raft_server = start_raft_server(peers).await?;
         // topology event loop
         let topology =
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        topology.write().await.set_raft_server(raft_server);
+
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
@@ -178,6 +184,26 @@ impl DirectoryServer {
 
         Ok(())
     }
+}
+
+async fn start_raft_server(peers: &[String]) -> Result<RaftServer> {
+    let (node_id, raft_addr) = if peers.is_empty() {
+        (1, "127.0.0.1:8333")
+    } else {
+        parse_raft_peer(&peers[0])?
+    };
+
+    let raft_server = start_raft_node(node_id, raft_addr).await?;
+
+    for peer in peers.iter().skip(1) {
+        let (node, host) = parse_raft_peer(peer)?;
+        raft_server
+            .raft
+            .add_learner(node, BasicNode::new(host), true)
+            .await
+            .map_err(|err| Error::Box(err.into()))?;
+    }
+    Ok(raft_server)
 }
 
 #[derive(Clone)]
