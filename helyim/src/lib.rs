@@ -1,6 +1,8 @@
 #![allow(unused_attributes)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::mutable_key_type)]
+#![deny(unused_qualifications)]
+
 use std::time::Duration;
 
 pub mod directory;

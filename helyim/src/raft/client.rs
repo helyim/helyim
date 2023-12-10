@@ -8,15 +8,12 @@ use openraft::{
     error::{ForwardToLeader, NetworkError, RemoteError},
     BasicNode, RaftMetrics, TryAsRef,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
 
-use crate::raft::{typ, NodeId, Request};
+use crate::raft::{typ, NodeId};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Empty {}
-
-pub struct ExampleClient {
+pub struct RaftClient {
     /// The leader node to send request to.
     ///
     /// All traffic should be sent to the leader in a cluster.
@@ -25,7 +22,7 @@ pub struct ExampleClient {
     pub inner: reqwest::Client,
 }
 
-impl ExampleClient {
+impl RaftClient {
     /// Create a client with a leader node id and a node manager to get node address by node id.
     pub fn new(leader_id: NodeId, leader_addr: String) -> Self {
         Self {
@@ -44,27 +41,15 @@ impl ExampleClient {
     /// The result of applying the request will be returned.
     pub async fn write(
         &self,
-        req: &Request,
-    ) -> Result<typ::ClientWriteResponse, typ::RPCError<typ::ClientWriteError>> {
-        self.send_rpc_to_leader("write", Some(req)).await
+    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
+        self.send_rpc_to_leader("write", None::<&()>).await
     }
 
-    /// Read value by key, in an inconsistent mode.
+    /// Read value by key, in an consistent mode.
     ///
     /// This method may return stale value because it does not force to read on a legal leader.
-    pub async fn read(&self, req: &String) -> Result<String, typ::RPCError> {
-        self.do_send_rpc_to_leader("read", Some(req)).await
-    }
-
-    /// Consistent Read value by key, in an inconsistent mode.
-    ///
-    /// This method MUST return consistent value or CheckIsLeaderError.
-    pub async fn consistent_read(
-        &self,
-        req: &String,
-    ) -> Result<String, typ::RPCError<typ::CheckIsLeaderError>> {
-        self.do_send_rpc_to_leader("consistent_read", Some(req))
-            .await
+    pub async fn read(&self) -> Result<String, typ::RpcError> {
+        self.do_send_rpc_to_leader("read", None::<&()>).await
     }
 
     // --- Cluster management API
@@ -75,8 +60,8 @@ impl ExampleClient {
     /// With a initialized cluster, new node can be added with [`write`].
     /// Then setup replication with [`add_learner`].
     /// Then make the new node a member with [`change_membership`].
-    pub async fn init(&self) -> Result<(), typ::RPCError<typ::InitializeError>> {
-        self.do_send_rpc_to_leader("init", Some(&Empty {})).await
+    pub async fn init(&self) -> Result<(), typ::RpcError<typ::InitializeError>> {
+        self.do_send_rpc_to_leader("init", Some(&())).await
     }
 
     /// Add a node as learner.
@@ -85,7 +70,7 @@ impl ExampleClient {
     pub async fn add_learner(
         &self,
         req: (NodeId, String),
-    ) -> Result<typ::ClientWriteResponse, typ::RPCError<typ::ClientWriteError>> {
+    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
         self.send_rpc_to_leader("add-learner", Some(&req)).await
     }
 
@@ -96,7 +81,7 @@ impl ExampleClient {
     pub async fn change_membership(
         &self,
         req: &BTreeSet<NodeId>,
-    ) -> Result<typ::ClientWriteResponse, typ::RPCError<typ::ClientWriteError>> {
+    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
         self.send_rpc_to_leader("change-membership", Some(req))
             .await
     }
@@ -106,7 +91,7 @@ impl ExampleClient {
     /// Metrics contains various information about the cluster, such as current leader,
     /// membership config, replication status etc.
     /// See [`RaftMetrics`].
-    pub async fn metrics(&self) -> Result<RaftMetrics<NodeId, BasicNode>, typ::RPCError> {
+    pub async fn metrics(&self) -> Result<RaftMetrics<NodeId, BasicNode>, typ::RpcError> {
         self.do_send_rpc_to_leader("metrics", None::<&()>).await
     }
 
@@ -122,7 +107,7 @@ impl ExampleClient {
         &self,
         uri: &str,
         req: Option<&Req>,
-    ) -> Result<Resp, typ::RPCError<Err>>
+    ) -> Result<Resp, typ::RpcError<Err>>
     where
         Req: Serialize + 'static,
         Resp: Serialize + DeserializeOwned,
@@ -140,33 +125,33 @@ impl ExampleClient {
                 url,
                 serde_json::to_string_pretty(&r).unwrap()
             );
-            self.inner.post(url.clone()).json(r)
+            self.inner.post(url.clone())
         } else {
-            tracing::debug!(">>> client send request to {}", url,);
+            tracing::debug!(">>> client send request to {}", url);
             self.inner.get(url.clone())
         }
         .send();
 
         let res = timeout(Duration::from_millis(3_000), fu).await;
         let resp = match res {
-            Ok(x) => x.map_err(|e| typ::RPCError::Network(NetworkError::new(&e)))?,
+            Ok(x) => x.map_err(|e| typ::RpcError::Network(NetworkError::new(&e)))?,
             Err(timeout_err) => {
                 tracing::error!("timeout {} to url: {}", timeout_err, url);
-                return Err(typ::RPCError::Network(NetworkError::new(&timeout_err)));
+                return Err(typ::RpcError::Network(NetworkError::new(&timeout_err)));
             }
         };
 
         let res: Result<Resp, typ::RaftError<Err>> = resp
             .json()
             .await
-            .map_err(|e| typ::RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| typ::RpcError::Network(NetworkError::new(&e)))?;
         tracing::debug!(
             "<<< client recv reply from {}: {}",
             url,
             serde_json::to_string_pretty(&res).unwrap()
         );
 
-        res.map_err(|e| typ::RPCError::RemoteError(RemoteError::new(leader_id, e)))
+        res.map_err(|e| typ::RpcError::RemoteError(RemoteError::new(leader_id, e)))
     }
 
     /// Try the best to send a request to the leader.
@@ -177,7 +162,7 @@ impl ExampleClient {
         &self,
         uri: &str,
         req: Option<&Req>,
-    ) -> Result<Resp, typ::RPCError<Err>>
+    ) -> Result<Resp, typ::RpcError<Err>>
     where
         Req: Serialize + 'static,
         Resp: Serialize + DeserializeOwned,
@@ -191,7 +176,7 @@ impl ExampleClient {
         let mut n_retry = 3;
 
         loop {
-            let res: Result<Resp, typ::RPCError<Err>> = self.do_send_rpc_to_leader(uri, req).await;
+            let res: Result<Resp, typ::RpcError<Err>> = self.do_send_rpc_to_leader(uri, req).await;
 
             let rpc_err = match res {
                 Ok(x) => return Ok(x),

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    raft::{NodeId, Raft},
+    raft::RaftServer,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -39,7 +39,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    pub raft: Option<Raft>,
+    pub raft: Option<RaftServer>,
 }
 
 impl Clone for Topology {
@@ -276,22 +276,6 @@ impl Deref for Topology {
 impl DerefMut for Topology {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
-    }
-}
-
-impl Topology {
-    pub async fn is_leader(&self) -> bool {
-        match self.raft.as_ref() {
-            Some(raft) => raft.is_leader().await.is_ok(),
-            None => false,
-        }
-    }
-
-    pub async fn leader(&self) -> Option<NodeId> {
-        match self.raft.as_ref() {
-            Some(raft) => raft.current_leader().await,
-            None => None,
-        }
     }
 }
 

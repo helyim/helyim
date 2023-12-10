@@ -1,9 +1,12 @@
 use std::{
     collections::BTreeMap,
-    fmt::Debug,
+    fmt::{Debug, Formatter},
     io::Cursor,
     ops::RangeBounds,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use openraft::{
@@ -15,7 +18,11 @@ use openraft::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::raft::{NodeId, TypeConfig};
+use crate::{
+    raft::{NodeId, TypeConfig},
+    storage::VolumeId,
+    topology::TopologyRef,
+};
 
 /// Here you will set the types of request that will interact with the raft nodes.
 /// For example the `Set` will be used to write data (key and value) to the raft database.
@@ -23,7 +30,7 @@ use crate::raft::{NodeId, TypeConfig};
 /// You will want to add any request that can write data in all nodes here.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Request {
-    Set { key: String, value: String },
+    MaxVolumeId(VolumeId),
 }
 
 /// Here you will defined what type of answer you expect from reading the data of a node.
@@ -48,14 +55,30 @@ pub struct StoredSnapshot {
 /// between each node. Note that we are using `serde` to serialize the `data`, which has
 /// a implementation to be serialized. Note that for this test we set both the key and
 /// value as String, but you could set any type of value that has the serialization impl.
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct StateMachine {
     pub last_applied_log: Option<LogId<NodeId>>,
 
     pub last_membership: StoredMembership<NodeId, BasicNode>,
 
     /// Application data.
-    pub data: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub topology: Option<TopologyRef>,
+}
+
+impl Debug for StateMachine {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateMachine")
+            .field("last_applied_log", &self.last_applied_log)
+            .field("last_membership", &self.last_membership)
+            .finish()
+    }
+}
+
+impl StateMachine {
+    pub fn topology(&self) -> &TopologyRef {
+        self.topology.as_ref().expect("please initialize topology.")
+    }
 }
 
 #[derive(Debug, Default)]
@@ -71,7 +94,7 @@ pub struct Store {
     /// The current granted vote.
     vote: RwLock<Option<Vote<NodeId>>>,
 
-    snapshot_idx: Arc<Mutex<u64>>,
+    snapshot_idx: Arc<AtomicU64>,
 
     current_snapshot: RwLock<Option<StoredSnapshot>>,
 }
@@ -109,11 +132,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<Store> {
             last_membership = state_machine.last_membership.clone();
         }
 
-        let snapshot_idx = {
-            let mut l = self.snapshot_idx.lock().unwrap();
-            *l += 1;
-            *l
-        };
+        let snapshot_idx = self.snapshot_idx.fetch_add(1, Ordering::Relaxed) + 1;
 
         let snapshot_id = if let Some(last) = last_applied_log {
             format!("{}-{}-{}", last.leader_id, last.index, snapshot_idx)
@@ -261,11 +280,8 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
             match entry.payload {
                 EntryPayload::Blank => res.push(Response { value: None }),
                 EntryPayload::Normal(ref req) => match req {
-                    Request::Set { key, value } => {
-                        sm.data.insert(key.clone(), value.clone());
-                        res.push(Response {
-                            value: Some(value.clone()),
-                        })
+                    Request::MaxVolumeId(vid) => {
+                        sm.topology().write().await.adjust_max_volume_id(*vid).await;
                     }
                 },
                 EntryPayload::Membership(ref mem) => {

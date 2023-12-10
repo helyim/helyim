@@ -1,18 +1,13 @@
-#![allow(clippy::uninlined_format_args)]
-#![deny(unused_qualifications)]
-
 use std::{io::Cursor, sync::Arc};
 
 use actix_web::{middleware, middleware::Logger, web::Data, HttpServer};
 use openraft::{storage::Adaptor, BasicNode, Config, TokioRuntime};
 
 use crate::raft::{
-    app::App,
     network::{api, management, raft, Network},
     store::{Request, Response, Store},
 };
 
-pub mod app;
 pub mod client;
 pub mod network;
 pub mod store;
@@ -29,13 +24,23 @@ pub type LogStore = Adaptor<TypeConfig, Arc<Store>>;
 pub type StateMachineStore = Adaptor<TypeConfig, Arc<Store>>;
 pub type Raft = openraft::Raft<TypeConfig>;
 
+// Representation of an application state. This struct can be shared around to share
+// instances of raft, store and more.
+pub struct RaftServer {
+    pub id: NodeId,
+    pub addr: String,
+    pub raft: Raft,
+    pub store: Arc<Store>,
+    pub config: Arc<Config>,
+}
+
 pub mod typ {
     use openraft::BasicNode;
 
     use crate::raft::{NodeId, TypeConfig};
 
     pub type RaftError<E = openraft::error::Infallible> = openraft::error::RaftError<NodeId, E>;
-    pub type RPCError<E = openraft::error::Infallible> =
+    pub type RpcError<E = openraft::error::Infallible> =
         openraft::error::RPCError<NodeId, BasicNode, RaftError<E>>;
 
     pub type ClientWriteError = openraft::error::ClientWriteError<NodeId, BasicNode>;
@@ -46,7 +51,7 @@ pub mod typ {
     pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
 }
 
-pub async fn start_example_raft_node(node_id: NodeId, http_addr: String) -> std::io::Result<()> {
+pub async fn start_raft_node(node_id: NodeId, http_addr: String) -> std::io::Result<()> {
     // Create a configuration for the raft instance.
     let config = Config {
         heartbeat_interval: 500,
@@ -73,7 +78,7 @@ pub async fn start_example_raft_node(node_id: NodeId, http_addr: String) -> std:
 
     // Create an application that will store all the instances created above, this will
     // be later used on the actix-web services.
-    let app_data = Data::new(App {
+    let app_data = Data::new(RaftServer {
         id: node_id,
         addr: http_addr.clone(),
         raft,
@@ -100,10 +105,8 @@ pub async fn start_example_raft_node(node_id: NodeId, http_addr: String) -> std:
             // application API
             .service(api::write)
             .service(api::read)
-            .service(api::consistent_read)
     });
 
-    let x = server.bind(http_addr)?;
-
-    x.run().await
+    let raft = server.bind(http_addr)?;
+    raft.run().await
 }
