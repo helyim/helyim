@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_stream::stream;
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
@@ -205,8 +205,9 @@ impl StorageServer {
                         .with_state(ctx.clone()),
                 )
                 .layer((
-                    TimeoutLayer::new(Duration::from_secs(10)),
                     CompressionLayer::new(),
+                    DefaultBodyLimit::max(1024 * 1024 * 50),
+                    TimeoutLayer::new(Duration::from_secs(10)),
                 ))
                 .with_state(ctx);
 

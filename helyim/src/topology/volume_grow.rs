@@ -34,23 +34,23 @@ impl VolumeGrowth {
 
         let mut ret = vec![];
 
-        let data_centers = topology.read().await.data_centers.clone();
+        let data_centers = &topology.read().await.data_centers;
         let (main_data_node, other_centers) =
-            find_main_data_center(&data_centers, option, &rp).await?;
+            find_main_data_center(data_centers, option, &rp).await?;
         for dc in other_centers {
             let node = dc.read().await.reserve_one_volume().await?;
             ret.push(node);
         }
 
-        let racks = main_data_node.read().await.racks.clone();
-        let (main_rack, other_racks) = find_main_rack(&racks, option, &rp).await?;
+        let racks = &main_data_node.read().await.racks;
+        let (main_rack, other_racks) = find_main_rack(racks, option, &rp).await?;
         for rack in other_racks {
             let node = rack.read().await.reserve_one_volume().await?;
             ret.push(node);
         }
 
-        let data_nodes = main_rack.read().await.data_nodes.clone();
-        let (main_dn, other_nodes) = find_main_node(&data_nodes, option, &rp).await?;
+        let data_nodes = &main_rack.read().await.data_nodes;
+        let (main_dn, other_nodes) = find_main_node(data_nodes, option, &rp).await?;
 
         ret.push(main_dn);
         for nd in other_nodes {
@@ -163,8 +163,8 @@ async fn find_main_data_center(
         if !option.data_center.is_empty() && data_center.read().await.id() != option.data_center {
             continue;
         }
-        let racks = data_center.read().await.racks.clone();
-        if racks.len() < rp.diff_rack_count as usize + 1 {
+        let racks_len = data_center.read().await.racks.len();
+        if racks_len < rp.diff_rack_count as usize + 1 {
             continue;
         }
         if data_center.read().await.free_volumes().await
@@ -173,9 +173,9 @@ async fn find_main_data_center(
             continue;
         }
         let mut possible_racks_count = 0;
-        for (_, rack) in racks.iter() {
+        for (_, rack) in data_center.read().await.racks.iter() {
             let mut possible_nodes_count = 0;
-            for (_, dn) in rack.read().await.data_nodes.clone().iter() {
+            for (_, dn) in rack.read().await.data_nodes.iter() {
                 if dn.read().await.free_volumes() >= 1 {
                     possible_nodes_count += 1;
                 }
@@ -232,12 +232,12 @@ async fn find_main_rack(
         if rack.read().await.free_volumes().await < rp.same_rack_count as u64 + 1 {
             continue;
         }
-        let data_nodes = rack.read().await.data_nodes.clone();
-        if data_nodes.len() < rp.same_rack_count as usize + 1 {
+        let data_nodes_len = rack.read().await.data_nodes.len();
+        if data_nodes_len < rp.same_rack_count as usize + 1 {
             continue;
         }
         let mut possible_nodes = 0;
-        for (_, node) in data_nodes.iter() {
+        for (_, node) in rack.read().await.data_nodes.iter() {
             if node.read().await.free_volumes() >= 1 {
                 possible_nodes += 1;
             }

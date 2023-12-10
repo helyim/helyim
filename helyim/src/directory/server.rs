@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::{Stream, StreamExt};
 use helyim_proto::{
@@ -150,8 +150,9 @@ impl DirectoryServer {
                 )
                 .fallback(default_handler)
                 .layer((
-                    TimeoutLayer::new(Duration::from_secs(10)),
                     CompressionLayer::new(),
+                    DefaultBodyLimit::max(1024 * 1024),
+                    TimeoutLayer::new(Duration::from_secs(10)),
                 ))
                 .with_state(ctx);
 

@@ -164,7 +164,7 @@ impl Topology {
     }
 
     pub async fn next_volume_id(&self) -> VolumeId {
-        let vid = self.get_max_volume_id().await;
+        let vid = self.max_volume_id();
 
         vid + 1
     }
@@ -216,17 +216,6 @@ impl Topology {
             .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))
             .get_or_create_volume_layout(rp, Some(ttl))
-    }
-
-    async fn get_max_volume_id(&self) -> VolumeId {
-        let mut vid = 0;
-        for (_, data_center) in self.data_centers.iter() {
-            let other = data_center.read().await.max_volume_id();
-            if other > vid {
-                vid = other;
-            }
-        }
-        vid
     }
 }
 
