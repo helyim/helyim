@@ -37,11 +37,11 @@ impl Node {
         &self.id
     }
 
-    pub fn _volume_count(&self) -> u64 {
+    pub(in crate::topology) fn _volume_count(&self) -> u64 {
         self.volume_count.load(Ordering::Relaxed)
     }
 
-    pub fn _adjust_volume_count(&self, volume_count_delta: i64) {
+    pub(in crate::topology) fn _adjust_volume_count(&self, volume_count_delta: i64) {
         match volume_count_delta.cmp(&0) {
             CmpOrdering::Less => self
                 .volume_count
@@ -57,7 +57,7 @@ impl Node {
         self.active_volume_count.load(Ordering::Relaxed)
     }
 
-    pub fn _adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+    pub(in crate::topology) fn _adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         match active_volume_count_delta.cmp(&0) {
             CmpOrdering::Less => self.active_volume_count.fetch_sub(
                 active_volume_count_delta.wrapping_neg() as u64,
@@ -74,7 +74,7 @@ impl Node {
         self.ec_shard_count.load(Ordering::Relaxed)
     }
 
-    pub fn _adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+    pub(in crate::topology) fn _adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         match ec_shard_count_delta.cmp(&0) {
             CmpOrdering::Less => self.ec_shard_count.fetch_sub(
                 ec_shard_count_delta.wrapping_neg() as u64,
@@ -87,7 +87,7 @@ impl Node {
         };
     }
 
-    pub fn _max_volume_count(&self) -> u64 {
+    pub(in crate::topology) fn _max_volume_count(&self) -> u64 {
         self.max_volume_count.load(Ordering::Relaxed)
     }
 
@@ -96,7 +96,7 @@ impl Node {
             .store(max_volume_count, Ordering::Relaxed);
     }
 
-    pub fn _adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+    pub(in crate::topology) fn _adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         match max_volume_count_delta.cmp(&0) {
             CmpOrdering::Less => self.max_volume_count.fetch_sub(
                 max_volume_count_delta.wrapping_neg() as u64,
@@ -113,7 +113,7 @@ impl Node {
         self.max_volume_id
     }
 
-    pub fn _adjust_max_volume_id(&mut self, volume_id: u32) {
+    pub(in crate::topology) fn _adjust_max_volume_id(&mut self, volume_id: u32) {
         if self.max_volume_id < volume_id {
             self.max_volume_id = volume_id;
         }
