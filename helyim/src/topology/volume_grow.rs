@@ -67,7 +67,7 @@ impl VolumeGrowth {
     ) -> Result<usize, VolumeError> {
         let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
-        let vid = topology.read().await.next_volume_id().await;
+        let vid = topology.read().await.next_volume_id().await?;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }

@@ -76,6 +76,10 @@ impl Debug for StateMachine {
 }
 
 impl StateMachine {
+    pub fn set_topology(&mut self, topology: TopologyRef) {
+        self.topology = Some(topology);
+    }
+
     pub fn topology(&self) -> &TopologyRef {
         self.topology.as_ref().expect("please initialize topology.")
     }

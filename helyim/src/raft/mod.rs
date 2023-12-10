@@ -5,9 +5,12 @@ use once_cell::sync::Lazy;
 use openraft::{storage::Adaptor, BasicNode, Config, TokioRuntime};
 use parking_lot::RwLock;
 
-use crate::raft::{
-    network::{api, management, raft, Network},
-    store::{Request, Response, Store},
+use crate::{
+    raft::{
+        network::{api, management, raft, Network},
+        store::{Request, Response, Store},
+    },
+    topology::TopologyRef,
 };
 
 pub mod client;
@@ -38,6 +41,16 @@ pub struct RaftServer {
     pub raft: Raft,
     pub store: Arc<Store>,
     pub config: Arc<Config>,
+}
+
+impl RaftServer {
+    pub async fn set_topology(&self, topology: TopologyRef) {
+        self.store
+            .state_machine
+            .write()
+            .await
+            .set_topology(topology.clone());
+    }
 }
 
 pub mod typ {

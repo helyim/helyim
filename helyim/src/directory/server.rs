@@ -1,5 +1,10 @@
 use std::{
-    net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc,
+    collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
+    num::ParseIntError,
+    pin::Pin,
+    result::Result as StdResult,
+    sync::Arc,
     time::Duration,
 };
 
@@ -69,6 +74,8 @@ impl DirectoryServer {
         // topology event loop
         let topology =
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+
+        raft_server.set_topology(topology.clone()).await;
         topology.write().await.set_raft_server(raft_server);
 
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
@@ -187,22 +194,41 @@ impl DirectoryServer {
 }
 
 async fn start_raft_server(peers: &[String]) -> Result<RaftServer> {
-    let (node_id, raft_addr) = if peers.is_empty() {
-        (1, "127.0.0.1:8333")
-    } else {
-        parse_raft_peer(&peers[0])?
-    };
+    let mut nodes = BTreeMap::new();
+    let mut members = BTreeSet::new();
+
+    let (node_id, raft_addr) = parse_raft_peer(&peers[0])?;
+
+    nodes.insert(node_id, BasicNode::new(raft_addr));
+    members.insert(node_id);
 
     let raft_server = start_raft_node(node_id, raft_addr).await?;
 
+    // wait for server to startup
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    raft_server
+        .raft
+        .initialize(nodes)
+        .await
+        .map_err(|err| Error::Box(err.into()))?;
+
     for peer in peers.iter().skip(1) {
         let (node, host) = parse_raft_peer(peer)?;
+        members.insert(node);
         raft_server
             .raft
             .add_learner(node, BasicNode::new(host), true)
             .await
             .map_err(|err| Error::Box(err.into()))?;
     }
+
+    let _ = raft_server
+        .raft
+        .change_membership(members, false)
+        .await
+        .map_err(|err| Error::Box(err.into()))?;
+
     Ok(raft_server)
 }
 

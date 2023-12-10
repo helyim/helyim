@@ -1,4 +1,4 @@
-use actix_web::{post, web, web::Data, Responder};
+use actix_web::{get, post, web, web::Data, Responder};
 use web::Json;
 
 use crate::raft::{store::Request, RaftServer};
@@ -16,7 +16,7 @@ pub async fn write(app: Data<RaftServer>, req: Json<Request>) -> actix_web::Resu
     Ok(Json(response))
 }
 
-#[post("/read")]
+#[get("/read")]
 pub async fn read(app: Data<RaftServer>) -> actix_web::Result<impl Responder> {
     match app.raft.is_leader().await {
         Ok(_) => {

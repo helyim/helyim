@@ -21,6 +21,9 @@ pub enum Error {
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
 
+    #[error("Raft server peers is empty")]
+    EmptyPeers,
+
     /// other errors
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),

@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
+    errors::Error,
     storage::{NeedleMapType, StorageServer},
 };
 use tokio::signal;
@@ -73,6 +74,9 @@ struct VolumeOptions {
 }
 
 async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
+    if master.peers.is_empty() {
+        return Err(Error::EmptyPeers.into());
+    }
     let mut dir = DirectoryServer::new(
         host,
         &master.ip,

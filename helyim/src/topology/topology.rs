@@ -167,16 +167,16 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&self) -> VolumeId {
+    pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
         let vid = self.max_volume_id();
         let next = vid + 1;
         if let Some(raft) = self.raft.as_ref() {
             raft.raft
                 .client_write(Request::MaxVolumeId(next))
                 .await
-                .unwrap();
+                .map_err(|err| VolumeError::Box(err.into()))?;
         }
-        next
+        Ok(next)
     }
 
     pub fn set_max_sequence(&mut self, seq: u64) {
@@ -211,6 +211,13 @@ impl Topology {
                     }
                 }
             }
+        }
+    }
+
+    pub async fn is_leader(&self) -> bool {
+        match self.raft.as_ref() {
+            Some(raft) => raft.raft.is_leader().await.is_ok(),
+            None => false,
         }
     }
 }
