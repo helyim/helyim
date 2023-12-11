@@ -1,44 +1,32 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    io::Cursor,
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::Duration,
 };
 
 use actix_web::{middleware, middleware::Logger, rt::System, web::Data, HttpServer};
-use once_cell::sync::Lazy;
-use openraft::{storage::Adaptor, BasicNode, Config, TokioRuntime};
-use parking_lot::RwLock;
+use nom::{
+    character::complete::{char, digit1},
+    sequence::pair,
+};
+use openraft::{storage::Adaptor, BasicNode, Config};
+use tracing::warn;
 
 use crate::{
     errors::{Error, Result},
     raft::{
         client::RaftClient,
         network::{api, management, raft, Network},
-        store::{Request, Response, Store},
+        store::Store,
+        types::{NodeId, Raft},
     },
     topology::TopologyRef,
-    util::parser::parse_raft_peer,
 };
 
 pub mod client;
 pub mod network;
 pub mod store;
-
-pub type NodeId = u64;
-
-pub static RAFT_NODE_MAPPER: Lazy<RwLock<HashMap<NodeId, String>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-openraft::declare_raft_types!(
-    /// Declare the type configuration for helyim.
-    pub TypeConfig: D = Request, R = Response, NodeId = NodeId, Node = BasicNode,
-    Entry = openraft::Entry<TypeConfig>, SnapshotData = Cursor<Vec<u8>>, AsyncRuntime = TokioRuntime
-);
-
-pub type LogStore = Adaptor<TypeConfig, Arc<Store>>;
-pub type StateMachineStore = Adaptor<TypeConfig, Arc<Store>>;
-pub type Raft = openraft::Raft<TypeConfig>;
+mod types;
 
 // Representation of an application state. This struct can be shared around to share
 // instances of raft, store and more.
@@ -61,21 +49,9 @@ impl RaftServer {
     }
 }
 
-pub mod typ {
-    use openraft::BasicNode;
-
-    use crate::raft::{NodeId, TypeConfig};
-
-    pub type RaftError<E = openraft::error::Infallible> = openraft::error::RaftError<NodeId, E>;
-    pub type RpcError<E = openraft::error::Infallible> =
-        openraft::error::RPCError<NodeId, BasicNode, RaftError<E>>;
-
-    pub type ClientWriteError = openraft::error::ClientWriteError<NodeId, BasicNode>;
-    pub type CheckIsLeaderError = openraft::error::CheckIsLeaderError<NodeId, BasicNode>;
-    pub type ForwardToLeader = openraft::error::ForwardToLeader<NodeId, BasicNode>;
-    pub type InitializeError = openraft::error::InitializeError<NodeId, BasicNode>;
-
-    pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
+pub fn parse_raft_peer(input: &str) -> std::result::Result<(NodeId, &str), Error> {
+    let (input, (node_id, _)) = pair(digit1, char(':'))(input)?;
+    Ok((node_id.parse()?, input))
 }
 
 async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<RaftServer> {
@@ -161,21 +137,41 @@ pub async fn start_raft_node_with_peers(peers: &[String]) -> Result<(RaftServer,
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let client = RaftClient::new(node_id, raft_addr.to_string());
-    client.init().await.map_err(|err| Error::Box(err.into()))?;
+    if let Err(err) = client.init().await {
+        warn!("init raft client failed, {err}");
+    }
 
     for peer in peers.iter().skip(1) {
         let (node, host) = parse_raft_peer(peer)?;
         members.insert(node);
-        client
-            .add_learner((node, host.to_string()))
-            .await
-            .map_err(|err| Error::Box(err.into()))?;
+        if let Err(err) = client.add_learner((node, host.to_string())).await {
+            warn!("add learner failed, {err}");
+        }
     }
 
-    let _ = client
-        .change_membership(&members)
-        .await
-        .map_err(|err| Error::Box(err.into()))?;
+    if let Err(err) = client.change_membership(&members).await {
+        warn!("change membership failed, {err}");
+    }
 
     Ok((raft_server, client))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::raft::parse_raft_peer;
+
+    #[test]
+    pub fn test_parse_raft_peer() {
+        let (node, host) = parse_raft_peer("1:localhost:9333").unwrap();
+        assert_eq!(host, "localhost:9333");
+        assert_eq!(node, 1);
+
+        let (node, host) = parse_raft_peer("1:127.0.0.1:9333").unwrap();
+        assert_eq!(host, "127.0.0.1:9333");
+        assert_eq!(node, 1);
+
+        let (node, host) = parse_raft_peer("1:github.com/helyim").unwrap();
+        assert_eq!(host, "github.com/helyim");
+        assert_eq!(node, 1)
+    }
 }

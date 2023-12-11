@@ -7,7 +7,7 @@ use actix_web::{
 };
 use openraft::{error::Infallible, BasicNode, RaftMetrics};
 
-use crate::raft::{NodeId, RaftServer};
+use crate::raft::{types::NodeId, RaftServer};
 
 // --- Cluster management
 

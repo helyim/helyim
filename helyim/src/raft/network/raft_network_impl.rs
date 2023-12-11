@@ -10,7 +10,7 @@ use openraft::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::raft::{typ, NodeId, TypeConfig};
+use crate::raft::types::{NodeId, RpcError, TypeConfig};
 
 pub struct Network {}
 
@@ -79,7 +79,7 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
     async fn send_append_entries(
         &mut self,
         req: AppendEntriesRequest<TypeConfig>,
-    ) -> Result<AppendEntriesResponse<NodeId>, typ::RpcError> {
+    ) -> Result<AppendEntriesResponse<NodeId>, RpcError> {
         self.owner
             .send_rpc(self.target, &self.target_node, "raft-append", req)
             .await
@@ -88,7 +88,7 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
     async fn send_install_snapshot(
         &mut self,
         req: InstallSnapshotRequest<TypeConfig>,
-    ) -> Result<InstallSnapshotResponse<NodeId>, typ::RpcError<InstallSnapshotError>> {
+    ) -> Result<InstallSnapshotResponse<NodeId>, RpcError<InstallSnapshotError>> {
         self.owner
             .send_rpc(self.target, &self.target_node, "raft-snapshot", req)
             .await
@@ -97,7 +97,7 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
     async fn send_vote(
         &mut self,
         req: VoteRequest<NodeId>,
-    ) -> Result<VoteResponse<NodeId>, typ::RpcError> {
+    ) -> Result<VoteResponse<NodeId>, RpcError> {
         self.owner
             .send_rpc(self.target, &self.target_node, "raft-vote", req)
             .await

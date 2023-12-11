@@ -7,11 +7,7 @@ use nom::{
     IResult,
 };
 
-use crate::{
-    errors::Error,
-    raft::NodeId,
-    storage::{VolumeError, VolumeId},
-};
+use crate::storage::{VolumeError, VolumeId};
 
 pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str), VolumeError> {
     let (vid, fid, filename, ext) = tuple((
@@ -36,14 +32,9 @@ pub fn parse_filename(input: &str) -> IResult<&str, &str> {
     Ok((input, filename))
 }
 
-pub fn parse_raft_peer(input: &str) -> Result<(NodeId, &str), Error> {
-    let (input, (node_id, _)) = pair(digit1, char(':'))(input)?;
-    Ok((node_id.parse()?, input))
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::util::parser::{parse_filename, parse_raft_peer, parse_url_path, parse_vid_fid};
+    use crate::util::parser::{parse_filename, parse_url_path, parse_vid_fid};
 
     #[test]
     pub fn test_parse_vid_fid() {
@@ -121,20 +112,5 @@ mod tests {
         assert_eq!(fid, "01637037d6");
         assert_eq!(filename, None);
         assert_eq!(ext, "");
-    }
-
-    #[test]
-    pub fn test_parse_raft_peer() {
-        let (node, host) = parse_raft_peer("1:localhost:9333").unwrap();
-        assert_eq!(host, "localhost:9333");
-        assert_eq!(node, 1);
-
-        let (node, host) = parse_raft_peer("1:127.0.0.1:9333").unwrap();
-        assert_eq!(host, "127.0.0.1:9333");
-        assert_eq!(node, 1);
-
-        let (node, host) = parse_raft_peer("1:github.com/helyim").unwrap();
-        assert_eq!(host, "github.com/helyim");
-        assert_eq!(node, 1)
     }
 }

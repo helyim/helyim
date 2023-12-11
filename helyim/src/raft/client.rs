@@ -10,9 +10,12 @@ use openraft::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
-use tracing::info;
 
-use crate::raft::{store::Request, typ, NodeId};
+use crate::raft::{
+    store::Request,
+    types,
+    types::{ClientWriteError, ClientWriteResponse, InitializeError, NodeId, RaftError, RpcError},
+};
 
 pub struct RaftClient {
     /// The leader node to send request to.
@@ -43,14 +46,14 @@ impl RaftClient {
     pub async fn write(
         &self,
         req: &Request,
-    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
+    ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
         self.send_rpc_to_leader("write", Some(req)).await
     }
 
     /// Read value by key, in an consistent mode.
     ///
     /// This method may return stale value because it does not force to read on a legal leader.
-    pub async fn read(&self) -> Result<String, typ::RpcError> {
+    pub async fn read(&self) -> Result<String, RpcError> {
         self.do_send_rpc_to_leader("read", None::<&()>).await
     }
 
@@ -62,7 +65,7 @@ impl RaftClient {
     /// With a initialized cluster, new node can be added with [`write`].
     /// Then setup replication with [`add_learner`].
     /// Then make the new node a member with [`change_membership`].
-    pub async fn init(&self) -> Result<(), typ::RpcError<typ::InitializeError>> {
+    pub async fn init(&self) -> Result<(), RpcError<InitializeError>> {
         self.do_send_rpc_to_leader("init", Some(&())).await
     }
 
@@ -72,7 +75,7 @@ impl RaftClient {
     pub async fn add_learner(
         &self,
         req: (NodeId, String),
-    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
+    ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
         self.send_rpc_to_leader("add-learner", Some(&req)).await
     }
 
@@ -83,7 +86,7 @@ impl RaftClient {
     pub async fn change_membership(
         &self,
         req: &BTreeSet<NodeId>,
-    ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
+    ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
         self.send_rpc_to_leader("change-membership", Some(req))
             .await
     }
@@ -93,7 +96,7 @@ impl RaftClient {
     /// Metrics contains various information about the cluster, such as current leader,
     /// membership config, replication status etc.
     /// See [`RaftMetrics`].
-    pub async fn metrics(&self) -> Result<RaftMetrics<NodeId, BasicNode>, typ::RpcError> {
+    pub async fn metrics(&self) -> Result<RaftMetrics<NodeId, BasicNode>, RpcError> {
         self.do_send_rpc_to_leader("metrics", None::<&()>).await
     }
 
@@ -109,7 +112,7 @@ impl RaftClient {
         &self,
         uri: &str,
         req: Option<&Req>,
-    ) -> Result<Resp, typ::RpcError<Err>>
+    ) -> Result<Resp, RpcError<Err>>
     where
         Req: Serialize + 'static,
         Resp: Serialize + DeserializeOwned,
@@ -136,24 +139,24 @@ impl RaftClient {
 
         let res = timeout(Duration::from_millis(3_000), fu).await;
         let resp = match res {
-            Ok(x) => x.map_err(|e| typ::RpcError::Network(NetworkError::new(&e)))?,
+            Ok(x) => x.map_err(|e| RpcError::Network(NetworkError::new(&e)))?,
             Err(timeout_err) => {
                 tracing::error!("timeout {} to url: {}", timeout_err, url);
-                return Err(typ::RpcError::Network(NetworkError::new(&timeout_err)));
+                return Err(RpcError::Network(NetworkError::new(&timeout_err)));
             }
         };
 
-        let res: Result<Resp, typ::RaftError<Err>> = resp
+        let res: Result<Resp, RaftError<Err>> = resp
             .json()
             .await
-            .map_err(|e| typ::RpcError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;
         tracing::debug!(
             "<<< client recv reply from {}: {}",
             url,
             serde_json::to_string_pretty(&res).unwrap()
         );
 
-        res.map_err(|e| typ::RpcError::RemoteError(RemoteError::new(leader_id, e)))
+        res.map_err(|e| RpcError::RemoteError(RemoteError::new(leader_id, e)))
     }
 
     /// Try the best to send a request to the leader.
@@ -164,21 +167,21 @@ impl RaftClient {
         &self,
         uri: &str,
         req: Option<&Req>,
-    ) -> Result<Resp, typ::RpcError<Err>>
+    ) -> Result<Resp, RpcError<Err>>
     where
         Req: Serialize + 'static,
         Resp: Serialize + DeserializeOwned,
         Err: std::error::Error
             + Serialize
             + DeserializeOwned
-            + TryAsRef<typ::ForwardToLeader>
+            + TryAsRef<types::ForwardToLeader>
             + Clone,
     {
         // Retry at most 3 times to find a valid leader.
         let mut n_retry = 3;
 
         loop {
-            let res: Result<Resp, typ::RpcError<Err>> = self.do_send_rpc_to_leader(uri, req).await;
+            let res: Result<Resp, RpcError<Err>> = self.do_send_rpc_to_leader(uri, req).await;
 
             let rpc_err = match res {
                 Ok(x) => return Ok(x),

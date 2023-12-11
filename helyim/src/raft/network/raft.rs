@@ -5,7 +5,10 @@ use actix_web::{
 };
 use openraft::raft::{AppendEntriesRequest, InstallSnapshotRequest, VoteRequest};
 
-use crate::raft::{NodeId, RaftServer, TypeConfig};
+use crate::raft::{
+    types::{NodeId, TypeConfig},
+    RaftServer,
+};
 
 // --- Raft communication
 

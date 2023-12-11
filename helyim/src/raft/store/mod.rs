@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::{
-    raft::{NodeId, TypeConfig},
+    raft::types::{NodeId, TypeConfig},
     storage::VolumeId,
     topology::TopologyRef,
 };
