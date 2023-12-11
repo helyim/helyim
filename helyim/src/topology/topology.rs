@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    raft::{client::RaftClient, store::Request},
+    raft::{client::RaftClient, types::Request},
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,

@@ -1,7 +1,7 @@
 use actix_web::{get, post, web, web::Data, Responder};
 use web::Json;
 
-use crate::raft::{store::Request, RaftServer};
+use crate::raft::{types::Request, RaftServer};
 
 /// Application API
 ///

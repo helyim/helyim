@@ -11,10 +11,9 @@ use openraft::{
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
 
-use crate::raft::{
-    store::Request,
-    types,
-    types::{ClientWriteError, ClientWriteResponse, InitializeError, NodeId, RaftError, RpcError},
+use crate::raft::types::{
+    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, RaftError, Request,
+    RpcError,
 };
 
 pub struct RaftClient {

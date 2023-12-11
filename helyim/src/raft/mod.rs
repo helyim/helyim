@@ -24,9 +24,9 @@ use crate::{
 };
 
 pub mod client;
-pub mod network;
-pub mod store;
-mod types;
+mod network;
+mod store;
+pub mod types;
 
 // Representation of an application state. This struct can be shared around to share
 // instances of raft, store and more.
