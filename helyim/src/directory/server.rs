@@ -1,10 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::SocketAddr,
-    num::ParseIntError,
-    pin::Pin,
-    result::Result as StdResult,
-    sync::Arc,
+    net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc,
     time::Duration,
 };
 
@@ -17,7 +12,6 @@ use helyim_proto::{
     HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
     LookupVolumeRequest, LookupVolumeResponse,
 };
-use openraft::BasicNode;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
@@ -29,13 +23,13 @@ use crate::{
         assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
         DirectoryContext,
     },
-    errors::{Error, Result},
-    raft::{start_raft_node, RaftServer},
+    errors::Result,
+    raft::start_raft_node_with_peers,
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{exit, get_or_default, http::default_handler, parser::parse_raft_peer},
+    util::{exit, get_or_default, http::default_handler},
     STOP_INTERVAL,
 };
 
@@ -70,13 +64,13 @@ impl DirectoryServer {
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let raft_server = start_raft_server(peers).await?;
-        // topology event loop
         let topology =
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
 
+        // start raft node and control cluster with `raft_client`
+        let (raft_server, raft_client) = start_raft_node_with_peers(peers).await?;
         raft_server.set_topology(&topology).await;
-        topology.write().await.set_raft_server(raft_server);
+        topology.write().await.set_raft_client(raft_client);
 
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
@@ -191,45 +185,6 @@ impl DirectoryServer {
 
         Ok(())
     }
-}
-
-async fn start_raft_server(peers: &[String]) -> Result<RaftServer> {
-    let mut nodes = BTreeMap::new();
-    let mut members = BTreeSet::new();
-
-    let (node_id, raft_addr) = parse_raft_peer(&peers[0])?;
-
-    nodes.insert(node_id, BasicNode::new(raft_addr));
-    members.insert(node_id);
-
-    let raft_server = start_raft_node(node_id, raft_addr).await?;
-
-    // wait for server to startup
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    raft_server
-        .raft
-        .initialize(nodes)
-        .await
-        .map_err(|err| Error::Box(err.into()))?;
-
-    for peer in peers.iter().skip(1) {
-        let (node, host) = parse_raft_peer(peer)?;
-        members.insert(node);
-        raft_server
-            .raft
-            .add_learner(node, BasicNode::new(host), true)
-            .await
-            .map_err(|err| Error::Box(err.into()))?;
-    }
-
-    let _ = raft_server
-        .raft
-        .change_membership(members, false)
-        .await
-        .map_err(|err| Error::Box(err.into()))?;
-
-    Ok(raft_server)
 }
 
 #[derive(Clone)]

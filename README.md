@@ -49,19 +49,19 @@ curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
 
 ```bash
 # start master1
-cargo run --release  --features iouring --bin helyim -- master --port 9333 \
+cargo run --release --bin helyim -- master --port 9333 \
       --peers 1:127.0.0.1:8333 \
       --peers 2:127.0.0.1:8334 \
       --peers 3:127.0.0.1:8335
       
 # start master2
-cargo run --release  --features iouring --bin helyim -- master --port 9335 \
+cargo run --release --bin helyim -- master --port 9335 \
       --peers 2:127.0.0.1:8334 \
       --peers 1:127.0.0.1:8333 \
       --peers 3:127.0.0.1:8335
       
 # start master3
-cargo run --release  --features iouring --bin helyim -- master --port 9337 \
+cargo run --release --bin helyim -- master --port 9337 \
       --peers 3:127.0.0.1:8335 \
       --peers 1:127.0.0.1:8333 \
       --peers 2:127.0.0.1:8334

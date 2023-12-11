@@ -10,8 +10,9 @@ use openraft::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
+use tracing::info;
 
-use crate::raft::{typ, NodeId};
+use crate::raft::{store::Request, typ, NodeId};
 
 pub struct RaftClient {
     /// The leader node to send request to.
@@ -41,8 +42,9 @@ impl RaftClient {
     /// The result of applying the request will be returned.
     pub async fn write(
         &self,
+        req: &Request,
     ) -> Result<typ::ClientWriteResponse, typ::RpcError<typ::ClientWriteError>> {
-        self.send_rpc_to_leader("write", None::<&()>).await
+        self.send_rpc_to_leader("write", Some(req)).await
     }
 
     /// Read value by key, in an consistent mode.
@@ -125,7 +127,7 @@ impl RaftClient {
                 url,
                 serde_json::to_string_pretty(&r).unwrap()
             );
-            self.inner.post(url.clone())
+            self.inner.post(url.clone()).json(r)
         } else {
             tracing::debug!(">>> client send request to {}", url);
             self.inner.get(url.clone())

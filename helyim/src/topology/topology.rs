@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    raft::{store::Request, RaftServer},
+    raft::{client::RaftClient, store::Request},
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -39,7 +39,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    raft: Option<RaftServer>,
+    raft: Option<RaftClient>,
 }
 
 impl Clone for Topology {
@@ -72,7 +72,7 @@ impl Topology {
         }
     }
 
-    pub fn set_raft_server(&mut self, raft: RaftServer) {
+    pub fn set_raft_client(&mut self, raft: RaftClient) {
         self.raft = Some(raft);
     }
 
@@ -171,8 +171,7 @@ impl Topology {
         let vid = self.max_volume_id();
         let next = vid + 1;
         if let Some(raft) = self.raft.as_ref() {
-            raft.raft
-                .client_write(Request::MaxVolumeId(next))
+            raft.write(&Request::MaxVolumeId(next))
                 .await
                 .map_err(|err| VolumeError::Box(err.into()))?;
         }
@@ -211,13 +210,6 @@ impl Topology {
                     }
                 }
             }
-        }
-    }
-
-    pub async fn is_leader(&self) -> bool {
-        match self.raft.as_ref() {
-            Some(raft) => raft.raft.is_leader().await.is_ok(),
-            None => false,
         }
     }
 }

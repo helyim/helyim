@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::Cursor, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    io::Cursor,
+    sync::Arc,
+    time::Duration,
+};
 
 use actix_web::{middleware, middleware::Logger, rt::System, web::Data, HttpServer};
 use once_cell::sync::Lazy;
@@ -6,11 +11,14 @@ use openraft::{storage::Adaptor, BasicNode, Config, TokioRuntime};
 use parking_lot::RwLock;
 
 use crate::{
+    errors::{Error, Result},
     raft::{
+        client::RaftClient,
         network::{api, management, raft, Network},
         store::{Request, Response, Store},
     },
     topology::TopologyRef,
+    util::parser::parse_raft_peer,
 };
 
 pub mod client;
@@ -44,7 +52,7 @@ pub struct RaftServer {
 }
 
 impl RaftServer {
-    pub async fn set_topology(&self, topology: &TopologyRef) {
+    pub async fn set_topology(self, topology: &TopologyRef) {
         self.store
             .state_machine
             .write()
@@ -70,7 +78,7 @@ pub mod typ {
     pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
 }
 
-pub async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<RaftServer> {
+async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<RaftServer> {
     // Create a configuration for the raft instance.
     let config = Config {
         heartbeat_interval: 500,
@@ -91,7 +99,7 @@ pub async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Resul
     let network = Network {};
 
     // Create a local raft instance.
-    let raft = openraft::Raft::new(node_id, config.clone(), network, log_store, state_machine)
+    let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine)
         .await
         .unwrap();
 
@@ -136,4 +144,38 @@ pub async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Resul
     std::thread::spawn(move || System::new().block_on(server));
 
     Ok(raft_server)
+}
+
+pub async fn start_raft_node_with_peers(peers: &[String]) -> Result<(RaftServer, RaftClient)> {
+    let mut nodes = BTreeMap::new();
+    let mut members = BTreeSet::new();
+
+    let (node_id, raft_addr) = parse_raft_peer(&peers[0])?;
+
+    nodes.insert(node_id, BasicNode::new(raft_addr));
+    members.insert(node_id);
+
+    let raft_server = start_raft_node(node_id, raft_addr).await?;
+
+    // wait for server to startup
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let client = RaftClient::new(node_id, raft_addr.to_string());
+    client.init().await.map_err(|err| Error::Box(err.into()))?;
+
+    for peer in peers.iter().skip(1) {
+        let (node, host) = parse_raft_peer(peer)?;
+        members.insert(node);
+        client
+            .add_learner((node, host.to_string()))
+            .await
+            .map_err(|err| Error::Box(err.into()))?;
+    }
+
+    let _ = client
+        .change_membership(&members)
+        .await
+        .map_err(|err| Error::Box(err.into()))?;
+
+    Ok((raft_server, client))
 }
