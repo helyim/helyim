@@ -12,8 +12,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
 
 use crate::raft::types::{
-    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, RaftError, Request,
-    RpcError,
+    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
+    RaftRequest, RpcError,
 };
 
 pub struct RaftClient {
@@ -44,7 +44,7 @@ impl RaftClient {
     /// The result of applying the request will be returned.
     pub async fn write(
         &self,
-        req: &Request,
+        req: &RaftRequest,
     ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
         self.send_rpc_to_leader("write", Some(req)).await
     }
@@ -65,7 +65,7 @@ impl RaftClient {
     /// Then setup replication with [`add_learner`].
     /// Then make the new node a member with [`change_membership`].
     pub async fn init(&self) -> Result<(), RpcError<InitializeError>> {
-        self.do_send_rpc_to_leader("init", Some(&())).await
+        self.do_send_rpc_to_leader("init", None::<&()>).await
     }
 
     /// Add a node as learner.
@@ -145,7 +145,7 @@ impl RaftClient {
             }
         };
 
-        let res: Result<Resp, RaftError<Err>> = resp
+        let res: Result<Resp, OpenRaftError<Err>> = resp
             .json()
             .await
             .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;

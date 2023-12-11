@@ -68,7 +68,8 @@ impl DirectoryServer {
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
 
         // start raft node and control cluster with `raft_client`
-        let (raft_server, raft_client) = start_raft_node_with_peers(peers).await?;
+        let (raft_server, raft_client) =
+            start_raft_node_with_peers(peers, shutdown_rx.clone()).await?;
         raft_server.set_topology(&topology).await;
         topology.write().await.set_raft_client(raft_client);
 

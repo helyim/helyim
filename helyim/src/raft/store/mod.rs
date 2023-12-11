@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::{
-    raft::types::{NodeId, Request, Response, TypeConfig},
+    raft::types::{NodeId, RaftRequest, RaftResponse, TypeConfig},
     topology::TopologyRef,
 };
 
@@ -251,7 +251,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
     async fn apply_to_state_machine(
         &mut self,
         entries: &[Entry<TypeConfig>],
-    ) -> Result<Vec<Response>, StorageError<NodeId>> {
+    ) -> Result<Vec<RaftResponse>, StorageError<NodeId>> {
         let mut res = Vec::with_capacity(entries.len());
 
         let mut sm = self.state_machine.write().await;
@@ -262,15 +262,19 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
             sm.last_applied_log = Some(entry.log_id);
 
             match entry.payload {
-                EntryPayload::Blank => res.push(Response { value: None }),
+                EntryPayload::Blank => res.push(RaftResponse { value: None }),
                 EntryPayload::Normal(ref req) => match req {
-                    Request::MaxVolumeId(vid) => {
-                        sm.topology().write().await.adjust_max_volume_id(*vid).await;
+                    RaftRequest::MaxVolumeId { max_volume_id } => {
+                        sm.topology()
+                            .write()
+                            .await
+                            .adjust_max_volume_id(*max_volume_id)
+                            .await;
                     }
                 },
                 EntryPayload::Membership(ref mem) => {
                     sm.last_membership = StoredMembership::new(Some(entry.log_id), mem.clone());
-                    res.push(Response { value: None })
+                    res.push(RaftResponse { value: None })
                 }
             };
         }

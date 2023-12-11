@@ -1,29 +1,33 @@
-use actix_web::{get, post, web, web::Data, Responder};
-use web::Json;
+use axum::{extract::State, Json};
+use serde::{Deserialize, Serialize};
 
-use crate::raft::{types::Request, RaftServer};
+use crate::{
+    raft::{
+        types::{ClientWriteError, ClientWriteResponse, OpenRaftError, RaftError, RaftRequest},
+        RaftServer,
+    },
+    storage::VolumeId,
+};
 
-/// Application API
-///
-/// This is where you place your application, you can use the example below to create your
-/// API. The current implementation:
-///
-///  - `POST - /write` saves a value in a key and sync the nodes.
-///  - `POST - /read` attempt to find a value from a given key.
-#[post("/write")]
-pub async fn write(app: Data<RaftServer>, req: Json<Request>) -> actix_web::Result<impl Responder> {
-    let response = app.raft.client_write(req.0).await;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppData {
+    pub max_volume_id: VolumeId,
+}
+
+pub async fn write_handler(
+    State(raft): State<RaftServer>,
+    Json(app_data): Json<AppData>,
+) -> Result<Json<Result<ClientWriteResponse, OpenRaftError<ClientWriteError>>>, RaftError> {
+    let response = raft
+        .raft
+        .client_write(RaftRequest::max_volume_id(app_data.max_volume_id))
+        .await;
     Ok(Json(response))
 }
 
-#[get("/read")]
-pub async fn read(app: Data<RaftServer>) -> actix_web::Result<impl Responder> {
-    match app.raft.is_leader().await {
-        Ok(_) => {
-            let state_machine = app.store.state_machine.read().await;
-            let value = state_machine.topology().read().await.max_volume_id();
-            Ok(Json(Ok(value)))
-        }
-        Err(e) => Ok(Json(Err(e))),
-    }
+pub async fn read_handler(State(raft): State<RaftServer>) -> Result<Json<AppData>, RaftError> {
+    raft.raft.is_leader().await?;
+    let state_machine = raft.store.state_machine.read().await;
+    let max_volume_id = state_machine.topology().read().await.max_volume_id();
+    Ok(Json(AppData { max_volume_id }))
 }

@@ -12,7 +12,10 @@ use futures::channel::mpsc::TrySendError;
 use serde_json::json;
 use tracing::error;
 
-use crate::storage::{NeedleError, VolumeError};
+use crate::{
+    raft::types::RaftError,
+    storage::{NeedleError, VolumeError},
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -20,6 +23,8 @@ pub enum Error {
     Volume(#[from] VolumeError),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Raft error: {0}")]
+    Raft(#[from] RaftError),
 
     #[error("Raft server peers is empty")]
     EmptyPeers,

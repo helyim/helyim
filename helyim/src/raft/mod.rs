@@ -4,23 +4,36 @@ use std::{
     time::Duration,
 };
 
-use actix_web::{middleware, middleware::Logger, rt::System, web::Data, HttpServer};
+use axum::{
+    extract::DefaultBodyLimit,
+    routing::{get, post},
+    Router,
+};
 use nom::{
     character::complete::{char, digit1},
     sequence::pair,
 };
 use openraft::{storage::Adaptor, BasicNode, Config};
-use tracing::warn;
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
+use tracing::{error, info, warn};
 
 use crate::{
-    errors::{Error, Result},
     raft::{
         client::RaftClient,
-        network::{api, management, raft, Network},
+        network::{
+            api::{read_handler, write_handler},
+            management::{
+                add_learner_handler, change_membership_handler, init_handler, metrics_handler,
+            },
+            raft::{append_handler, snapshot_handler, vote_handler},
+            Network,
+        },
         store::Store,
-        types::{NodeId, Raft},
+        types::{NodeId, Raft, RaftError},
     },
+    rt_spawn,
     topology::TopologyRef,
+    util::exit,
 };
 
 pub mod client;
@@ -49,12 +62,16 @@ impl RaftServer {
     }
 }
 
-pub fn parse_raft_peer(input: &str) -> std::result::Result<(NodeId, &str), Error> {
+pub fn parse_raft_peer(input: &str) -> Result<(NodeId, &str), RaftError> {
     let (input, (node_id, _)) = pair(digit1, char(':'))(input)?;
     Ok((node_id.parse()?, input))
 }
 
-async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<RaftServer> {
+async fn start_raft_node(
+    node_id: NodeId,
+    http_addr: &str,
+    mut shutdown_rx: async_broadcast::Receiver<()>,
+) -> Result<RaftServer, RaftError> {
     // Create a configuration for the raft instance.
     let config = Config {
         heartbeat_interval: 500,
@@ -87,42 +104,55 @@ async fn start_raft_node(node_id: NodeId, http_addr: &str) -> std::io::Result<Ra
         config,
     };
 
-    // Create an application that will store all the instances created above, this will
-    // be later used on the actix-web services.
-    let app_data = Data::new(raft_server.clone());
+    let raft_state = raft_server.clone();
+    let addr = http_addr.parse()?;
+    rt_spawn(async move {
+        let app = Router::new()
+            // application api
+            .route("/write", post(write_handler))
+            .route("/read", get(read_handler).post(read_handler))
+            // raft management api
+            .route("/add-learner", post(add_learner_handler))
+            .route("/change-membership", post(change_membership_handler))
+            .route("/init", get(init_handler).post(init_handler))
+            .route("/metrics", get(metrics_handler).post(metrics_handler))
+            // raft communication
+            .route("/raft-vote", post(vote_handler))
+            .route("/raft-snapshot", post(snapshot_handler))
+            .route("/raft-append", post(append_handler))
+            .layer((
+                CompressionLayer::new(),
+                DefaultBodyLimit::max(1024 * 1024 * 50),
+                TimeoutLayer::new(Duration::from_secs(10)),
+            ))
+            .with_state(raft_state);
 
-    // Start the actix-web server.
-    let server = HttpServer::new(move || {
-        actix_web::App::new()
-            .wrap(Logger::default())
-            .wrap(Logger::new("%a %{User-Agent}i"))
-            .wrap(middleware::Compress::default())
-            .app_data(app_data.clone())
-            // raft internal RPC
-            .service(raft::append)
-            .service(raft::snapshot)
-            .service(raft::vote)
-            // admin API
-            .service(management::init)
-            .service(management::add_learner)
-            .service(management::change_membership)
-            .service(management::metrics)
-            // application API
-            .service(api::write)
-            .service(api::read)
+        match hyper::Server::try_bind(&addr) {
+            Ok(builder) => {
+                let server = builder.serve(app.into_make_service());
+                let graceful = server.with_graceful_shutdown(async {
+                    let _ = shutdown_rx.recv().await;
+                });
+                info!("raft api server starting up. binding addr: {addr}");
+                match graceful.await {
+                    Ok(()) => info!("raft api server shutting down gracefully."),
+                    Err(e) => error!("raft api server stop failed, {}", e),
+                }
+            }
+            Err(err) => {
+                error!("starting raft api server failed, error: {err}");
+                exit();
+            }
+        }
     });
-    let server = server.bind(http_addr)?.run();
-
-    // stop the server
-    // let server_handle = server.handle();
-    // server_handle.stop(true).await;
-
-    std::thread::spawn(move || System::new().block_on(server));
 
     Ok(raft_server)
 }
 
-pub async fn start_raft_node_with_peers(peers: &[String]) -> Result<(RaftServer, RaftClient)> {
+pub async fn start_raft_node_with_peers(
+    peers: &[String],
+    shutdown_rx: async_broadcast::Receiver<()>,
+) -> Result<(RaftServer, RaftClient), RaftError> {
     let mut nodes = BTreeMap::new();
     let mut members = BTreeSet::new();
 
@@ -131,7 +161,7 @@ pub async fn start_raft_node_with_peers(peers: &[String]) -> Result<(RaftServer,
     nodes.insert(node_id, BasicNode::new(raft_addr));
     members.insert(node_id);
 
-    let raft_server = start_raft_node(node_id, raft_addr).await?;
+    let raft_server = start_raft_node(node_id, raft_addr, shutdown_rx).await?;
 
     // wait for server to startup
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -158,7 +188,7 @@ pub async fn start_raft_node_with_peers(peers: &[String]) -> Result<(RaftServer,
 
 #[cfg(test)]
 mod tests {
-    use crate::raft::parse_raft_peer;
+    use crate::raft::{parse_raft_peer, types::RaftRequest};
 
     #[test]
     pub fn test_parse_raft_peer() {
@@ -172,6 +202,11 @@ mod tests {
 
         let (node, host) = parse_raft_peer("1:github.com/helyim").unwrap();
         assert_eq!(host, "github.com/helyim");
-        assert_eq!(node, 1)
+        assert_eq!(node, 1);
+
+        println!(
+            "{}",
+            serde_json::to_string(&RaftRequest::max_volume_id(1)).unwrap()
+        );
     }
 }
