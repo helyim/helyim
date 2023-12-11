@@ -80,7 +80,7 @@ pub async fn lookup_handler(
         .write()
         .await
         .lookup(
-            request.collection.unwrap_or_default(),
+            &request.collection.unwrap_or_default(),
             volume_id.parse::<u32>()?,
         )
         .await;

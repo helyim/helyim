@@ -44,7 +44,7 @@ pub struct RaftServer {
 }
 
 impl RaftServer {
-    pub async fn set_topology(&self, topology: TopologyRef) {
+    pub async fn set_topology(&self, topology: &TopologyRef) {
         self.store
             .state_machine
             .write()

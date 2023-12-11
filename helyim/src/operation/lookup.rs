@@ -15,7 +15,7 @@ use crate::{errors::Result, storage::VolumeId};
 #[serde(rename_all = "camelCase")]
 pub struct LookupRequest {
     pub volume_id: String,
-    pub collection: Option<FastStr>,
+    pub collection: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

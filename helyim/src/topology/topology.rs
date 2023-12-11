@@ -89,7 +89,7 @@ impl Topology {
 
     pub async fn lookup(
         &mut self,
-        collection: FastStr,
+        collection: &str,
         volume_id: VolumeId,
     ) -> Option<Vec<DataNodeRef>> {
         if collection.is_empty() {
@@ -99,7 +99,7 @@ impl Topology {
                     return data_node;
                 }
             }
-        } else if let Some(c) = self.collections.get(&collection) {
+        } else if let Some(c) = self.collections.get(collection) {
             let data_node = c.lookup(volume_id).await;
             if data_node.is_some() {
                 return data_node;

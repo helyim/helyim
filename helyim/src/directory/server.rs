@@ -75,7 +75,7 @@ impl DirectoryServer {
         let topology =
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
 
-        raft_server.set_topology(topology.clone()).await;
+        raft_server.set_topology(&topology).await;
         topology.write().await.set_raft_server(raft_server);
 
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
@@ -289,7 +289,6 @@ impl Helyim for DirectoryGrpcServer {
         if request.volumes.is_empty() {
             return Err(Status::invalid_argument("volumes can't be empty"));
         }
-        let collection = FastStr::from(request.collection);
 
         let mut volume_locations = vec![];
         for mut volume_id in request.volumes {
@@ -306,7 +305,7 @@ impl Helyim for DirectoryGrpcServer {
                 .topology
                 .write()
                 .await
-                .lookup(collection.clone(), volume_id)
+                .lookup(&request.collection, volume_id)
                 .await
             {
                 Some(nodes) => {
