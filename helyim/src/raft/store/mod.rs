@@ -262,7 +262,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
             sm.last_applied_log = Some(entry.log_id);
 
             match entry.payload {
-                EntryPayload::Blank => res.push(RaftResponse { value: None }),
+                EntryPayload::Blank => res.push(RaftResponse),
                 EntryPayload::Normal(ref req) => match req {
                     RaftRequest::MaxVolumeId { max_volume_id } => {
                         sm.topology()
@@ -270,11 +270,12 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
                             .await
                             .adjust_max_volume_id(*max_volume_id)
                             .await;
+                        res.push(RaftResponse);
                     }
                 },
                 EntryPayload::Membership(ref mem) => {
                     sm.last_membership = StoredMembership::new(Some(entry.log_id), mem.clone());
-                    res.push(RaftResponse { value: None })
+                    res.push(RaftResponse)
                 }
             };
         }

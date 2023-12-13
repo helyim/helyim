@@ -1,0 +1,31 @@
+syntax = "proto3";
+package raft;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
+service RaftServer {
+  // cluster management
+  rpc initialize(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  rpc add_learner(Request) returns (Response) {}
+  rpc change_membership(Request) returns (Response) {}
+
+  // raft communication
+  rpc vote(Request) returns (Response) {}
+  rpc append_entries(Request) returns (Response) {}
+  rpc install_snapshot(Request) returns (Response) {}
+
+  // application api
+  rpc set_max_volume_id(google.protobuf.UInt32Value) returns (google.protobuf.Empty) {}
+  rpc max_volume_id(google.protobuf.Empty) returns (google.protobuf.UInt32Value) {}
+}
+
+message Request {
+  bytes data = 1;
+}
+
+message Response {
+  // if reply ok, the data set with application data
+  // if reply error, the data set with error(or extra) message
+  bytes data = 1;
+}

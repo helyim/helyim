@@ -25,7 +25,6 @@ pub async fn change_membership_handler(
     Json(members): Json<BTreeSet<NodeId>>,
 ) -> Result<Json<Result<ClientWriteResponse, OpenRaftError<ClientWriteError>>>, RaftError> {
     let res = raft.raft.change_membership(members, false).await;
-    println!("{:?}", res);
     Ok(Json(res))
 }
 

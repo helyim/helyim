@@ -47,9 +47,7 @@ impl RaftRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RaftResponse {
-    pub value: Option<String>,
-}
+pub struct RaftResponse;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RaftError {
@@ -76,7 +74,7 @@ pub enum RaftError {
     InitializeRaftCluster(#[from] openraft::error::RaftError<NodeId, InitializeError>),
     #[error("OpenRaft client write error: {0}")]
     ClientWrite(#[from] openraft::error::RaftError<NodeId, ClientWriteError>),
-    #[error("OpenRaft client write error: {0}")]
+    #[error("OpenRaft check is leader error: {0}")]
     CheckIsLeader(#[from] openraft::error::RaftError<NodeId, CheckIsLeaderError>),
 }
 
