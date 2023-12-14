@@ -12,7 +12,10 @@ use futures::channel::mpsc::TrySendError;
 use serde_json::json;
 use tracing::error;
 
-use crate::storage::{NeedleError, VolumeError};
+use crate::{
+    raft::types::RaftError,
+    storage::{NeedleError, VolumeError},
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -20,6 +23,11 @@ pub enum Error {
     Volume(#[from] VolumeError),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Raft error: {0}")]
+    Raft(#[from] RaftError),
+
+    #[error("Raft server peers is empty")]
+    EmptyPeers,
 
     /// other errors
     #[error("Io error: {0}")]
@@ -28,8 +36,8 @@ pub enum Error {
     ParseInt(#[from] std::num::ParseIntError),
     #[error("Bincode error: {0}")]
     Bincode(#[from] Box<bincode::ErrorKind>),
-    #[error("Other error: {0}")]
-    Other(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("error: {0}")]
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
     #[error("{0}")]
@@ -105,5 +113,11 @@ impl<T> From<TrySendError<T>> for Error {
 impl From<Error> for tonic::Status {
     fn from(value: Error) -> Self {
         tonic::Status::internal(value.to_string())
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for Error {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::String(value.to_string())
     }
 }

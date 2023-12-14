@@ -50,7 +50,8 @@ impl VolumeLayout {
                         {
                             continue;
                         }
-                        if !option.data_node.is_empty() && node.read().await.id != option.data_node
+                        if !option.data_node.is_empty()
+                            && node.read().await.id() != option.data_node
                         {
                             continue;
                         }
@@ -94,7 +95,8 @@ impl VolumeLayout {
                         {
                             continue;
                         }
-                        if !option.data_node.is_empty() && node.read().await.id != option.data_node
+                        if !option.data_node.is_empty()
+                            && node.read().await.id() != option.data_node
                         {
                             continue;
                         }

@@ -12,13 +12,13 @@ Helyim uses HTTP REST operations to read, write, and delete. The responses are i
 #### 1. Start Master Server
 
 ```shell
-> cargo run --bin helyim master
+cargo run --bin helyim master
 ```
 
 #### 2. Start Volume Servers
 
 ```shell
-> cargo run --bin helyim volume --port 8080 --dir ./vdata:70 --dir ./v1data:10
+cargo run --bin helyim volume --port 8080 --dir ./vdata:70 --dir ./v1data:10
 ```
 
 #### 3. Write File
@@ -26,14 +26,14 @@ Helyim uses HTTP REST operations to read, write, and delete. The responses are i
 To upload a file: first, send a HTTP POST, PUT, or GET request to `/dir/assign` to get an `fid` and a volume server URL:
 
 ```bash
-> curl http://localhost:9333/dir/assign
+curl http://localhost:9333/dir/assign
 {"fid":"6,16b7578a5","url":"127.0.0.1:8080","public_url":"127.0.0.1:8080","count":1,"error":""}
 ```
 
 Second, to store the file content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
 
 ```bash
-> curl -F file=@./sun.jpg http://127.0.0.1:8080/6,16b7578a5
+curl -F file=@./sun.jpg http://127.0.0.1:8080/6,16b7578a5
 {"name":"sun.jpg","size":1675569,"error":""}
 ```
 
@@ -42,7 +42,29 @@ To update, send another POST request with updated file content.
 For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
 ```bash
-> curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
+curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
+```
+
+### Failover Master Server
+
+```bash
+# start master1
+cargo run --release --bin helyim -- master --port 9333 \
+      --peers 1:127.0.0.1:8333 \
+      --peers 2:127.0.0.1:8334 \
+      --peers 3:127.0.0.1:8335
+      
+# start master2
+cargo run --release --bin helyim -- master --port 9335 \
+      --peers 2:127.0.0.1:8334 \
+      --peers 1:127.0.0.1:8333 \
+      --peers 3:127.0.0.1:8335
+      
+# start master3
+cargo run --release --bin helyim -- master --port 9337 \
+      --peers 3:127.0.0.1:8335 \
+      --peers 1:127.0.0.1:8333 \
+      --peers 2:127.0.0.1:8334
 ```
 
 ### Benchmark

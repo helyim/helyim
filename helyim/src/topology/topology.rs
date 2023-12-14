@@ -1,19 +1,19 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Weak,
-    },
+    sync::{Arc, Weak},
     time::Duration,
 };
 
 use faststr::FastStr;
 use serde::Serialize;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
+    raft::{types::NodeId, RaftServer},
+    rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -21,49 +21,55 @@ use crate::{
     },
     topology::{
         collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
-        volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
+        node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
     },
 };
 
 #[derive(Serialize)]
 pub struct Topology {
+    node: Node,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
     #[serde(skip)]
     pub ec_shards: HashMap<VolumeId, EcShardLocations>,
-    pub ec_shard_count: AtomicU64,
     pulse: u64,
     volume_size_limit: u64,
     // children
     #[serde(skip)]
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
+
+    #[serde(skip)]
+    raft: Option<Arc<RaftServer>>,
 }
 
 impl Clone for Topology {
     fn clone(&self) -> Self {
         Self {
+            node: self.node.clone(),
             sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
             ec_shards: self.ec_shards.clone(),
-            ec_shard_count: AtomicU64::new(self.ec_shard_count.load(Ordering::Relaxed)),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
             data_centers: HashMap::new(),
+            raft: None,
         }
     }
 }
 
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
+        let node = Node::new(FastStr::new("topo"));
         Topology {
+            node,
             sequencer,
             collections: HashMap::new(),
             ec_shards: HashMap::new(),
-            ec_shard_count: AtomicU64::new(0),
             pulse,
             volume_size_limit,
             data_centers: HashMap::new(),
+            raft: None,
         }
     }
 
@@ -80,7 +86,7 @@ impl Topology {
 
     pub async fn lookup(
         &mut self,
-        collection: FastStr,
+        collection: &str,
         volume_id: VolumeId,
     ) -> Option<Vec<DataNodeRef>> {
         if collection.is_empty() {
@@ -90,7 +96,7 @@ impl Topology {
                     return data_node;
                 }
             }
-        } else if let Some(c) = self.collections.get(&collection) {
+        } else if let Some(c) = self.collections.get(collection) {
             let data_node = c.lookup(volume_id).await;
             if data_node.is_some() {
                 return data_node;
@@ -110,15 +116,6 @@ impl Topology {
         vl.read().await.active_volume_count(option).await > 0
     }
 
-    pub async fn free_volumes(&self) -> i64 {
-        let mut free = 0;
-        for data_center in self.data_centers.values() {
-            free += data_center.read().await.max_volumes().await
-                - data_center.read().await.has_volumes().await;
-        }
-        free
-    }
-
     pub async fn pick_for_write(
         &mut self,
         count: u64,
@@ -127,7 +124,7 @@ impl Topology {
         let file_id = self
             .sequencer
             .next_file_id(count)
-            .map_err(|err| VolumeError::BoxError(Box::new(err)))?;
+            .map_err(|err| VolumeError::Box(Box::new(err)))?;
 
         let (volume_id, node) = {
             let layout = self.get_volume_layout(
@@ -167,10 +164,18 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&self) -> VolumeId {
-        let vid = self.get_max_volume_id().await;
-
-        vid + 1
+    pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
+        let vid = self.max_volume_id();
+        let next = vid + 1;
+        if let Some(raft) = self.raft.as_ref() {
+            let raft = raft.clone();
+            rt_spawn(async move {
+                if let Err(err) = raft.set_max_volume_id(next).await {
+                    error!("set max volume id failed, error: {err}");
+                }
+            });
+        }
+        Ok(next)
     }
 
     pub fn set_max_sequence(&mut self, seq: u64) {
@@ -221,17 +226,106 @@ impl Topology {
             .or_insert(Collection::new(collection, self.volume_size_limit))
             .get_or_create_volume_layout(rp, Some(ttl))
     }
+}
 
-    async fn get_max_volume_id(&self) -> VolumeId {
-        let mut vid = 0;
-        for (_, data_center) in self.data_centers.iter() {
-            let other = data_center.read().await.max_volume_id;
-            if other > vid {
-                vid = other;
-            }
-        }
-        vid
+impl Topology {
+    pub fn set_raft_server(&mut self, raft: RaftServer) {
+        self.raft = Some(Arc::new(raft));
     }
+
+    pub async fn current_leader(&self) -> Option<NodeId> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.current_leader().await,
+            None => None,
+        }
+    }
+
+    pub async fn current_leader_address(&self) -> Option<String> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.current_leader_address().await,
+            None => None,
+        }
+    }
+
+    pub async fn is_leader(&self) -> bool {
+        match self.raft.as_ref() {
+            Some(raft) => raft.is_leader().await,
+            None => false,
+        }
+    }
+
+    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.peers(),
+            None => BTreeMap::new(),
+        }
+    }
+}
+
+impl Topology {
+    pub async fn volume_count(&self) -> u64 {
+        let mut count = 0;
+        for dc in self.data_centers.values() {
+            count += dc.read().await.volume_count().await;
+        }
+        count
+    }
+
+    pub async fn max_volume_count(&self) -> u64 {
+        let mut max_volumes = 0;
+        for dc in self.data_centers.values() {
+            max_volumes += dc.read().await.max_volume_count().await;
+        }
+        max_volumes
+    }
+
+    pub async fn free_volumes(&self) -> u64 {
+        let mut free_volumes = 0;
+        for dc in self.data_centers.values() {
+            free_volumes += dc.read().await.free_volumes().await;
+        }
+        free_volumes
+    }
+
+    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self._adjust_volume_count(volume_count_delta);
+    }
+
+    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self._adjust_active_volume_count(active_volume_count_delta);
+    }
+
+    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self._adjust_ec_shard_count(ec_shard_count_delta);
+    }
+
+    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self._adjust_max_volume_count(max_volume_count_delta);
+    }
+
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
+        self._adjust_max_volume_id(vid);
+    }
+}
+
+impl Deref for Topology {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+
+impl DerefMut for Topology {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum TopologyError {
+    #[error("Other error: {0}")]
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
 }
 
 pub async fn topology_vacuum_loop(
@@ -245,9 +339,11 @@ pub async fn topology_vacuum_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                debug!("topology vacuum starting.");
-                topology.write().await.vacuum(garbage_threshold, preallocate).await;
-                debug!("topology vacuum success.")
+                if topology.read().await.is_leader().await {
+                    debug!("topology vacuum starting.");
+                    topology.write().await.vacuum(garbage_threshold, preallocate).await;
+                    debug!("topology vacuum success.")
+                }
             }
             _ = shutdown.recv() => {
                 break;

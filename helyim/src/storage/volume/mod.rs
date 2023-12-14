@@ -578,7 +578,7 @@ pub enum VolumeError {
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
-    BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
     #[error("System time error: {0}")]

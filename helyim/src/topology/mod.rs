@@ -5,9 +5,10 @@ mod data_node;
 pub use data_node::DataNodeRef;
 
 mod erasure_coding;
+mod node;
 
 mod rack;
-#[allow(clippy::module_inception)]
+
 mod topology;
 pub use topology::{topology_vacuum_loop, Topology, TopologyRef};
 

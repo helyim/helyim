@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
+    ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{atomic::AtomicU64, Arc, Weak},
+    sync::{Arc, Weak},
 };
 
 use faststr::FastStr;
@@ -12,17 +13,15 @@ use tokio::sync::RwLock;
 use crate::{
     errors::Result,
     storage::{VolumeError, VolumeId},
-    topology::{data_center::WeakDataCenterRef, DataNodeRef},
+    topology::{data_center::WeakDataCenterRef, node::Node, DataNodeRef},
 };
 
 #[derive(Serialize)]
 pub struct Rack {
-    pub id: FastStr,
+    node: Node,
     // children
     #[serde(skip)]
     pub data_nodes: HashMap<FastStr, DataNodeRef>,
-    max_volume_id: VolumeId,
-    pub ec_shard_count: AtomicU64,
     // parent
     #[serde(skip)]
     pub data_center: WeakDataCenterRef,
@@ -30,11 +29,10 @@ pub struct Rack {
 
 impl Rack {
     pub fn new(id: FastStr) -> Rack {
+        let node = Node::new(id);
         Self {
-            id: id.clone(),
+            node,
             data_nodes: HashMap::new(),
-            max_volume_id: 0,
-            ec_shard_count: AtomicU64::new(0),
             data_center: WeakDataCenterRef::new(),
         }
     }
@@ -43,29 +41,19 @@ impl Rack {
         self.data_center = data_center;
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
-        if vid > self.max_volume_id {
-            self.max_volume_id = vid;
-        }
-
-        if let Some(dc) = self.data_center.upgrade() {
-            dc.write().await.adjust_max_volume_id(self.max_volume_id);
-        }
-    }
-
     pub async fn get_or_create_data_node(
         &mut self,
         id: FastStr,
         ip: FastStr,
         port: u16,
         public_url: FastStr,
-        max_volumes: i64,
+        max_volume_count: u64,
     ) -> Result<DataNodeRef> {
         match self.data_nodes.get(&id) {
             Some(data_node) => Ok(data_node.clone()),
             None => {
                 let data_node =
-                    DataNodeRef::new(id.clone(), ip, port, public_url, max_volumes).await?;
+                    DataNodeRef::new(id.clone(), ip, port, public_url, max_volume_count).await?;
 
                 self.data_nodes.insert(id, data_node.clone());
                 Ok(data_node)
@@ -78,30 +66,6 @@ impl Rack {
             Some(data_center) => data_center.read().await.id.clone(),
             None => FastStr::empty(),
         }
-    }
-
-    pub async fn has_volumes(&self) -> i64 {
-        let mut count = 0;
-        for data_node in self.data_nodes.values() {
-            count += data_node.read().await.has_volumes();
-        }
-        count
-    }
-
-    pub async fn max_volumes(&self) -> i64 {
-        let mut max_volumes = 0;
-        for data_node in self.data_nodes.values() {
-            max_volumes += data_node.read().await.max_volumes;
-        }
-        max_volumes
-    }
-
-    pub async fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
-        for data_node in self.data_nodes.values() {
-            free_volumes += data_node.read().await.free_volumes();
-        }
-        free_volumes
     }
 
     pub async fn reserve_one_volume(&self) -> StdResult<DataNodeRef, VolumeError> {
@@ -122,8 +86,103 @@ impl Rack {
 
         Err(VolumeError::NoFreeSpace(format!(
             "no free volumes found on rack {}",
-            self.id
+            self.id()
         )))
+    }
+}
+
+impl Rack {
+    pub async fn volume_count(&self) -> u64 {
+        let mut count = 0;
+        for data_node in self.data_nodes.values() {
+            count += data_node.read().await.volume_count();
+        }
+        count
+    }
+
+    pub async fn max_volume_count(&self) -> u64 {
+        let mut max_volumes = 0;
+        for data_node in self.data_nodes.values() {
+            max_volumes += data_node.read().await.max_volume_count();
+        }
+        max_volumes
+    }
+
+    pub async fn free_volumes(&self) -> u64 {
+        let mut free_volumes = 0;
+        for data_node in self.data_nodes.values() {
+            free_volumes += data_node.read().await.free_volumes();
+        }
+        free_volumes
+    }
+
+    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self._adjust_volume_count(volume_count_delta);
+
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.read()
+                .await
+                .adjust_volume_count(volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self._adjust_active_volume_count(active_volume_count_delta);
+
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.read()
+                .await
+                .adjust_active_volume_count(active_volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self._adjust_ec_shard_count(ec_shard_count_delta);
+
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.read()
+                .await
+                .adjust_ec_shard_count(ec_shard_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self._adjust_max_volume_count(max_volume_count_delta);
+
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.read()
+                .await
+                .adjust_max_volume_count(max_volume_count_delta)
+                .await;
+        }
+    }
+
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
+        self._adjust_max_volume_id(vid);
+
+        if let Some(dc) = self.data_center.upgrade() {
+            dc.read()
+                .await
+                .adjust_max_volume_id(self.max_volume_id())
+                .await;
+        }
+    }
+}
+
+impl Deref for Rack {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+
+impl DerefMut for Rack {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
     }
 }
 

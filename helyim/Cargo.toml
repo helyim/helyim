@@ -42,10 +42,11 @@ mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
 multer.workspace = true
 nom.workspace = true
+openraft = { workspace = true, features = ["serde"] }
 once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-reed-solomon-erasure = { workspace = true, features = [ "simd-accel" ] }
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 regex.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
@@ -59,8 +60,11 @@ tonic.workspace = true
 tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
 tracing.workspace = true
 tracing-appender.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"]}
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url.workspace = true
+
+# TODO: remove in the future
+reqwest = { version = "0.11", features = ["json"] }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

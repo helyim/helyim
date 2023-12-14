@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::{Stream, StreamExt};
 use helyim_proto::{
@@ -24,11 +24,12 @@ use crate::{
         DirectoryContext,
     },
     errors::Result,
+    raft::start_raft_node_with_peers,
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{default_handler, exit, get_or_default},
+    util::{exit, get_or_default, http::default_handler},
     STOP_INTERVAL,
 };
 
@@ -57,14 +58,20 @@ impl DirectoryServer {
         volume_size_limit_mb: u64,
         pulse_seconds: u64,
         default_replication: &str,
+        peers: &[String],
         garbage_threshold: f64,
         sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        // topology event loop
         let topology =
             TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+
+        // start raft node and control cluster with `raft_client`
+        let raft_server = start_raft_node_with_peers(peers, shutdown_rx.clone()).await?;
+        raft_server.set_topology(&topology).await;
+        topology.write().await.set_raft_server(raft_server);
+
         let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
@@ -150,8 +157,9 @@ impl DirectoryServer {
                 )
                 .fallback(default_handler)
                 .layer((
-                    TimeoutLayer::new(Duration::from_secs(10)),
                     CompressionLayer::new(),
+                    DefaultBodyLimit::max(1024 * 1024),
+                    TimeoutLayer::new(Duration::from_secs(10)),
                 ))
                 .with_state(ctx);
 
@@ -236,7 +244,6 @@ impl Helyim for DirectoryGrpcServer {
         if request.volumes.is_empty() {
             return Err(Status::invalid_argument("volumes can't be empty"));
         }
-        let collection = FastStr::from(request.collection);
 
         let mut volume_locations = vec![];
         for mut volume_id in request.volumes {
@@ -253,7 +260,7 @@ impl Helyim for DirectoryGrpcServer {
                 .topology
                 .write()
                 .await
-                .lookup(collection.clone(), volume_id)
+                .lookup(&request.collection, volume_id)
                 .await
             {
                 Some(nodes) => {
@@ -325,7 +332,7 @@ async fn handle_heartbeat(
             FastStr::new(ip),
             heartbeat.port as u16,
             FastStr::new(heartbeat.public_url),
-            heartbeat.max_volume_count as i64,
+            heartbeat.max_volume_count as u64,
         )
         .await?;
     node.write().await.set_rack(rack.downgrade());
@@ -356,8 +363,16 @@ async fn handle_heartbeat(
             .await;
     }
 
+    let leader = topology
+        .read()
+        .await
+        .current_leader_address()
+        .await
+        .unwrap_or_default();
+
     Ok(HeartbeatResponse {
         volume_size_limit,
+        leader,
         ..Default::default()
     })
 }

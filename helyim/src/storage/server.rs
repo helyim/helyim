@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_stream::stream;
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
@@ -45,7 +45,11 @@ use crate::{
         version::Version,
         BUFFER_SIZE_LIMIT,
     },
-    util::{default_handler, exit, favicon_handler, file::file_exists},
+    util::{
+        exit,
+        file::file_exists,
+        http::{default_handler, favicon_handler},
+    },
     STOP_INTERVAL,
 };
 
@@ -205,8 +209,9 @@ impl StorageServer {
                         .with_state(ctx.clone()),
                 )
                 .layer((
-                    TimeoutLayer::new(Duration::from_secs(10)),
                     CompressionLayer::new(),
+                    DefaultBodyLimit::max(1024 * 1024 * 50),
+                    TimeoutLayer::new(Duration::from_secs(10)),
                 ))
                 .with_state(ctx);
 
@@ -254,6 +259,9 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
+                                        if let Ok(response) = serde_json::to_string(&response) {
+                                            debug!("heartbeat reply: {response}");
+                                        }
                                         store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {
