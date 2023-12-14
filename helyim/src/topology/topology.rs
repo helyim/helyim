@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{Arc, Weak},
@@ -12,7 +12,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
-    raft::RaftServer,
+    raft::{types::NodeId, RaftServer},
+    rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -39,7 +40,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    raft: Option<RaftServer>,
+    raft: Option<Arc<RaftServer>>,
 }
 
 impl Clone for Topology {
@@ -70,10 +71,6 @@ impl Topology {
             data_centers: HashMap::new(),
             raft: None,
         }
-    }
-
-    pub fn set_raft_server(&mut self, raft: RaftServer) {
-        self.raft = Some(raft);
     }
 
     pub async fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
@@ -171,9 +168,12 @@ impl Topology {
         let vid = self.max_volume_id();
         let next = vid + 1;
         if let Some(raft) = self.raft.as_ref() {
-            raft.set_max_volume_id(next)
-                .await
-                .map_err(|err| VolumeError::Box(err.into()))?;
+            let raft = raft.clone();
+            rt_spawn(async move {
+                if let Err(err) = raft.set_max_volume_id(next).await {
+                    error!("set max volume id failed, error: {err}");
+                }
+            });
         }
         Ok(next)
     }
@@ -225,6 +225,40 @@ impl Topology {
             .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))
             .get_or_create_volume_layout(rp, Some(ttl))
+    }
+}
+
+impl Topology {
+    pub fn set_raft_server(&mut self, raft: RaftServer) {
+        self.raft = Some(Arc::new(raft));
+    }
+
+    pub async fn current_leader(&self) -> Option<NodeId> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.current_leader().await,
+            None => None,
+        }
+    }
+
+    pub async fn current_leader_address(&self) -> Option<String> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.current_leader_address().await,
+            None => None,
+        }
+    }
+
+    pub async fn is_leader(&self) -> bool {
+        match self.raft.as_ref() {
+            Some(raft) => raft.is_leader().await,
+            None => false,
+        }
+    }
+
+    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+        match self.raft.as_ref() {
+            Some(raft) => raft.peers(),
+            None => BTreeMap::new(),
+        }
     }
 }
 
@@ -305,9 +339,11 @@ pub async fn topology_vacuum_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                debug!("topology vacuum starting.");
-                topology.write().await.vacuum(garbage_threshold, preallocate).await;
-                debug!("topology vacuum success.")
+                if topology.read().await.is_leader().await {
+                    debug!("topology vacuum starting.");
+                    topology.write().await.vacuum(garbage_threshold, preallocate).await;
+                    debug!("topology vacuum success.")
+                }
             }
             _ = shutdown.recv() => {
                 break;

@@ -259,6 +259,9 @@ async fn start_heartbeat(
                             while let Some(response) = stream.next().await {
                                 match response {
                                     Ok(response) => {
+                                        if let Ok(response) = serde_json::to_string(&response) {
+                                            debug!("heartbeat reply: {response}");
+                                        }
                                         store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {

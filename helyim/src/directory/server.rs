@@ -363,8 +363,16 @@ async fn handle_heartbeat(
             .await;
     }
 
+    let leader = topology
+        .read()
+        .await
+        .current_leader_address()
+        .await
+        .unwrap_or_default();
+
     Ok(HeartbeatResponse {
         volume_size_limit,
+        leader,
         ..Default::default()
     })
 }

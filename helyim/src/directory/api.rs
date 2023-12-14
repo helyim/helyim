@@ -27,6 +27,13 @@ pub async fn assign_handler(
     State(ctx): State<DirectoryContext>,
     FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> StdResult<Json<Assignment>, VolumeError> {
+    // TODO: support proxyToLeader
+    if !ctx.topology.read().await.is_leader().await {
+        return Err(VolumeError::String(
+            "directory server is not the cluster leader.".to_string(),
+        ));
+    }
+
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
@@ -110,10 +117,20 @@ pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<J
 }
 
 pub async fn cluster_status_handler(State(ctx): State<DirectoryContext>) -> Json<ClusterStatus> {
+    let is_leader = ctx.topology.read().await.is_leader().await;
+    let leader = ctx
+        .topology
+        .read()
+        .await
+        .current_leader_address()
+        .await
+        .unwrap_or_default();
+    let peers = ctx.topology.read().await.peers();
+
     let status = ClusterStatus {
-        is_leader: true,
-        leader: format!("{}:{}", ctx.ip, ctx.port),
-        peers: vec![],
+        is_leader,
+        leader,
+        peers,
     };
     Json(status)
 }

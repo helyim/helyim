@@ -55,14 +55,6 @@ pub struct RaftServer {
 }
 
 impl RaftServer {
-    pub async fn set_topology(&self, topology: &TopologyRef) {
-        self.store
-            .state_machine
-            .write()
-            .await
-            .set_topology(topology.clone());
-    }
-
     pub async fn initialize(&self) -> Result<(), OpenRaftError<InitializeError>> {
         let mut nodes = BTreeMap::new();
         nodes.insert(
@@ -98,6 +90,56 @@ impl RaftServer {
         self.raft
             .client_write(RaftRequest::max_volume_id(max_volume_id))
             .await
+    }
+}
+
+impl RaftServer {
+    pub async fn set_topology(&self, topology: &TopologyRef) {
+        self.store
+            .state_machine
+            .write()
+            .await
+            .set_topology(topology.clone());
+    }
+
+    pub async fn current_leader(&self) -> Option<NodeId> {
+        self.raft.current_leader().await
+    }
+
+    pub async fn current_leader_address(&self) -> Option<String> {
+        let current_leader = self.current_leader().await;
+        for (node_id, node) in self
+            .raft
+            .metrics()
+            .borrow()
+            .membership_config
+            .membership()
+            .nodes()
+        {
+            if current_leader == Some(*node_id) {
+                return Some(node.to_string());
+            }
+        }
+        None
+    }
+
+    pub async fn is_leader(&self) -> bool {
+        self.current_leader().await == Some(self.id)
+    }
+
+    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+        let mut map = BTreeMap::new();
+        for (node_id, node) in self
+            .raft
+            .metrics()
+            .borrow()
+            .membership_config
+            .membership()
+            .nodes()
+        {
+            map.insert(*node_id, node.addr.clone());
+        }
+        map
     }
 }
 

@@ -24,6 +24,10 @@ fn main() -> Result<()> {
             "volume.VolumeInfo",
             "#[derive(::serde::Serialize, ::serde::Deserialize)]",
         )
+        .type_attribute(
+            "helyim.HeartbeatResponse",
+            "#[derive(::serde::Serialize, ::serde::Deserialize)]",
+        )
         .compile(&protos, includes)?;
     Ok(())
 }
