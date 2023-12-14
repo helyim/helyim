@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{
-    raft::client::RaftClient,
+    raft::RaftServer,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -39,7 +39,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    raft: Option<RaftClient>,
+    raft: Option<RaftServer>,
 }
 
 impl Clone for Topology {
@@ -72,7 +72,7 @@ impl Topology {
         }
     }
 
-    pub fn set_raft_client(&mut self, raft: RaftClient) {
+    pub fn set_raft_server(&mut self, raft: RaftServer) {
         self.raft = Some(raft);
     }
 

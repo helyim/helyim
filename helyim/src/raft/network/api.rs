@@ -1,6 +1,5 @@
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use crate::{
     raft::{
@@ -19,7 +18,6 @@ pub async fn set_max_volume_id_handler(
     State(raft): State<RaftServer>,
     Json(app_data): Json<AppData>,
 ) -> Result<Json<Result<ClientWriteResponse, OpenRaftError<ClientWriteError>>>, RaftError> {
-    info!("app data: {}", app_data.max_volume_id);
     let response = raft
         .raft
         .client_write(RaftRequest::max_volume_id(app_data.max_volume_id))

@@ -63,11 +63,9 @@ pub enum RaftError {
     AddrParse(#[from] AddrParseError),
 
     #[error("OpenRaft error: {0}")]
-    OpenRaft(#[from] openraft::error::RaftError<NodeId>),
+    Raft(#[from] openraft::error::RaftError<NodeId>),
     #[error("OpenRaft rpc error: {0}")]
-    RaftRpc(
-        #[from] openraft::error::RPCError<NodeId, BasicNode, openraft::error::RaftError<NodeId>>,
-    ),
+    Rpc(#[from] openraft::error::RPCError<NodeId, BasicNode, openraft::error::RaftError<NodeId>>),
     #[error("OpenRaft install snapshot error: {0}")]
     InstallSnapshot(#[from] openraft::error::RaftError<NodeId, InstallSnapshotError>),
     #[error("OpenRaft initialize raft cluster error: {0}")]

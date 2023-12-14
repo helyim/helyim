@@ -12,9 +12,9 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::raft::types::{NodeId, RpcError, TypeConfig};
 
-pub struct Network {}
+pub struct NetworkFactory;
 
-impl Network {
+impl NetworkFactory {
     pub async fn send_rpc<Req, Resp, Err>(
         &self,
         target: NodeId,
@@ -56,12 +56,12 @@ impl Network {
 // NOTE: This could be implemented also on `Arc<ExampleNetwork>`, but since it's empty, implemented
 // directly.
 #[async_trait]
-impl RaftNetworkFactory<TypeConfig> for Network {
+impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
     type Network = NetworkConnection;
 
     async fn new_client(&mut self, target: NodeId, node: &BasicNode) -> Self::Network {
         NetworkConnection {
-            owner: Network {},
+            owner: NetworkFactory {},
             target,
             target_node: node.clone(),
         }
@@ -69,7 +69,7 @@ impl RaftNetworkFactory<TypeConfig> for Network {
 }
 
 pub struct NetworkConnection {
-    owner: Network,
+    owner: NetworkFactory,
     target: NodeId,
     target_node: BasicNode,
 }

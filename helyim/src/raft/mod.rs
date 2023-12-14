@@ -19,24 +19,26 @@ use tracing::{error, info, warn};
 
 use crate::{
     raft::{
-        client::RaftClient,
         network::{
             api::set_max_volume_id_handler,
             management::{
                 add_learner_handler, change_membership_handler, init_handler, metrics_handler,
             },
             raft::{append_handler, snapshot_handler, vote_handler},
-            Network,
+            NetworkFactory,
         },
         store::Store,
-        types::{NodeId, Raft, RaftError},
+        types::{
+            ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError, Raft,
+            RaftError, RaftRequest,
+        },
     },
     rt_spawn,
+    storage::VolumeId,
     topology::TopologyRef,
     util::exit,
 };
 
-pub mod client;
 mod network;
 mod store;
 pub mod types;
@@ -53,12 +55,49 @@ pub struct RaftServer {
 }
 
 impl RaftServer {
-    pub async fn set_topology(self, topology: &TopologyRef) {
+    pub async fn set_topology(&self, topology: &TopologyRef) {
         self.store
             .state_machine
             .write()
             .await
             .set_topology(topology.clone());
+    }
+
+    pub async fn initialize(&self) -> Result<(), OpenRaftError<InitializeError>> {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            self.id,
+            BasicNode {
+                addr: self.addr.clone(),
+            },
+        );
+        self.raft.initialize(nodes).await
+    }
+
+    pub async fn add_learner(
+        &self,
+        node_id: NodeId,
+        addr: &str,
+    ) -> Result<ClientWriteResponse, OpenRaftError<ClientWriteError>> {
+        self.raft
+            .add_learner(node_id, BasicNode::new(addr), true)
+            .await
+    }
+
+    pub async fn change_membership(
+        &self,
+        members: BTreeSet<NodeId>,
+    ) -> Result<ClientWriteResponse, OpenRaftError<ClientWriteError>> {
+        self.raft.change_membership(members, false).await
+    }
+
+    pub async fn set_max_volume_id(
+        &self,
+        max_volume_id: VolumeId,
+    ) -> Result<ClientWriteResponse, OpenRaftError<ClientWriteError>> {
+        self.raft
+            .client_write(RaftRequest::max_volume_id(max_volume_id))
+            .await
     }
 }
 
@@ -89,7 +128,7 @@ async fn start_raft_node(
 
     // Create the network layer that will connect and communicate the raft instances and
     // will be used in conjunction with the store created above.
-    let network = Network {};
+    let network = NetworkFactory {};
 
     // Create a local raft instance.
     let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine)
@@ -151,7 +190,7 @@ async fn start_raft_node(
 pub async fn start_raft_node_with_peers(
     peers: &[String],
     shutdown_rx: async_broadcast::Receiver<()>,
-) -> Result<(RaftServer, RaftClient), RaftError> {
+) -> Result<RaftServer, RaftError> {
     let mut nodes = BTreeMap::new();
     let mut members = BTreeSet::new();
 
@@ -165,24 +204,25 @@ pub async fn start_raft_node_with_peers(
     // wait for server to startup
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let client = RaftClient::new(node_id, raft_addr.to_string());
-    if let Err(err) = client.init().await {
+    if let Err(err) = raft_server.initialize().await {
         warn!("init raft client failed, {err}");
     }
 
     for peer in peers.iter().skip(1) {
         let (node, host) = parse_raft_peer(peer)?;
-        members.insert(node);
-        if let Err(err) = client.add_learner((node, host.to_string())).await {
-            warn!("add learner failed, {err}");
+        match raft_server.add_learner(node, host).await {
+            Ok(_) => {
+                members.insert(node);
+            }
+            Err(err) => warn!("add learner failed, {err}"),
         }
     }
 
-    if let Err(err) = client.change_membership(&members).await {
+    if let Err(err) = raft_server.change_membership(members).await {
         warn!("change membership failed, {err}");
     }
 
-    Ok((raft_server, client))
+    Ok(raft_server)
 }
 
 #[cfg(test)]
