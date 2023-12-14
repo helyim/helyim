@@ -11,9 +11,12 @@ use openraft::{
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
 
-use crate::raft::types::{
-    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
-    RaftRequest, RpcError,
+use crate::{
+    raft::types::{
+        self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
+        RaftRequest, RpcError,
+    },
+    storage::VolumeId,
 };
 
 pub struct RaftClient {
@@ -42,18 +45,15 @@ impl RaftClient {
     /// will be applied to state machine.
     ///
     /// The result of applying the request will be returned.
-    pub async fn write(
+    pub async fn set_max_volume_id(
         &self,
-        req: &RaftRequest,
+        max_volume_id: VolumeId,
     ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
-        self.send_rpc_to_leader("write", Some(req)).await
-    }
-
-    /// Read value by key, in an consistent mode.
-    ///
-    /// This method may return stale value because it does not force to read on a legal leader.
-    pub async fn read(&self) -> Result<String, RpcError> {
-        self.do_send_rpc_to_leader("read", None::<&()>).await
+        self.send_rpc_to_leader(
+            "set_max_volume_id",
+            Some(&RaftRequest::max_volume_id(max_volume_id)),
+        )
+        .await
     }
 
     // --- Cluster management API
@@ -123,39 +123,39 @@ impl RaftClient {
             (t.0, format!("http://{}/{}", target_addr, uri))
         };
 
-        let fu = if let Some(r) = req {
+        let fut = if let Some(r) = req {
             tracing::debug!(
                 ">>> client send request to {}: {}",
                 url,
                 serde_json::to_string_pretty(&r).unwrap()
             );
-            self.inner.post(url.clone()).json(r)
+            self.inner.post(&url).json(r)
         } else {
             tracing::debug!(">>> client send request to {}", url);
-            self.inner.get(url.clone())
+            self.inner.get(&url)
         }
         .send();
 
-        let res = timeout(Duration::from_millis(3_000), fu).await;
-        let resp = match res {
+        let timeout_fut = timeout(Duration::from_millis(3_000), fut).await;
+        let response = match timeout_fut {
             Ok(x) => x.map_err(|e| RpcError::Network(NetworkError::new(&e)))?,
-            Err(timeout_err) => {
-                tracing::error!("timeout {} to url: {}", timeout_err, url);
-                return Err(RpcError::Network(NetworkError::new(&timeout_err)));
+            Err(err) => {
+                tracing::error!("timeout {} to url: {}", err, url);
+                return Err(RpcError::Network(NetworkError::new(&err)));
             }
         };
 
-        let res: Result<Resp, OpenRaftError<Err>> = resp
+        let response: Result<Resp, OpenRaftError<Err>> = response
             .json()
             .await
             .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;
         tracing::debug!(
             "<<< client recv reply from {}: {}",
             url,
-            serde_json::to_string_pretty(&res).unwrap()
+            serde_json::to_string_pretty(&response).unwrap()
         );
 
-        res.map_err(|e| RpcError::RemoteError(RemoteError::new(leader_id, e)))
+        response.map_err(|e| RpcError::RemoteError(RemoteError::new(leader_id, e)))
     }
 
     /// Try the best to send a request to the leader.

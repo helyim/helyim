@@ -21,7 +21,7 @@ use crate::{
     raft::{
         client::RaftClient,
         network::{
-            api::{read_handler, write_handler},
+            api::set_max_volume_id_handler,
             management::{
                 add_learner_handler, change_membership_handler, init_handler, metrics_handler,
             },
@@ -109,8 +109,7 @@ async fn start_raft_node(
     rt_spawn(async move {
         let app = Router::new()
             // application api
-            .route("/write", post(write_handler))
-            .route("/read", get(read_handler).post(read_handler))
+            .route("/set_max_volume_id", post(set_max_volume_id_handler))
             // raft management api
             .route("/add-learner", post(add_learner_handler))
             .route("/change-membership", post(change_membership_handler))

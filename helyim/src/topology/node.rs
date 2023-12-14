@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering as CmpOrdering,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -18,7 +18,7 @@ pub struct Node {
     active_volume_count: Arc<AtomicU64>,
     ec_shard_count: Arc<AtomicU64>,
     max_volume_count: Arc<AtomicU64>,
-    max_volume_id: u32,
+    max_volume_id: Arc<AtomicU32>,
 }
 
 impl Node {
@@ -29,7 +29,7 @@ impl Node {
             active_volume_count: Arc::new(AtomicU64::new(0)),
             ec_shard_count: Arc::new(AtomicU64::new(0)),
             max_volume_count: Arc::new(AtomicU64::new(0)),
-            max_volume_id: 0,
+            max_volume_id: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -110,12 +110,12 @@ impl Node {
     }
 
     pub fn max_volume_id(&self) -> u32 {
-        self.max_volume_id
+        self.max_volume_id.load(Ordering::Relaxed)
     }
 
-    pub(in crate::topology) fn _adjust_max_volume_id(&mut self, volume_id: u32) {
-        if self.max_volume_id < volume_id {
-            self.max_volume_id = volume_id;
+    pub(in crate::topology) fn _adjust_max_volume_id(&self, volume_id: u32) {
+        if self.max_volume_id() < volume_id {
+            self.max_volume_id.store(volume_id, Ordering::Relaxed);
         }
     }
 }

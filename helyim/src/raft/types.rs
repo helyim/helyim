@@ -47,9 +47,7 @@ impl RaftRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RaftResponse {
-    pub value: Option<String>,
-}
+pub struct RaftResponse;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RaftError {

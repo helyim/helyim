@@ -102,7 +102,7 @@ impl DataCenter {
         self._adjust_volume_count(volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.write()
+            topo.read()
                 .await
                 .adjust_volume_count(volume_count_delta)
                 .await;
@@ -113,7 +113,7 @@ impl DataCenter {
         self._adjust_active_volume_count(active_volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.write()
+            topo.read()
                 .await
                 .adjust_active_volume_count(active_volume_count_delta)
                 .await;
@@ -124,7 +124,7 @@ impl DataCenter {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.write()
+            topo.read()
                 .await
                 .adjust_ec_shard_count(ec_shard_count_delta)
                 .await;
@@ -135,18 +135,18 @@ impl DataCenter {
         self._adjust_max_volume_count(max_volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.write()
+            topo.read()
                 .await
                 .adjust_max_volume_count(max_volume_count_delta)
                 .await;
         }
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.write()
+            topo.read()
                 .await
                 .adjust_max_volume_id(self.max_volume_id())
                 .await;

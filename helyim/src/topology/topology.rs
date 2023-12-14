@@ -9,10 +9,10 @@ use std::{
 use faststr::FastStr;
 use serde::Serialize;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
-    raft::{client::RaftClient, types::RaftRequest},
+    raft::client::RaftClient,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -171,7 +171,7 @@ impl Topology {
         let vid = self.max_volume_id();
         let next = vid + 1;
         if let Some(raft) = self.raft.as_ref() {
-            raft.write(&RaftRequest::max_volume_id(next))
+            raft.set_max_volume_id(next)
                 .await
                 .map_err(|err| VolumeError::Box(err.into()))?;
         }
@@ -269,7 +269,7 @@ impl Topology {
         self._adjust_max_volume_count(max_volume_count_delta);
     }
 
-    pub async fn adjust_max_volume_id(&mut self, vid: VolumeId) {
+    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
     }
 }
