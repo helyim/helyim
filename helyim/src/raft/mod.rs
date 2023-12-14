@@ -72,7 +72,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
         match self.raft.initialize(nodes).await {
             Ok(_) => Ok(Response::new(())),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "initialize failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -91,7 +91,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
                 data: bincode_serialize(&client_write)?,
             })),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "add learner failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -109,7 +109,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
                 data: bincode_serialize(&client_write)?,
             })),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "change membership failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -124,7 +124,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
                 data: bincode_serialize(&vote)?,
             })),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "vote failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -142,7 +142,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
                 data: bincode_serialize(&append_entries)?,
             })),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "append entries failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -161,7 +161,7 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
                 data: bincode_serialize(&install_snapshot)?,
             })),
             Err(err) => Err(Status::with_details(
-                Code::Unknown,
+                Code::Internal,
                 "append entries failed",
                 Bytes::from(bincode_serialize(&err)?),
             )),
@@ -181,6 +181,10 @@ impl helyim_proto::raft::raft_server_server::RaftServer for RaftServer {
     }
 
     async fn max_volume_id(&self, _request: Request<()>) -> Result<Response<u32>, Status> {
+        self.raft
+            .ensure_linearizable()
+            .await
+            .map_err(|err| Status::internal(err.to_string()))?;
         match self.store.state_machine.read().await.topology.as_ref() {
             Some(topology) => {
                 let max_volume_id = topology.read().await.max_volume_id();
@@ -206,18 +210,18 @@ pub fn parse_raft_peer(input: &str) -> Result<(NodeId, &str), RaftError> {
     Ok((node_id.parse()?, input))
 }
 
-pub fn bincode_serialize<T: ?Sized>(value: &T) -> Result<Vec<u8>, Status>
+fn bincode_serialize<T: ?Sized>(value: &T) -> Result<Vec<u8>, Status>
 where
     T: serde::Serialize,
 {
-    bincode::serialize(value).map_err(|err| Status::unknown(err.to_string()))
+    bincode::serialize(value).map_err(|err| Status::internal(err.to_string()))
 }
 
-pub fn bincode_deserialize<'a, T>(bytes: &'a [u8]) -> Result<T, Status>
+fn bincode_deserialize<'a, T>(bytes: &'a [u8]) -> Result<T, Status>
 where
     T: serde::de::Deserialize<'a>,
 {
-    bincode::deserialize(bytes).map_err(|err| Status::unknown(err.to_string()))
+    bincode::deserialize(bytes).map_err(|err| Status::internal(err.to_string()))
 }
 
 async fn start_raft_node(
@@ -319,7 +323,7 @@ pub async fn start_raft_node_with_peers(
     // wait for server to startup
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let client = RaftClient::new(node_id, raft_addr.to_string());
+    let mut client = RaftClient::new(node_id, raft_addr.to_string()).await?;
     if let Err(err) = client.init().await {
         warn!("init raft client failed, {err}");
     }

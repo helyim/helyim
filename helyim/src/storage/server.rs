@@ -49,6 +49,7 @@ use crate::{
         exit,
         file::file_exists,
         http::{default_handler, favicon_handler},
+        parser::parse_addr,
     },
     STOP_INTERVAL,
 };
@@ -150,23 +151,13 @@ impl StorageServer {
         Ok(())
     }
 
-    fn grpc_addr(&self) -> Result<(String, u16)> {
-        match self.master_node.rfind(':') {
-            Some(idx) => {
-                let port = self.master_node[idx + 1..].parse::<u16>()?;
-                Ok((self.master_node[..idx].to_string(), port + 1))
-            }
-            None => Ok((self.master_node.to_string(), 80)),
-        }
-    }
-
     pub async fn start(&mut self) -> Result<()> {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.pulse_seconds as u64;
 
-        let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
+        let channel = LoadBalancedChannel::builder(parse_addr::<Error>(&self.master_node)?)
             .channel()
             .await
             .map_err(|err| Error::String(err.to_string()))?;

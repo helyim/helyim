@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    raft::{client::RaftClient, types::RaftRequest},
+    raft::client::RaftClient,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -167,11 +167,11 @@ impl Topology {
         .unregister_volume(&volume);
     }
 
-    pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
+    pub async fn next_volume_id(&mut self) -> Result<VolumeId, VolumeError> {
         let vid = self.max_volume_id();
         let next = vid + 1;
-        if let Some(raft) = self.raft.as_ref() {
-            raft.write(&RaftRequest::max_volume_id(next))
+        if let Some(raft) = self.raft.as_mut() {
+            raft.set_max_volume_id(next)
                 .await
                 .map_err(|err| VolumeError::Box(err.into()))?;
         }

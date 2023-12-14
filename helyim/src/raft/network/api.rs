@@ -26,7 +26,7 @@ pub async fn write_handler(
 }
 
 pub async fn read_handler(State(raft): State<RaftServer>) -> Result<Json<AppData>, RaftError> {
-    raft.raft.is_leader().await?;
+    raft.raft.ensure_linearizable().await?;
     let state_machine = raft.store.state_machine.read().await;
     let max_volume_id = state_machine.topology().read().await.max_volume_id();
     Ok(Json(AppData { max_volume_id }))

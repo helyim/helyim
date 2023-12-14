@@ -1,19 +1,18 @@
 use std::{
     collections::BTreeSet,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
-use openraft::{
-    error::{ForwardToLeader, NetworkError, RemoteError},
-    BasicNode, RaftMetrics, TryAsRef,
-};
-use serde::{de::DeserializeOwned, Serialize};
-use tokio::time::timeout;
+use ginepro::LoadBalancedChannel;
+use helyim_proto::raft::{raft_server_client::RaftServerClient, Request};
+use openraft::error::{ForwardToLeader, NetworkError};
+use serde::Serialize;
 
-use crate::raft::types::{
-    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
-    RaftRequest, RpcError,
+use crate::{
+    raft::types::{
+        ClientWriteError, ClientWriteResponse, InitializeError, NodeId, RaftError, RpcError,
+    },
+    util::parser::parse_addr,
 };
 
 pub struct RaftClient {
@@ -23,15 +22,21 @@ pub struct RaftClient {
     pub leader: Arc<Mutex<(NodeId, String)>>,
 
     pub inner: reqwest::Client,
+    pub inner2: RaftServerClient<LoadBalancedChannel>,
 }
 
 impl RaftClient {
     /// Create a client with a leader node id and a node manager to get node address by node id.
-    pub fn new(leader_id: NodeId, leader_addr: String) -> Self {
-        Self {
+    pub async fn new(leader_id: NodeId, leader_addr: String) -> Result<Self, RaftError> {
+        let channel = LoadBalancedChannel::builder(parse_addr::<RaftError>(&leader_addr)?)
+            .channel()
+            .await
+            .map_err(|err| RaftError::String(err.to_string()))?;
+        Ok(Self {
             leader: Arc::new(Mutex::new((leader_id, leader_addr))),
             inner: reqwest::Client::new(),
-        }
+            inner2: RaftServerClient::new(channel),
+        })
     }
 
     // --- Application API
@@ -42,18 +47,35 @@ impl RaftClient {
     /// will be applied to state machine.
     ///
     /// The result of applying the request will be returned.
-    pub async fn write(
-        &self,
-        req: &RaftRequest,
-    ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
-        self.send_rpc_to_leader("write", Some(req)).await
-    }
+    pub async fn set_max_volume_id(
+        &mut self,
+        max_volume_id: u32,
+    ) -> Result<(), RpcError<ClientWriteError>> {
+        let mut n_retry = 3;
+        loop {
+            match self.inner2.set_max_volume_id(max_volume_id).await {
+                Ok(_) => return Ok(()),
+                Err(status) => {
+                    let err: RpcError<ClientWriteError> = bincode_deserialize(status.details())?;
+                    if let Some(ForwardToLeader {
+                        leader_id: Some(leader_id),
+                        leader_node: Some(leader_node),
+                    }) = err.forward_to_leader()
+                    {
+                        {
+                            let mut t = self.leader.lock().unwrap();
+                            *t = (*leader_id, leader_node.addr.clone());
+                        }
 
-    /// Read value by key, in an consistent mode.
-    ///
-    /// This method may return stale value because it does not force to read on a legal leader.
-    pub async fn read(&self) -> Result<String, RpcError> {
-        self.do_send_rpc_to_leader("read", None::<&()>).await
+                        n_retry -= 1;
+                        if n_retry > 0 {
+                            continue;
+                        }
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 
     // --- Cluster management API
@@ -64,18 +86,54 @@ impl RaftClient {
     /// With a initialized cluster, new node can be added with [`write`].
     /// Then setup replication with [`add_learner`].
     /// Then make the new node a member with [`change_membership`].
-    pub async fn init(&self) -> Result<(), RpcError<InitializeError>> {
-        self.do_send_rpc_to_leader("init", None::<&()>).await
+    pub async fn init(&mut self) -> Result<(), RpcError<InitializeError>> {
+        match self.inner2.initialize(()).await {
+            Ok(_) => Ok(()),
+            Err(status) => Err(bincode_deserialize(status.details())?),
+        }
     }
 
     /// Add a node as learner.
     ///
     /// The node to add has to exist, i.e., being added with `write(ExampleRequest::AddNode{})`
     pub async fn add_learner(
-        &self,
+        &mut self,
         req: (NodeId, String),
     ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
-        self.send_rpc_to_leader("add-learner", Some(&req)).await
+        let data = bincode_serialize(&req)?;
+        // Retry at most 3 times to find a valid leader.
+        let mut n_retry = 3;
+        loop {
+            match self
+                .inner2
+                .add_learner(Request { data: data.clone() })
+                .await
+            {
+                Ok(response) => {
+                    let response = response.into_inner();
+                    return Ok(bincode_deserialize(&response.data)?);
+                }
+                Err(status) => {
+                    let err: RpcError<ClientWriteError> = bincode_deserialize(status.details())?;
+                    if let Some(ForwardToLeader {
+                        leader_id: Some(leader_id),
+                        leader_node: Some(leader_node),
+                    }) = err.forward_to_leader()
+                    {
+                        {
+                            let mut t = self.leader.lock().unwrap();
+                            *t = (*leader_id, leader_node.addr.clone());
+                        }
+
+                        n_retry -= 1;
+                        if n_retry > 0 {
+                            continue;
+                        }
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 
     /// Change membership to the specified set of nodes.
@@ -83,128 +141,58 @@ impl RaftClient {
     /// All nodes in `req` have to be already added as learner with [`add_learner`],
     /// or an error [`LearnerNotFound`] will be returned.
     pub async fn change_membership(
-        &self,
+        &mut self,
         req: &BTreeSet<NodeId>,
     ) -> Result<ClientWriteResponse, RpcError<ClientWriteError>> {
-        self.send_rpc_to_leader("change-membership", Some(req))
-            .await
-    }
-
-    /// Get the metrics about the cluster.
-    ///
-    /// Metrics contains various information about the cluster, such as current leader,
-    /// membership config, replication status etc.
-    /// See [`RaftMetrics`].
-    pub async fn metrics(&self) -> Result<RaftMetrics<NodeId, BasicNode>, RpcError> {
-        self.do_send_rpc_to_leader("metrics", None::<&()>).await
-    }
-
-    // --- Internal methods
-
-    /// Send RPC to specified node.
-    ///
-    /// It sends out a POST request if `req` is Some. Otherwise a GET request.
-    /// The remote endpoint must respond a reply in form of `Result<T, E>`.
-    /// An `Err` happened on remote will be wrapped in an
-    /// [`openraft::error::RPCError::RemoteError`].
-    async fn do_send_rpc_to_leader<Req, Resp, Err>(
-        &self,
-        uri: &str,
-        req: Option<&Req>,
-    ) -> Result<Resp, RpcError<Err>>
-    where
-        Req: Serialize + 'static,
-        Resp: Serialize + DeserializeOwned,
-        Err: std::error::Error + Serialize + DeserializeOwned,
-    {
-        let (leader_id, url) = {
-            let t = self.leader.lock().unwrap();
-            let target_addr = &t.1;
-            (t.0, format!("http://{}/{}", target_addr, uri))
-        };
-
-        let fu = if let Some(r) = req {
-            tracing::debug!(
-                ">>> client send request to {}: {}",
-                url,
-                serde_json::to_string_pretty(&r).unwrap()
-            );
-            self.inner.post(url.clone()).json(r)
-        } else {
-            tracing::debug!(">>> client send request to {}", url);
-            self.inner.get(url.clone())
-        }
-        .send();
-
-        let res = timeout(Duration::from_millis(3_000), fu).await;
-        let resp = match res {
-            Ok(x) => x.map_err(|e| RpcError::Network(NetworkError::new(&e)))?,
-            Err(timeout_err) => {
-                tracing::error!("timeout {} to url: {}", timeout_err, url);
-                return Err(RpcError::Network(NetworkError::new(&timeout_err)));
-            }
-        };
-
-        let res: Result<Resp, OpenRaftError<Err>> = resp
-            .json()
-            .await
-            .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;
-        tracing::debug!(
-            "<<< client recv reply from {}: {}",
-            url,
-            serde_json::to_string_pretty(&res).unwrap()
-        );
-
-        res.map_err(|e| RpcError::RemoteError(RemoteError::new(leader_id, e)))
-    }
-
-    /// Try the best to send a request to the leader.
-    ///
-    /// If the target node is not a leader, a `ForwardToLeader` error will be
-    /// returned and this client will retry at most 3 times to contact the updated leader.
-    async fn send_rpc_to_leader<Req, Resp, Err>(
-        &self,
-        uri: &str,
-        req: Option<&Req>,
-    ) -> Result<Resp, RpcError<Err>>
-    where
-        Req: Serialize + 'static,
-        Resp: Serialize + DeserializeOwned,
-        Err: std::error::Error
-            + Serialize
-            + DeserializeOwned
-            + TryAsRef<types::ForwardToLeader>
-            + Clone,
-    {
+        let data = bincode_serialize(&req)?;
         // Retry at most 3 times to find a valid leader.
         let mut n_retry = 3;
-
         loop {
-            let res: Result<Resp, RpcError<Err>> = self.do_send_rpc_to_leader(uri, req).await;
-
-            let rpc_err = match res {
-                Ok(x) => return Ok(x),
-                Err(rpc_err) => rpc_err,
-            };
-
-            if let Some(ForwardToLeader {
-                leader_id: Some(leader_id),
-                leader_node: Some(leader_node),
-            }) = rpc_err.forward_to_leader()
+            match self
+                .inner2
+                .change_membership(Request { data: data.clone() })
+                .await
             {
-                // Update target to the new leader.
-                {
-                    let mut t = self.leader.lock().unwrap();
-                    *t = (*leader_id, leader_node.addr.clone());
+                Ok(response) => {
+                    let response = response.into_inner();
+                    return Ok(bincode_deserialize(&response.data)?);
                 }
+                Err(status) => {
+                    let err: RpcError<ClientWriteError> = bincode_deserialize(status.details())?;
+                    if let Some(ForwardToLeader {
+                        leader_id: Some(leader_id),
+                        leader_node: Some(leader_node),
+                    }) = err.forward_to_leader()
+                    {
+                        {
+                            let mut t = self.leader.lock().unwrap();
+                            *t = (*leader_id, leader_node.addr.clone());
+                        }
 
-                n_retry -= 1;
-                if n_retry > 0 {
-                    continue;
+                        n_retry -= 1;
+                        if n_retry > 0 {
+                            continue;
+                        }
+                    }
+                    return Err(err);
                 }
             }
-
-            return Err(rpc_err);
         }
     }
+}
+
+fn bincode_serialize<T: ?Sized, E>(value: &T) -> Result<Vec<u8>, RpcError<E>>
+where
+    T: Serialize,
+    E: std::error::Error,
+{
+    bincode::serialize(value).map_err(|err| RpcError::Network(NetworkError::new(&err)))
+}
+
+fn bincode_deserialize<'a, T, E>(bytes: &'a [u8]) -> Result<T, RpcError<E>>
+where
+    T: serde::de::Deserialize<'a>,
+    E: std::error::Error,
+{
+    bincode::deserialize(bytes).map_err(|err| RpcError::Network(NetworkError::new(&err)))
 }
