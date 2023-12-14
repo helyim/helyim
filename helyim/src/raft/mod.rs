@@ -20,11 +20,11 @@ use tracing::{error, info, warn};
 use crate::{
     raft::{
         network::{
-            api::set_max_volume_id_handler,
+            api::{max_volume_id_handler, set_max_volume_id_handler},
             management::{
                 add_learner_handler, change_membership_handler, init_handler, metrics_handler,
             },
-            raft::{append_handler, snapshot_handler, vote_handler},
+            raft::{append_entries_handler, install_snapshot_handler, vote_handler},
             NetworkFactory,
         },
         store::Store,
@@ -148,6 +148,7 @@ async fn start_raft_node(
     rt_spawn(async move {
         let app = Router::new()
             // application api
+            .route("/max_volume_id", get(max_volume_id_handler))
             .route("/set_max_volume_id", post(set_max_volume_id_handler))
             // raft management api
             .route("/add-learner", post(add_learner_handler))
@@ -156,8 +157,8 @@ async fn start_raft_node(
             .route("/metrics", get(metrics_handler).post(metrics_handler))
             // raft communication
             .route("/raft-vote", post(vote_handler))
-            .route("/raft-snapshot", post(snapshot_handler))
-            .route("/raft-append", post(append_handler))
+            .route("/raft-snapshot", post(install_snapshot_handler))
+            .route("/raft-append", post(append_entries_handler))
             .layer((
                 CompressionLayer::new(),
                 DefaultBodyLimit::max(1024 * 1024 * 50),

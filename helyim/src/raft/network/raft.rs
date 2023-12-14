@@ -1,34 +1,37 @@
 use axum::{extract::State, Json};
-use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
-    VoteRequest, VoteResponse,
+use openraft::{
+    error::InstallSnapshotError,
+    raft::{
+        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, VoteRequest, VoteResponse,
+    },
 };
 
 use crate::raft::{
-    types::{NodeId, RaftError, TypeConfig},
+    types::{NodeId, OpenRaftError, TypeConfig},
     RaftServer,
 };
 
 pub async fn vote_handler(
     State(raft): State<RaftServer>,
     Json(vote): Json<VoteRequest<NodeId>>,
-) -> Result<Json<VoteResponse<NodeId>>, RaftError> {
-    let response = raft.raft.vote(vote).await?;
-    Ok(Json(response))
+) -> Json<Result<VoteResponse<NodeId>, OpenRaftError>> {
+    let response = raft.raft.vote(vote).await;
+    Json(response)
 }
 
-pub async fn append_handler(
+pub async fn append_entries_handler(
     State(raft): State<RaftServer>,
     Json(append): Json<AppendEntriesRequest<TypeConfig>>,
-) -> Result<Json<AppendEntriesResponse<NodeId>>, RaftError> {
-    let response = raft.raft.append_entries(append).await?;
-    Ok(Json(response))
+) -> Json<Result<AppendEntriesResponse<NodeId>, OpenRaftError>> {
+    let response = raft.raft.append_entries(append).await;
+    Json(response)
 }
 
-pub async fn snapshot_handler(
+pub async fn install_snapshot_handler(
     State(raft): State<RaftServer>,
     Json(snapshot): Json<InstallSnapshotRequest<TypeConfig>>,
-) -> Result<Json<InstallSnapshotResponse<NodeId>>, RaftError> {
-    let response = raft.raft.install_snapshot(snapshot).await?;
-    Ok(Json(response))
+) -> Json<Result<InstallSnapshotResponse<NodeId>, OpenRaftError<InstallSnapshotError>>> {
+    let response = raft.raft.install_snapshot(snapshot).await;
+    Json(response)
 }

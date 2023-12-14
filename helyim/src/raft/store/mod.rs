@@ -17,6 +17,7 @@ use openraft::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tracing::info;
 
 use crate::{
     raft::types::{NodeId, RaftRequest, RaftResponse, TypeConfig},
@@ -265,6 +266,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
                 EntryPayload::Blank => res.push(RaftResponse),
                 EntryPayload::Normal(ref req) => match req {
                     RaftRequest::MaxVolumeId { max_volume_id } => {
+                        info!("max volume id: {max_volume_id}");
                         sm.topology()
                             .read()
                             .await

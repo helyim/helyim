@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     raft::{
-        types::{ClientWriteError, ClientWriteResponse, OpenRaftError, RaftError, RaftRequest},
+        types::{ClientWriteError, ClientWriteResponse, OpenRaftError, RaftRequest},
         RaftServer,
     },
     storage::VolumeId,
@@ -17,10 +17,23 @@ pub struct AppData {
 pub async fn set_max_volume_id_handler(
     State(raft): State<RaftServer>,
     Json(app_data): Json<AppData>,
-) -> Result<Json<Result<ClientWriteResponse, OpenRaftError<ClientWriteError>>>, RaftError> {
+) -> Json<Result<ClientWriteResponse, OpenRaftError<ClientWriteError>>> {
     let response = raft
         .raft
         .client_write(RaftRequest::max_volume_id(app_data.max_volume_id))
         .await;
-    Ok(Json(response))
+    Json(response)
+}
+
+pub async fn max_volume_id_handler(State(raft): State<RaftServer>) -> Json<u32> {
+    let response = raft
+        .store
+        .state_machine
+        .read()
+        .await
+        .topology()
+        .read()
+        .await
+        .max_volume_id();
+    Json(response)
 }
