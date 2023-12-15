@@ -1,8 +1,8 @@
 mod assign;
 pub use assign::{AssignRequest, Assignment};
 
-mod list_master;
-pub use list_master::ClusterStatus;
+mod cluster;
+pub use cluster::ClusterStatus;
 
 pub mod lookup;
 pub use lookup::Looker;
