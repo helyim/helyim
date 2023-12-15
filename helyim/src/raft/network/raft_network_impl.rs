@@ -29,7 +29,7 @@ impl NetworkFactory {
     {
         let addr = &target_node.addr;
 
-        let url = format!("http://{}/{}", addr, uri);
+        let url = format!("http://{}/raft/{}", addr, uri);
         tracing::debug!("send_rpc to url: {}", url);
 
         let client = reqwest::Client::new();

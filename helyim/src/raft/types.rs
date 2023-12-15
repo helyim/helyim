@@ -74,6 +74,8 @@ pub enum RaftError {
     ClientWrite(#[from] openraft::error::RaftError<NodeId, ClientWriteError>),
     #[error("OpenRaft client write error: {0}")]
     CheckIsLeader(#[from] openraft::error::RaftError<NodeId, CheckIsLeaderError>),
+    #[error("Openraft fatal error: {0}")]
+    Fatal(#[from] openraft::error::Fatal<NodeId>),
 }
 
 impl From<nom::Err<nom::error::Error<&str>>> for RaftError {

@@ -120,7 +120,7 @@ impl RaftClient {
         let (leader_id, url) = {
             let t = self.leader.lock().unwrap();
             let target_addr = &t.1;
-            (t.0, format!("http://{}/{}", target_addr, uri))
+            (t.0, format!("http://{}/raft/{}", target_addr, uri))
         };
 
         let fut = if let Some(r) = req {

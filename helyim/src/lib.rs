@@ -4,8 +4,6 @@
 #![allow(clippy::module_inception)]
 #![deny(unused_qualifications)]
 
-use std::time::Duration;
-
 pub mod directory;
 
 pub mod errors;
@@ -24,7 +22,6 @@ pub mod util;
 
 const PHRASE: &str = "<h1>Hello, World!</h1>";
 const DEFAULT: &str = "default";
-const STOP_INTERVAL: Duration = Duration::from_secs(2);
 
 #[cfg(not(all(target_os = "linux", feature = "iouring")))]
 pub use tokio::spawn as rt_spawn;

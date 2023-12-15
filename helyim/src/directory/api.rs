@@ -11,16 +11,14 @@ use crate::{
     },
     storage::VolumeError,
     topology::{volume_grow::VolumeGrowth, Topology, TopologyRef},
-    util::http::FormOrJson,
+    util::{args::MasterOptions, http::FormOrJson},
 };
 
 #[derive(Clone)]
 pub struct DirectoryContext {
     pub topology: TopologyRef,
     pub volume_grow: Arc<VolumeGrowth>,
-    pub default_replication: FastStr,
-    pub ip: FastStr,
-    pub port: u16,
+    pub options: Arc<MasterOptions>,
 }
 
 pub async fn assign_handler(
@@ -38,7 +36,7 @@ pub async fn assign_handler(
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = Arc::new(request.volume_grow_option(&ctx.default_replication)?);
+    let option = Arc::new(request.volume_grow_option(&ctx.options.default_replication)?);
 
     if !ctx
         .topology

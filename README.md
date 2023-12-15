@@ -55,17 +55,17 @@ You can view the cluster status by accessing `http://localhost:9333/cluster/stat
 ```bash
 # start master1, treat it as leader
 cargo run --release --bin helyim -- master --port 9333 \
-      --raft-node 1:127.0.0.1:8333
+      --raft-node 1:127.0.0.1:9333
       
 # start master2, treat it as learner
 cargo run --release --bin helyim -- master --port 9335 \
-      --raft-node 2:127.0.0.1:8334 \
-      --raft-leader 1:127.0.0.1:8333
+      --raft-node 2:127.0.0.1:9335 \
+      --raft-leader 1:127.0.0.1:9333
       
 # start master3, treat it as learner
 cargo run --release --bin helyim -- master --port 9337 \
-      --raft-node 3:127.0.0.1:8335 \
-      --raft-leader 1:127.0.0.1:8333
+      --raft-node 3:127.0.0.1:9337 \
+      --raft-leader 1:127.0.0.1:9333
 ```
 
 ### Benchmark

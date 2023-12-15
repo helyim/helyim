@@ -32,7 +32,7 @@ async fn start_volume(
     let public_url = volume_opts
         .public_url
         .clone()
-        .unwrap_or(format!("{}:{}", volume_opts.ip, volume_opts.port));
+        .unwrap_or(format!("{}:{}", volume_opts.ip, volume_opts.port).into());
     let paths: Vec<String> = volume_opts
         .dir
         .iter()

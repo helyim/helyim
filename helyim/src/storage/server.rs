@@ -1,6 +1,6 @@
 use std::{
-    ffi::OsString, fs, os::unix::fs::FileExt, path::Path, pin::Pin, result::Result as StdResult,
-    sync::Arc, time::Duration,
+    ffi::OsString, fs, net::SocketAddr, os::unix::fs::FileExt, path::Path, pin::Pin,
+    result::Result as StdResult, sync::Arc, time::Duration,
 };
 
 use async_stream::stream;
@@ -51,7 +51,6 @@ use crate::{
         file::file_exists,
         http::{default_handler, favicon_handler},
     },
-    STOP_INTERVAL,
 };
 
 pub struct StorageServer {
@@ -64,7 +63,6 @@ pub struct StorageServer {
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
-    handles: Vec<JoinHandle<()>>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -104,7 +102,6 @@ impl StorageServer {
             needle_map_type,
             read_redirect,
             store: store.clone(),
-            handles: vec![],
             shutdown,
         };
 
@@ -132,17 +129,6 @@ impl StorageServer {
 
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
-
-        let mut interval = tokio::time::interval(STOP_INTERVAL);
-
-        loop {
-            self.handles.retain(|handle| !handle.is_finished());
-            if self.handles.is_empty() {
-                break;
-            }
-            interval.tick().await;
-        }
-
         Ok(())
     }
 
@@ -177,60 +163,64 @@ impl StorageServer {
             looker: Arc::new(Looker::new()),
         };
 
-        self.handles.push(
-            start_heartbeat(
-                self.store.clone(),
-                client,
-                self.pulse_seconds,
-                self.shutdown.new_receiver(),
-            )
-            .await,
-        );
+        start_heartbeat(
+            self.store.clone(),
+            client,
+            self.pulse_seconds,
+            self.shutdown.new_receiver(),
+        )
+        .await;
 
         // http server
         let addr = format!("{}:{}", self.host, self.port).parse()?;
-        let mut shutdown_rx = self.shutdown.new_receiver();
+        let shutdown_rx = self.shutdown.new_receiver();
 
-        self.handles.push(rt_spawn(async move {
-            let app = Router::new()
-                .route("/", get(default_handler))
-                .route("/status", get(status_handler))
-                .route("/favicon.ico", get(favicon_handler))
-                .fallback_service(
-                    get(get_or_head_handler)
-                        .head(get_or_head_handler)
-                        .post(post_handler)
-                        .delete(delete_handler)
-                        .fallback(default_handler)
-                        .with_state(ctx.clone()),
-                )
-                .layer((
-                    CompressionLayer::new(),
-                    DefaultBodyLimit::max(1024 * 1024 * 50),
-                    TimeoutLayer::new(Duration::from_secs(10)),
-                ))
-                .with_state(ctx);
-
-            match hyper::Server::try_bind(&addr) {
-                Ok(builder) => {
-                    let server = builder.serve(app.into_make_service());
-                    let graceful = server.with_graceful_shutdown(async {
-                        let _ = shutdown_rx.recv().await;
-                    });
-                    info!("volume api server starting up. binding addr: {addr}");
-                    match graceful.await {
-                        Ok(()) => info!("volume api server shutting down gracefully."),
-                        Err(e) => error!("volume api server stop failed, {}", e),
-                    }
-                }
-                Err(err) => {
-                    error!("starting volume api server failed, error: {err}");
-                    exit();
-                }
-            }
-        }));
+        rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
 
         Ok(())
+    }
+}
+
+async fn start_volume_server(
+    ctx: StorageContext,
+    addr: SocketAddr,
+    mut shutdown: async_broadcast::Receiver<()>,
+) {
+    let app = Router::new()
+        .route("/", get(default_handler))
+        .route("/status", get(status_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .fallback_service(
+            get(get_or_head_handler)
+                .head(get_or_head_handler)
+                .post(post_handler)
+                .delete(delete_handler)
+                .fallback(default_handler)
+                .with_state(ctx.clone()),
+        )
+        .layer((
+            CompressionLayer::new(),
+            DefaultBodyLimit::max(1024 * 1024 * 50),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ))
+        .with_state(ctx);
+
+    match hyper::Server::try_bind(&addr) {
+        Ok(builder) => {
+            let server = builder.serve(app.into_make_service());
+            let graceful = server.with_graceful_shutdown(async {
+                let _ = shutdown.recv().await;
+            });
+            info!("volume api server starting up. binding addr: {addr}");
+            match graceful.await {
+                Ok(()) => info!("volume api server shutting down gracefully."),
+                Err(e) => error!("volume api server stop failed, {}", e),
+            }
+        }
+        Err(err) => {
+            error!("starting volume api server failed, error: {err}");
+            exit();
+        }
     }
 }
 
@@ -262,7 +252,7 @@ async fn start_heartbeat(
                                     }
                                     Err(err) => {
                                         error!("send heartbeat error: {err}, will try again after 4s.");
-                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
+                                        tokio::time::sleep(Duration::from_secs(4)).await;
                                         continue 'next_heartbeat;
                                     }
                                 }
@@ -270,7 +260,7 @@ async fn start_heartbeat(
                         }
                         Err(err) => {
                             error!("heartbeat starting up failed: {err}, will try agent after 4s.");
-                            tokio::time::sleep(STOP_INTERVAL * 2).await;
+                            tokio::time::sleep(Duration::from_secs(4)).await;
                         }
                     }
                 }
