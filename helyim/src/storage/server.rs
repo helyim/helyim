@@ -46,6 +46,7 @@ use crate::{
         BUFFER_SIZE_LIMIT,
     },
     util::{
+        args::VolumeOptions,
         exit,
         file::file_exists,
         http::{default_handler, favicon_handler},
@@ -71,25 +72,20 @@ pub struct StorageServer {
 impl StorageServer {
     pub async fn new(
         host: &str,
-        ip: &str,
-        port: u16,
         public_url: &str,
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        master_node: &str,
-        pulse_seconds: i64,
-        data_center: &str,
-        rack: &str,
+        volume_opts: VolumeOptions,
         read_redirect: bool,
     ) -> Result<StorageServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let master_node = FastStr::new(master_node);
+        let master_node = FastStr::new(&volume_opts.master_server);
 
         let store = StoreRef::new(
-            ip,
-            port,
+            &volume_opts.ip,
+            volume_opts.port,
             public_url,
             folders,
             max_counts,
@@ -100,11 +96,11 @@ impl StorageServer {
 
         let storage = StorageServer {
             host: FastStr::new(host),
-            port,
+            port: volume_opts.port,
             master_node,
-            pulse_seconds,
-            data_center: FastStr::new(data_center),
-            rack: FastStr::new(rack),
+            pulse_seconds: volume_opts.pulse_seconds,
+            data_center: FastStr::new(&volume_opts.data_center),
+            rack: FastStr::new(&volume_opts.rack),
             needle_map_type,
             read_redirect,
             store: store.clone(),
@@ -112,7 +108,7 @@ impl StorageServer {
             shutdown,
         };
 
-        let addr = format!("{}:{}", host, port + 1).parse()?;
+        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
 
         rt_spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");

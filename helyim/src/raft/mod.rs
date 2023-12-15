@@ -19,6 +19,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     raft::{
+        client::RaftClient,
         network::{
             api::{max_volume_id_handler, set_max_volume_id_handler},
             management::{
@@ -39,6 +40,7 @@ use crate::{
     util::exit,
 };
 
+pub mod client;
 mod network;
 mod store;
 pub mod types;
@@ -230,39 +232,49 @@ async fn start_raft_node(
     Ok(raft_server)
 }
 
-pub async fn start_raft_node_with_peers(
-    peers: &[String],
+pub async fn start_raft_node_with_leader(
+    node: &str,
+    leader: Option<&String>,
     shutdown_rx: async_broadcast::Receiver<()>,
 ) -> Result<RaftServer, RaftError> {
-    let mut nodes = BTreeMap::new();
+    let (node_id, node_addr) = parse_raft_peer(node)?;
+
     let mut members = BTreeSet::new();
-
-    let (node_id, raft_addr) = parse_raft_peer(&peers[0])?;
-
-    nodes.insert(node_id, BasicNode::new(raft_addr));
     members.insert(node_id);
 
-    let raft_server = start_raft_node(node_id, raft_addr, shutdown_rx).await?;
+    let raft_server = start_raft_node(node_id, node_addr, shutdown_rx).await?;
 
     // wait for server to startup
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    if let Err(err) = raft_server.initialize().await {
-        warn!("init raft client failed, {err}");
-    }
+    // if only one peer, treat it as leader
+    match leader {
+        Some(leader) => {
+            let (leader_id, leader_addr) = parse_raft_peer(leader)?;
+            let raft_client = RaftClient::new(leader_id, leader_addr.to_string());
 
-    for peer in peers.iter().skip(1) {
-        let (node, host) = parse_raft_peer(peer)?;
-        match raft_server.add_learner(node, host).await {
-            Ok(_) => {
-                members.insert(node);
+            // add current raft node as learner
+            if let Err(err) = raft_client
+                .add_learner((node_id, node_addr.to_string()))
+                .await
+            {
+                error!("add learner failed, {err}");
             }
-            Err(err) => warn!("add learner failed, {err}"),
-        }
-    }
 
-    if let Err(err) = raft_server.change_membership(members).await {
-        warn!("change membership failed, {err}");
+            for (node_id, _) in raft_client.metrics().await?.membership_config.nodes() {
+                members.insert(*node_id);
+            }
+
+            if let Err(err) = raft_client.change_membership(&members).await {
+                error!("change membership failed, {err}");
+            }
+        }
+        None => {
+            info!("initialize raft server, node: {node_id}, address: {node_addr}");
+            if let Err(err) = raft_server.initialize().await {
+                warn!("initialize raft server failed, {err}");
+            }
+        }
     }
 
     Ok(raft_server)

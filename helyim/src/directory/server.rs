@@ -24,12 +24,12 @@ use crate::{
         DirectoryContext,
     },
     errors::Result,
-    raft::start_raft_node_with_peers,
+    raft::start_raft_node_with_leader,
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{exit, get_or_default, http::default_handler},
+    util::{args::MasterOptions, exit, get_or_default, http::default_handler},
     STOP_INTERVAL,
 };
 
@@ -52,23 +52,26 @@ pub struct DirectoryServer {
 impl DirectoryServer {
     pub async fn new(
         host: &str,
-        ip: &str,
-        port: u16,
-        meta_folder: &str,
-        volume_size_limit_mb: u64,
-        pulse_seconds: u64,
-        default_replication: &str,
-        peers: &[String],
+        master_opts: MasterOptions,
         garbage_threshold: f64,
         sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
+        let volume_size_limit_mb = master_opts.volume_size_limit_mb;
 
-        let topology =
-            TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        let topology = TopologyRef::new(
+            sequencer,
+            volume_size_limit_mb * 1024 * 1024,
+            master_opts.pulse_seconds,
+        );
 
         // start raft node and control cluster with `raft_client`
-        let raft_server = start_raft_node_with_peers(peers, shutdown_rx.clone()).await?;
+        let raft_server = start_raft_node_with_leader(
+            &master_opts.raft.raft_node,
+            master_opts.raft.raft_leader.as_ref(),
+            shutdown_rx.clone(),
+        )
+        .await?;
         raft_server.set_topology(&topology).await;
         topology.write().await.set_raft_server(raft_server);
 
@@ -81,20 +84,20 @@ impl DirectoryServer {
 
         let dir = DirectoryServer {
             host: FastStr::new(host),
-            ip: FastStr::new(ip),
+            ip: FastStr::new(master_opts.ip),
             volume_size_limit_mb,
-            port,
+            port: master_opts.port,
             garbage_threshold,
-            pulse_seconds,
-            default_replication: FastStr::new(default_replication),
-            meta_folder: FastStr::new(meta_folder),
+            pulse_seconds: master_opts.pulse_seconds,
+            default_replication: FastStr::new(master_opts.default_replication),
+            meta_folder: FastStr::new(master_opts.meta_path),
             volume_grow: Arc::new(VolumeGrowth),
             topology: topology.clone(),
             shutdown,
             handles: vec![topology_vacuum_handle],
         };
 
-        let addr = format!("{}:{}", host, port + 1).parse()?;
+        let addr = format!("{}:{}", host, master_opts.port + 1).parse()?;
         rt_spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()

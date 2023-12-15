@@ -30,7 +30,7 @@ pub async fn init_handler(
 
 pub async fn metrics_handler(
     State(raft): State<RaftServer>,
-) -> Json<RaftMetrics<NodeId, BasicNode>> {
+) -> Json<Result<RaftMetrics<NodeId, BasicNode>, OpenRaftError>> {
     let metrics = raft.raft.metrics().borrow().clone();
-    Json(metrics)
+    Json(Ok(metrics))
 }
