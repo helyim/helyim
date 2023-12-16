@@ -47,24 +47,25 @@ curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
 
 ### Failover Master Server
 
+In order to make concise for parameters, when initiating a Raft node, only allow specifying up to 2 addresses simultaneously.
+ `raft-node` represents the current node and `raft-leader` denotes the cluster leader.
+
+You can view the cluster status by accessing `http://localhost:9333/cluster/status`.
+
 ```bash
-# start master1
+# start master1, treat it as leader
 cargo run --release --bin helyim -- master --port 9333 \
-      --peers 1:127.0.0.1:8333 \
-      --peers 2:127.0.0.1:8334 \
-      --peers 3:127.0.0.1:8335
+      --raft-node-id 1
       
-# start master2
+# start master2, treat it as learner
 cargo run --release --bin helyim -- master --port 9335 \
-      --peers 2:127.0.0.1:8334 \
-      --peers 1:127.0.0.1:8333 \
-      --peers 3:127.0.0.1:8335
+      --raft-node-id 2 \
+      --raft-leader 127.0.0.1:9333
       
-# start master3
+# start master3, treat it as learner
 cargo run --release --bin helyim -- master --port 9337 \
-      --peers 3:127.0.0.1:8335 \
-      --peers 1:127.0.0.1:8333 \
-      --peers 2:127.0.0.1:8334
+      --raft-node-id 3\
+      --raft-leader 127.0.0.1:9333
 ```
 
 ### Benchmark

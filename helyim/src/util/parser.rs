@@ -1,3 +1,5 @@
+use std::num::ParseIntError;
+
 use nom::{
     branch::alt,
     bytes::complete::take_till,
@@ -30,6 +32,16 @@ pub fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
 pub fn parse_filename(input: &str) -> IResult<&str, &str> {
     let (input, filename) = take_till(|c| c == '.')(input)?;
     Ok((input, filename))
+}
+
+pub fn parse_host_port(addr: &str) -> Result<(String, u16), ParseIntError> {
+    match addr.rfind(':') {
+        Some(idx) => {
+            let port = addr[idx + 1..].parse::<u16>()?;
+            Ok((addr[..idx].to_string(), port + 1))
+        }
+        None => Ok((addr.to_string(), 80)),
+    }
 }
 
 #[cfg(test)]

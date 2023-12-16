@@ -40,7 +40,7 @@ pub struct Topology {
     pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    raft: Option<Arc<RaftServer>>,
+    raft: Option<RaftServer>,
 }
 
 impl Clone for Topology {
@@ -230,7 +230,7 @@ impl Topology {
 
 impl Topology {
     pub fn set_raft_server(&mut self, raft: RaftServer) {
-        self.raft = Some(Arc::new(raft));
+        self.raft = Some(raft);
     }
 
     pub async fn current_leader(&self) -> Option<NodeId> {

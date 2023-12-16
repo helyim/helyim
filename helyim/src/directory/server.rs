@@ -12,7 +12,6 @@ use helyim_proto::{
     HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
     LookupVolumeRequest, LookupVolumeResponse,
 };
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
@@ -24,27 +23,20 @@ use crate::{
         DirectoryContext,
     },
     errors::Result,
-    raft::start_raft_node_with_peers,
+    raft::{create_raft_router, RaftServer},
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{exit, get_or_default, http::default_handler},
-    STOP_INTERVAL,
+    util::{args::MasterOptions, exit, get_or_default, http::default_handler},
 };
 
 pub struct DirectoryServer {
     pub host: FastStr,
-    pub ip: FastStr,
-    pub port: u16,
-    pub meta_folder: FastStr,
-    pub default_replication: FastStr,
-    pub volume_size_limit_mb: u64,
-    pub pulse_seconds: u64,
+    pub options: Arc<MasterOptions>,
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
     pub volume_grow: Arc<VolumeGrowth>,
-    handles: Vec<JoinHandle<()>>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -52,49 +44,38 @@ pub struct DirectoryServer {
 impl DirectoryServer {
     pub async fn new(
         host: &str,
-        ip: &str,
-        port: u16,
-        meta_folder: &str,
-        volume_size_limit_mb: u64,
-        pulse_seconds: u64,
-        default_replication: &str,
-        peers: &[String],
+        options: MasterOptions,
         garbage_threshold: f64,
         sequencer: Sequencer,
     ) -> Result<DirectoryServer> {
+        let master_opts = Arc::new(options);
+
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
+        let volume_size_limit_mb = master_opts.volume_size_limit_mb;
 
-        let topology =
-            TopologyRef::new(sequencer, volume_size_limit_mb * 1024 * 1024, pulse_seconds);
+        let topology = TopologyRef::new(
+            sequencer,
+            volume_size_limit_mb * 1024 * 1024,
+            master_opts.pulse_seconds,
+        );
 
-        // start raft node and control cluster with `raft_client`
-        let raft_server = start_raft_node_with_peers(peers, shutdown_rx.clone()).await?;
-        raft_server.set_topology(&topology).await;
-        topology.write().await.set_raft_server(raft_server);
-
-        let topology_vacuum_handle = rt_spawn(topology_vacuum_loop(
+        rt_spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
             volume_size_limit_mb * (1 << 20),
             shutdown_rx.clone(),
         ));
 
-        let dir = DirectoryServer {
+        let master = DirectoryServer {
             host: FastStr::new(host),
-            ip: FastStr::new(ip),
-            volume_size_limit_mb,
-            port,
+            options: master_opts,
             garbage_threshold,
-            pulse_seconds,
-            default_replication: FastStr::new(default_replication),
-            meta_folder: FastStr::new(meta_folder),
             volume_grow: Arc::new(VolumeGrowth),
             topology: topology.clone(),
             shutdown,
-            handles: vec![topology_vacuum_handle],
         };
 
-        let addr = format!("{}:{}", host, port + 1).parse()?;
+        let addr = format!("{}:{}", host, master.options.port + 1).parse()?;
         rt_spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
@@ -112,78 +93,92 @@ impl DirectoryServer {
             }
         });
 
-        Ok(dir)
+        Ok(master)
     }
 
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
-
-        let mut interval = tokio::time::interval(STOP_INTERVAL);
-
-        loop {
-            self.handles.retain(|handle| !handle.is_finished());
-            if self.handles.is_empty() {
-                break;
-            }
-            interval.tick().await;
-        }
         Ok(())
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        let raft_node_id = self.options.raft.raft_node_id;
+        let raft_node_addr = format!("{}:{}", self.options.ip, self.options.port);
+        // start raft node and control cluster with `raft_client`
+        let raft_server = RaftServer::start_node(raft_node_id, &raft_node_addr).await?;
+        raft_server.set_topology(&self.topology.clone()).await;
+        self.topology
+            .write()
+            .await
+            .set_raft_server(raft_server.clone());
+
+        // http server
         let ctx = DirectoryContext {
             topology: self.topology.clone(),
             volume_grow: self.volume_grow.clone(),
-            default_replication: self.default_replication.clone(),
-            ip: self.ip.clone(),
-            port: self.port,
+            options: self.options.clone(),
         };
+        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
+        let shutdown_rx = self.shutdown.new_receiver();
+        let raft_router = create_raft_router(raft_server.clone());
 
-        // http server
-        let addr = format!("{}:{}", self.host, self.port).parse()?;
-        let mut shutdown_rx = self.shutdown.new_receiver();
+        rt_spawn(start_directory_server(ctx, addr, shutdown_rx, raft_router));
 
-        let handle = rt_spawn(async move {
-            let app = Router::new()
-                .route("/dir/assign", get(assign_handler).post(assign_handler))
-                .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
-                .route(
-                    "/dir/status",
-                    get(dir_status_handler).post(dir_status_handler),
-                )
-                .route(
-                    "/cluster/status",
-                    get(cluster_status_handler).post(cluster_status_handler),
-                )
-                .fallback(default_handler)
-                .layer((
-                    CompressionLayer::new(),
-                    DefaultBodyLimit::max(1024 * 1024),
-                    TimeoutLayer::new(Duration::from_secs(10)),
-                ))
-                .with_state(ctx);
-
-            match hyper::Server::try_bind(&addr) {
-                Ok(builder) => {
-                    let server = builder.serve(app.into_make_service());
-                    let graceful = server.with_graceful_shutdown(async {
-                        let _ = shutdown_rx.recv().await;
-                    });
-                    info!("directory api server starting up. binding addr: {addr}");
-                    match graceful.await {
-                        Ok(()) => info!("directory api server shutting down gracefully."),
-                        Err(e) => error!("directory api server stop failed, {}", e),
-                    }
-                }
-                Err(err) => {
-                    error!("starting directory api server failed, error: {err}");
-                    exit();
-                }
-            }
-        });
-        self.handles.push(handle);
+        raft_server
+            .start_node_with_leader(
+                raft_node_id,
+                &raft_node_addr,
+                self.options.raft.raft_leader.as_ref(),
+            )
+            .await?;
 
         Ok(())
+    }
+}
+
+async fn start_directory_server(
+    ctx: DirectoryContext,
+    addr: SocketAddr,
+    mut shutdown: async_broadcast::Receiver<()>,
+    raft_router: Router,
+) {
+    let http_router = Router::new()
+        .route("/dir/assign", get(assign_handler).post(assign_handler))
+        .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
+        .route(
+            "/dir/status",
+            get(dir_status_handler).post(dir_status_handler),
+        )
+        .route(
+            "/cluster/status",
+            get(cluster_status_handler).post(cluster_status_handler),
+        )
+        .fallback(default_handler)
+        .layer((
+            CompressionLayer::new(),
+            DefaultBodyLimit::max(1024 * 1024),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ))
+        .with_state(ctx);
+
+    let app = http_router.merge(Router::new().nest("/raft", raft_router));
+
+    match hyper::Server::try_bind(&addr) {
+        Ok(builder) => {
+            let server = builder.serve(app.into_make_service());
+            let graceful = server.with_graceful_shutdown(async {
+                let _ = shutdown.recv().await;
+            });
+            info!("directory api server starting up. binding addr: {addr}");
+            match graceful.await {
+                Ok(()) => info!("directory api server shutting down gracefully."),
+                Err(e) => error!("directory api server stop failed, {}", e),
+            }
+        }
+        Err(err) => {
+            error!("starting directory api server failed, error: {err}");
+            exit();
+        }
     }
 }
 
@@ -369,10 +364,12 @@ async fn handle_heartbeat(
         .current_leader_address()
         .await
         .unwrap_or_default();
+    let peers = topology.read().await.peers().into_values().collect();
 
     Ok(HeartbeatResponse {
         volume_size_limit,
         leader,
+        peers,
         ..Default::default()
     })
 }

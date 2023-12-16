@@ -26,9 +26,6 @@ pub enum Error {
     #[error("Raft error: {0}")]
     Raft(#[from] RaftError),
 
-    #[error("Raft server peers is empty")]
-    EmptyPeers,
-
     /// other errors
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),

@@ -17,7 +17,7 @@ use openraft::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     raft::types::{NodeId, RaftRequest, RaftResponse, TypeConfig},
@@ -198,7 +198,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
         &mut self,
         log_id: LogId<NodeId>,
     ) -> Result<(), StorageError<NodeId>> {
-        tracing::debug!("delete_log: [{:?}, +oo)", log_id);
+        debug!("delete_log: [{:?}, +oo)", log_id);
 
         let mut log = self.log.write().await;
         let keys = log
@@ -214,7 +214,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
 
     #[tracing::instrument(level = "debug", skip(self))]
     async fn purge_logs_upto(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        tracing::debug!("delete_log: (-oo, {:?}]", log_id);
+        debug!("delete_log: (-oo, {:?}]", log_id);
 
         {
             let mut ld = self.last_purged_log_id.write().await;
@@ -258,7 +258,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
         let mut sm = self.state_machine.write().await;
 
         for entry in entries {
-            tracing::debug!(%entry.log_id, "replicate to sm");
+            debug!(%entry.log_id, "replicate to sm");
 
             sm.last_applied_log = Some(entry.log_id);
 
@@ -266,7 +266,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
                 EntryPayload::Blank => res.push(RaftResponse),
                 EntryPayload::Normal(ref req) => match req {
                     RaftRequest::MaxVolumeId { max_volume_id } => {
-                        info!("max volume id: {max_volume_id}");
+                        debug!("apply max volume id: {max_volume_id}");
                         sm.topology()
                             .read()
                             .await
@@ -297,7 +297,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
         meta: &SnapshotMeta<NodeId, BasicNode>,
         snapshot: Box<<TypeConfig as RaftTypeConfig>::SnapshotData>,
     ) -> Result<(), StorageError<NodeId>> {
-        tracing::info!(
+        info!(
             { snapshot_size = snapshot.get_ref().len() },
             "decoding snapshot for installation"
         );

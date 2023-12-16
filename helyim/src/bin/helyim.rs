@@ -1,91 +1,20 @@
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
-    errors::Error,
     storage::{NeedleMapType, StorageServer},
+    util::args::{Command, MasterOptions, Opts, VolumeOptions},
 };
 use tokio::signal;
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
-#[derive(Parser, Debug)]
-#[command(name = "helyim")]
-#[command(author, version, about, long_about = None)]
-struct Opts {
-    #[arg(long, default_value("0.0.0.0"))]
-    host: String,
-    #[arg(long, default_value("./target/logs"))]
-    log_path: String,
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    Master(MasterOptions),
-    Volume(VolumeOptions),
-}
-
-#[derive(Args, Debug)]
-struct MasterOptions {
-    #[arg(long, default_value("127.0.0.1"))]
-    ip: String,
-    #[arg(long, default_value_t = 9333)]
-    port: u16,
-    #[arg(long, default_value("./"))]
-    meta_path: String,
-    #[arg(long, default_value_t = 5)]
-    pulse_seconds: u64,
-    #[arg(long, default_value_t = 30000)]
-    volume_size_limit_mb: u64,
-    /// default replication if not specified
-    #[arg(long, default_value("000"))]
-    default_replication: String,
-    #[arg(long)]
-    peers: Vec<String>,
-}
-
-#[derive(Args, Debug)]
-struct VolumeOptions {
-    #[arg(long, default_value("127.0.0.1"))]
-    ip: String,
-    #[arg(long, default_value_t = 8080)]
-    port: u16,
-    #[arg(long, default_value_t = 5)]
-    pulse_seconds: i64,
-    /// public access url
-    #[arg(long)]
-    public_url: Option<String>,
-    /// default replication if not specified
-    #[arg(long, default_value("000"))]
-    default_replication: String,
-    /// data center
-    #[arg(long, default_value(""))]
-    data_center: String,
-    /// rack
-    #[arg(long, default_value(""))]
-    rack: String,
-    /// master server endpoint
-    #[arg(long, default_value("127.0.0.1:9333"))]
-    master_server: String,
-    /// directories to store data files
-    #[arg(long)]
-    dir: Vec<String>,
-}
-
-async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
-    if master.peers.is_empty() {
-        return Err(Error::EmptyPeers.into());
-    }
+async fn start_master(
+    host: &str,
+    master_opts: MasterOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut dir = DirectoryServer::new(
         host,
-        &master.ip,
-        master.port,
-        &master.meta_path,
-        master.volume_size_limit_mb,
-        master.pulse_seconds,
-        &master.default_replication,
-        &master.peers,
+        master_opts,
         0.3,
         Sequencer::new(SequencerType::Memory)?,
     )
@@ -96,11 +25,15 @@ async fn start_master(host: &str, master: MasterOptions) -> Result<(), Box<dyn s
     Ok(())
 }
 
-async fn start_volume(host: &str, volume: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let public_url = volume
+async fn start_volume(
+    host: &str,
+    volume_opts: VolumeOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let public_url = volume_opts
         .public_url
-        .unwrap_or(format!("{}:{}", volume.ip, volume.port));
-    let paths: Vec<String> = volume
+        .clone()
+        .unwrap_or(format!("{}:{}", volume_opts.ip, volume_opts.port).into());
+    let paths: Vec<String> = volume_opts
         .dir
         .iter()
         .map(|x| match x.rfind(':') {
@@ -109,7 +42,7 @@ async fn start_volume(host: &str, volume: VolumeOptions) -> Result<(), Box<dyn s
         })
         .collect();
 
-    let max_volumes = volume
+    let max_volumes = volume_opts
         .dir
         .iter()
         .map(|x| match x.rfind(':') {
@@ -120,16 +53,11 @@ async fn start_volume(host: &str, volume: VolumeOptions) -> Result<(), Box<dyn s
 
     let mut server = StorageServer::new(
         host,
-        &volume.ip,
-        volume.port,
         &public_url,
         paths,
         max_volumes,
         NeedleMapType::NeedleMapInMemory,
-        &volume.master_server,
-        volume.pulse_seconds,
-        &volume.data_center,
-        &volume.rack,
+        volume_opts,
         false,
     )
     .await?;

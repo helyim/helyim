@@ -1,6 +1,6 @@
 use std::{
-    ffi::OsString, fs, os::unix::fs::FileExt, path::Path, pin::Pin, result::Result as StdResult,
-    sync::Arc, time::Duration,
+    ffi::OsString, fs, net::SocketAddr, os::unix::fs::FileExt, path::Path, pin::Pin,
+    result::Result as StdResult, sync::Arc, time::Duration,
 };
 
 use async_stream::stream;
@@ -46,24 +46,20 @@ use crate::{
         BUFFER_SIZE_LIMIT,
     },
     util::{
+        args::VolumeOptions,
         exit,
         file::file_exists,
         http::{default_handler, favicon_handler},
+        parser::parse_host_port,
     },
-    STOP_INTERVAL,
 };
 
 pub struct StorageServer {
     host: FastStr,
-    port: u16,
-    pub master_node: FastStr,
-    pub pulse_seconds: i64,
-    pub data_center: FastStr,
-    pub rack: FastStr,
+    pub options: Arc<VolumeOptions>,
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
-    handles: Vec<JoinHandle<()>>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -71,48 +67,35 @@ pub struct StorageServer {
 impl StorageServer {
     pub async fn new(
         host: &str,
-        ip: &str,
-        port: u16,
         public_url: &str,
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        master_node: &str,
-        pulse_seconds: i64,
-        data_center: &str,
-        rack: &str,
+        volume_opts: VolumeOptions,
         read_redirect: bool,
     ) -> Result<StorageServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let master_node = FastStr::new(master_node);
-
         let store = StoreRef::new(
-            ip,
-            port,
+            &volume_opts.ip,
+            volume_opts.port,
             public_url,
             folders,
             max_counts,
             needle_map_type,
-            master_node.clone(),
         )
         .await?;
 
+        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
+
         let storage = StorageServer {
             host: FastStr::new(host),
-            port,
-            master_node,
-            pulse_seconds,
-            data_center: FastStr::new(data_center),
-            rack: FastStr::new(rack),
+            options: Arc::new(volume_opts),
             needle_map_type,
             read_redirect,
             store: store.clone(),
-            handles: vec![],
             shutdown,
         };
-
-        let addr = format!("{}:{}", host, port + 1).parse()?;
 
         rt_spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");
@@ -136,27 +119,17 @@ impl StorageServer {
 
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
-
-        let mut interval = tokio::time::interval(STOP_INTERVAL);
-
-        loop {
-            self.handles.retain(|handle| !handle.is_finished());
-            if self.handles.is_empty() {
-                break;
-            }
-            interval.tick().await;
-        }
-
         Ok(())
     }
 
     fn grpc_addr(&self) -> Result<(String, u16)> {
-        match self.master_node.rfind(':') {
+        let master_server = &self.options.master_server;
+        match master_server.rfind(':') {
             Some(idx) => {
-                let port = self.master_node[idx + 1..].parse::<u16>()?;
-                Ok((self.master_node[..idx].to_string(), port + 1))
+                let port = master_server[idx + 1..].parse::<u16>()?;
+                Ok((master_server[..idx].to_string(), port + 1))
             }
-            None => Ok((self.master_node.to_string(), 80)),
+            None => Ok((master_server.to_string(), 80)),
         }
     }
 
@@ -164,9 +137,9 @@ impl StorageServer {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
-        let pulse_seconds = self.pulse_seconds as u64;
+        let pulse_seconds = self.options.pulse_seconds as u64;
 
-        let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
+        let channel = LoadBalancedChannel::builder(parse_host_port(&self.options.master_server)?)
             .channel()
             .await
             .map_err(|err| Error::String(err.to_string()))?;
@@ -181,67 +154,71 @@ impl StorageServer {
             looker: Arc::new(Looker::new()),
         };
 
-        self.handles.push(
-            start_heartbeat(
-                self.store.clone(),
-                client,
-                self.pulse_seconds,
-                self.shutdown.new_receiver(),
-            )
-            .await,
-        );
+        start_heartbeat(
+            self.store.clone(),
+            client,
+            pulse_seconds,
+            self.shutdown.new_receiver(),
+        )
+        .await;
 
         // http server
-        let addr = format!("{}:{}", self.host, self.port).parse()?;
-        let mut shutdown_rx = self.shutdown.new_receiver();
+        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
+        let shutdown_rx = self.shutdown.new_receiver();
 
-        self.handles.push(rt_spawn(async move {
-            let app = Router::new()
-                .route("/", get(default_handler))
-                .route("/status", get(status_handler))
-                .route("/favicon.ico", get(favicon_handler))
-                .fallback_service(
-                    get(get_or_head_handler)
-                        .head(get_or_head_handler)
-                        .post(post_handler)
-                        .delete(delete_handler)
-                        .fallback(default_handler)
-                        .with_state(ctx.clone()),
-                )
-                .layer((
-                    CompressionLayer::new(),
-                    DefaultBodyLimit::max(1024 * 1024 * 50),
-                    TimeoutLayer::new(Duration::from_secs(10)),
-                ))
-                .with_state(ctx);
-
-            match hyper::Server::try_bind(&addr) {
-                Ok(builder) => {
-                    let server = builder.serve(app.into_make_service());
-                    let graceful = server.with_graceful_shutdown(async {
-                        let _ = shutdown_rx.recv().await;
-                    });
-                    info!("volume api server starting up. binding addr: {addr}");
-                    match graceful.await {
-                        Ok(()) => info!("volume api server shutting down gracefully."),
-                        Err(e) => error!("volume api server stop failed, {}", e),
-                    }
-                }
-                Err(err) => {
-                    error!("starting volume api server failed, error: {err}");
-                    exit();
-                }
-            }
-        }));
+        rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
 
         Ok(())
+    }
+}
+
+async fn start_volume_server(
+    ctx: StorageContext,
+    addr: SocketAddr,
+    mut shutdown: async_broadcast::Receiver<()>,
+) {
+    let app = Router::new()
+        .route("/", get(default_handler))
+        .route("/status", get(status_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .fallback_service(
+            get(get_or_head_handler)
+                .head(get_or_head_handler)
+                .post(post_handler)
+                .delete(delete_handler)
+                .fallback(default_handler)
+                .with_state(ctx.clone()),
+        )
+        .layer((
+            CompressionLayer::new(),
+            DefaultBodyLimit::max(1024 * 1024 * 50),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ))
+        .with_state(ctx);
+
+    match hyper::Server::try_bind(&addr) {
+        Ok(builder) => {
+            let server = builder.serve(app.into_make_service());
+            let graceful = server.with_graceful_shutdown(async {
+                let _ = shutdown.recv().await;
+            });
+            info!("volume api server starting up. binding addr: {addr}");
+            match graceful.await {
+                Ok(()) => info!("volume api server shutting down gracefully."),
+                Err(e) => error!("volume api server stop failed, {}", e),
+            }
+        }
+        Err(err) => {
+            error!("starting volume api server failed, error: {err}");
+            exit();
+        }
     }
 }
 
 async fn start_heartbeat(
     store: StoreRef,
     mut client: HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: i64,
+    pulse_seconds: u64,
     mut shutdown: async_broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
@@ -262,19 +239,24 @@ async fn start_heartbeat(
                                         if let Ok(response) = serde_json::to_string(&response) {
                                             debug!("heartbeat reply: {response}");
                                         }
+                                        if response.leader != store.read().await.current_leader {
+                                            info!("leader changed, current leader is {}", response.leader);
+                                            store.write().await.set_current_leader(response.leader);
+                                        }
+                                        store.write().await.set_peers(response.peers);
                                         store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {
-                                        error!("send heartbeat error: {err}, will try again after 4s.");
-                                        tokio::time::sleep(STOP_INTERVAL * 2).await;
+                                        error!("send heartbeat error: {err}, will try again after 2s.");
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
                                         continue 'next_heartbeat;
                                     }
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("heartbeat starting up failed: {err}, will try agent after 4s.");
-                            tokio::time::sleep(STOP_INTERVAL * 2).await;
+                            error!("heartbeat starting up failed: {err}, will try agent after 2s.");
+                            tokio::time::sleep(Duration::from_secs(2)).await;
                         }
                     }
                 }
@@ -290,10 +272,10 @@ async fn start_heartbeat(
 async fn heartbeat_stream(
     store: StoreRef,
     client: &mut HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: i64,
+    pulse_seconds: u64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
 ) -> Result<Streaming<HeartbeatResponse>> {
-    let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
+    let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds));
 
     let request_stream = stream! {
         loop {
