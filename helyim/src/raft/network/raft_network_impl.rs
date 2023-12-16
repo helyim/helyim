@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use openraft::{
-    error::{InstallSnapshotError, NetworkError, RemoteError},
+    error::{InstallSnapshotError, NetworkError, RemoteError, Unreachable},
     network::{RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
@@ -27,20 +27,15 @@ impl NetworkFactory {
         Err: std::error::Error + DeserializeOwned,
         Resp: DeserializeOwned,
     {
-        let addr = &target_node.addr;
-
-        let url = format!("http://{}/raft/{}", addr, uri);
-        tracing::debug!("send_rpc to url: {}", url);
+        let url = format!("http://{}/raft/{}", target_node.addr, uri);
 
         let client = reqwest::Client::new();
-        tracing::debug!("client is created for: {}", url);
-
         let resp = client
             .post(url)
             .json(&req)
             .send()
             .await
-            .map_err(|e| openraft::error::RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| openraft::error::RPCError::Unreachable(Unreachable::new(&e)))?;
 
         tracing::debug!("client.post() is sent");
 
@@ -53,8 +48,6 @@ impl NetworkFactory {
     }
 }
 
-// NOTE: This could be implemented also on `Arc<ExampleNetwork>`, but since it's empty, implemented
-// directly.
 #[async_trait]
 impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
     type Network = NetworkConnection;
@@ -74,6 +67,7 @@ pub struct NetworkConnection {
     target_node: BasicNode,
 }
 
+/// TODO: when got error, member should be removed from membership
 #[async_trait]
 impl RaftNetwork<TypeConfig> for NetworkConnection {
     async fn send_append_entries(

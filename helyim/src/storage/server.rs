@@ -50,6 +50,7 @@ use crate::{
         exit,
         file::file_exists,
         http::{default_handler, favicon_handler},
+        parser::parse_host_port,
     },
 };
 
@@ -138,7 +139,7 @@ impl StorageServer {
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.options.pulse_seconds as u64;
 
-        let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
+        let channel = LoadBalancedChannel::builder(parse_host_port(&self.options.master_server)?)
             .channel()
             .await
             .map_err(|err| Error::String(err.to_string()))?;
@@ -238,21 +239,24 @@ async fn start_heartbeat(
                                         if let Ok(response) = serde_json::to_string(&response) {
                                             debug!("heartbeat reply: {response}");
                                         }
-                                        store.write().await.set_current_leader(response.leader);
+                                        if response.leader != store.read().await.current_leader {
+                                            info!("leader changed, current leader is {}", response.leader);
+                                            store.write().await.set_current_leader(response.leader);
+                                        }
                                         store.write().await.set_peers(response.peers);
                                         store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {
-                                        error!("send heartbeat error: {err}, will try again after 4s.");
-                                        tokio::time::sleep(Duration::from_secs(4)).await;
+                                        error!("send heartbeat error: {err}, will try again after 2s.");
+                                        tokio::time::sleep(Duration::from_secs(2)).await;
                                         continue 'next_heartbeat;
                                     }
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("heartbeat starting up failed: {err}, will try agent after 4s.");
-                            tokio::time::sleep(Duration::from_secs(4)).await;
+                            error!("heartbeat starting up failed: {err}, will try agent after 2s.");
+                            tokio::time::sleep(Duration::from_secs(2)).await;
                         }
                     }
                 }

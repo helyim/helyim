@@ -98,10 +98,7 @@ impl Store {
     }
 
     pub fn set_current_leader(&mut self, current_leader: String) {
-        if current_leader != self.current_leader {
-            info!("leader changed, current leader is {current_leader}");
-            self.current_leader = current_leader;
-        }
+        self.current_leader = current_leader;
     }
 
     pub fn set_peers(&mut self, peers: Vec<String>) {
