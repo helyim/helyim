@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use faststr::FastStr;
 
+use crate::raft::types::NodeId;
+
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]
 #[command(author, version, about, long_about = None)]
@@ -42,8 +44,8 @@ pub struct MasterOptions {
 // TODO: if clap support prefix in flatten derive, the following fields will remove prefix `raft_`
 #[derive(Args, Debug, Clone)]
 pub struct RaftOptions {
-    #[arg(long, default_value("1:127.0.0.1:9333"))]
-    pub raft_node: FastStr,
+    #[arg(long, default_value_t = 1)]
+    pub raft_node_id: NodeId,
     #[arg(long)]
     pub raft_leader: Option<FastStr>,
 }

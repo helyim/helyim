@@ -10,6 +10,7 @@ use openraft::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
+use tracing::{debug, error, info};
 
 use crate::{
     raft::types::{
@@ -23,16 +24,16 @@ pub struct RaftClient {
     /// The leader node to send request to.
     ///
     /// All traffic should be sent to the leader in a cluster.
-    pub leader: Arc<Mutex<(NodeId, String)>>,
+    pub leader: Arc<Mutex<(Option<NodeId>, String)>>,
 
     pub inner: reqwest::Client,
 }
 
 impl RaftClient {
     /// Create a client with a leader node id and a node manager to get node address by node id.
-    pub fn new(leader_id: NodeId, leader_addr: String) -> Self {
+    pub fn new(leader_addr: String) -> Self {
         Self {
-            leader: Arc::new(Mutex::new((leader_id, leader_addr))),
+            leader: Arc::new(Mutex::new((None, leader_addr))),
             inner: reqwest::Client::new(),
         }
     }
@@ -120,18 +121,21 @@ impl RaftClient {
         let (leader_id, url) = {
             let t = self.leader.lock().unwrap();
             let target_addr = &t.1;
-            (t.0, format!("http://{}/raft/{}", target_addr, uri))
+            (
+                t.0.unwrap_or_default(),
+                format!("http://{}/raft/{}", target_addr, uri),
+            )
         };
 
         let fut = if let Some(r) = req {
-            tracing::debug!(
+            debug!(
                 ">>> client send request to {}: {}",
                 url,
                 serde_json::to_string_pretty(&r).unwrap()
             );
             self.inner.post(&url).json(r)
         } else {
-            tracing::debug!(">>> client send request to {}", url);
+            debug!(">>> client send request to {}", url);
             self.inner.get(&url)
         }
         .send();
@@ -140,7 +144,7 @@ impl RaftClient {
         let response = match timeout_fut {
             Ok(x) => x.map_err(|e| RpcError::Network(NetworkError::new(&e)))?,
             Err(err) => {
-                tracing::error!("timeout {} to url: {}", err, url);
+                error!("timeout {} to url: {}", err, url);
                 return Err(RpcError::Network(NetworkError::new(&err)));
             }
         };
@@ -149,13 +153,18 @@ impl RaftClient {
             .json()
             .await
             .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;
-        tracing::debug!(
+        debug!(
             "<<< client recv reply from {}: {}",
             url,
             serde_json::to_string_pretty(&response).unwrap()
         );
 
-        response.map_err(|e| RpcError::RemoteError(RemoteError::new(leader_id, e)))
+        response.map_err(|e| {
+            if leader_id == 0 {
+                debug!("leader is unknown, replace it with 0");
+            }
+            RpcError::RemoteError(RemoteError::new(leader_id, e))
+        })
     }
 
     /// Try the best to send a request to the leader.
@@ -188,13 +197,17 @@ impl RaftClient {
             };
 
             if let Some(ForwardToLeader {
-                leader_id: Some(leader_id),
+                leader_id,
                 leader_node: Some(leader_node),
             }) = rpc_err.forward_to_leader()
             {
                 // Update target to the new leader.
                 {
                     let mut t = self.leader.lock().unwrap();
+                    info!(
+                        "leader changed, current leader -> node id: {leader_id:?}, address: {}",
+                        leader_node.addr
+                    );
                     *t = (*leader_id, leader_node.addr.clone());
                 }
 

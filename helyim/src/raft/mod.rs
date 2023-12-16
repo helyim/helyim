@@ -95,7 +95,7 @@ impl RaftServer {
 }
 
 impl RaftServer {
-    pub async fn start_node(raft_node: &str) -> Result<Self, RaftError> {
+    pub async fn start_node(node_id: NodeId, node_addr: &str) -> Result<Self, RaftError> {
         // Create a configuration for the raft instance.
         let config = Config {
             heartbeat_interval: 500,
@@ -115,8 +115,6 @@ impl RaftServer {
         // will be used in conjunction with the store created above.
         let network = NetworkFactory {};
 
-        let (node_id, node_addr) = parse_raft_peer(raft_node)?;
-
         // Create a local raft instance.
         let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine).await?;
 
@@ -131,21 +129,20 @@ impl RaftServer {
 
     pub async fn start_node_with_leader(
         &self,
-        node: &str,
+        node_id: NodeId,
+        node_addr: &str,
         leader: Option<&FastStr>,
     ) -> Result<(), RaftError> {
         // wait for server to startup
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let (node_id, node_addr) = parse_raft_peer(node)?;
         let mut members = BTreeSet::new();
         members.insert(node_id);
 
         // if only one peer, treat it as leader
         match leader {
             Some(leader) => {
-                let (leader_id, leader_addr) = parse_raft_peer(leader)?;
-                let raft_client = RaftClient::new(leader_id, leader_addr.to_string());
+                let raft_client = RaftClient::new(leader.to_string());
 
                 // add current raft node as learner
                 if let Err(err) = raft_client

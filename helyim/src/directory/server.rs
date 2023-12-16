@@ -102,8 +102,10 @@ impl DirectoryServer {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        let raft_node_id = self.options.raft.raft_node_id;
+        let raft_node_addr = format!("{}:{}", self.options.ip, self.options.port);
         // start raft node and control cluster with `raft_client`
-        let raft_server = RaftServer::start_node(&self.options.raft.raft_node).await?;
+        let raft_server = RaftServer::start_node(raft_node_id, &raft_node_addr).await?;
         raft_server.set_topology(&self.topology.clone()).await;
         self.topology
             .write()
@@ -124,7 +126,8 @@ impl DirectoryServer {
 
         raft_server
             .start_node_with_leader(
-                &self.options.raft.raft_node,
+                raft_node_id,
+                &raft_node_addr,
                 self.options.raft.raft_leader.as_ref(),
             )
             .await?;
