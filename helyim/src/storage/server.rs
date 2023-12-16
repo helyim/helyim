@@ -55,11 +55,7 @@ use crate::{
 
 pub struct StorageServer {
     host: FastStr,
-    port: u16,
-    pub master_node: FastStr,
-    pub pulse_seconds: i64,
-    pub data_center: FastStr,
-    pub rack: FastStr,
+    pub options: Arc<VolumeOptions>,
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -79,8 +75,6 @@ impl StorageServer {
     ) -> Result<StorageServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let master_node = FastStr::new(&volume_opts.master_server);
-
         let store = StoreRef::new(
             &volume_opts.ip,
             volume_opts.port,
@@ -88,24 +82,19 @@ impl StorageServer {
             folders,
             max_counts,
             needle_map_type,
-            master_node.clone(),
         )
         .await?;
 
+        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
+
         let storage = StorageServer {
             host: FastStr::new(host),
-            port: volume_opts.port,
-            master_node,
-            pulse_seconds: volume_opts.pulse_seconds,
-            data_center: FastStr::new(&volume_opts.data_center),
-            rack: FastStr::new(&volume_opts.rack),
+            options: Arc::new(volume_opts),
             needle_map_type,
             read_redirect,
             store: store.clone(),
             shutdown,
         };
-
-        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
 
         rt_spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");
@@ -133,12 +122,13 @@ impl StorageServer {
     }
 
     fn grpc_addr(&self) -> Result<(String, u16)> {
-        match self.master_node.rfind(':') {
+        let master_server = &self.options.master_server;
+        match master_server.rfind(':') {
             Some(idx) => {
-                let port = self.master_node[idx + 1..].parse::<u16>()?;
-                Ok((self.master_node[..idx].to_string(), port + 1))
+                let port = master_server[idx + 1..].parse::<u16>()?;
+                Ok((master_server[..idx].to_string(), port + 1))
             }
-            None => Ok((self.master_node.to_string(), 80)),
+            None => Ok((master_server.to_string(), 80)),
         }
     }
 
@@ -146,7 +136,7 @@ impl StorageServer {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
-        let pulse_seconds = self.pulse_seconds as u64;
+        let pulse_seconds = self.options.pulse_seconds as u64;
 
         let channel = LoadBalancedChannel::builder(self.grpc_addr()?)
             .channel()
@@ -166,13 +156,13 @@ impl StorageServer {
         start_heartbeat(
             self.store.clone(),
             client,
-            self.pulse_seconds,
+            pulse_seconds,
             self.shutdown.new_receiver(),
         )
         .await;
 
         // http server
-        let addr = format!("{}:{}", self.host, self.port).parse()?;
+        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
 
         rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
@@ -227,7 +217,7 @@ async fn start_volume_server(
 async fn start_heartbeat(
     store: StoreRef,
     mut client: HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: i64,
+    pulse_seconds: u64,
     mut shutdown: async_broadcast::Receiver<()>,
 ) -> JoinHandle<()> {
     rt_spawn(async move {
@@ -248,6 +238,8 @@ async fn start_heartbeat(
                                         if let Ok(response) = serde_json::to_string(&response) {
                                             debug!("heartbeat reply: {response}");
                                         }
+                                        store.write().await.set_current_leader(response.leader);
+                                        store.write().await.set_peers(response.peers);
                                         store.write().await.set_volume_size_limit(response.volume_size_limit);
                                     }
                                     Err(err) => {
@@ -276,10 +268,10 @@ async fn start_heartbeat(
 async fn heartbeat_stream(
     store: StoreRef,
     client: &mut HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: i64,
+    pulse_seconds: u64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
 ) -> Result<Streaming<HeartbeatResponse>> {
-    let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds as u64));
+    let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds));
 
     let request_stream = stream! {
         loop {

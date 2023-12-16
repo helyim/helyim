@@ -38,6 +38,8 @@ message HeartbeatResponse {
   uint64 volume_size_limit = 1;
   string secret_key = 2;
   string leader = 3;
+  // raft peers
+  repeated string peers = 4;
 }
 
 message VolumeInformationMessage {

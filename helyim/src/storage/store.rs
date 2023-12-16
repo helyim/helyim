@@ -32,7 +32,6 @@ pub struct Store {
     pub rack: FastStr,
     pub connected: bool,
 
-    pub master_addr: FastStr,
     // read from master
     pub volume_size_limit: u64,
     pub needle_map_type: NeedleMapType,
@@ -41,6 +40,9 @@ pub struct Store {
     pub deleted_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
     pub new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
     pub deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
+
+    pub current_leader: String,
+    pub peers: Vec<String>,
 }
 
 unsafe impl Send for Store {}
@@ -55,7 +57,6 @@ impl Store {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        master_addr: FastStr,
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
@@ -71,7 +72,6 @@ impl Store {
             public_url: FastStr::new(public_url),
             locations,
             needle_map_type,
-            master_addr,
             data_center: FastStr::empty(),
             rack: FastStr::empty(),
             connected: false,
@@ -80,6 +80,8 @@ impl Store {
             deleted_volumes_tx: None,
             new_ec_shards_tx: None,
             deleted_ec_shards_tx: None,
+            current_leader: String::new(),
+            peers: Vec::new(),
         })
     }
 
@@ -93,6 +95,17 @@ impl Store {
 
     pub fn set_volume_size_limit(&mut self, volume_size_limit: u64) {
         self.volume_size_limit = volume_size_limit;
+    }
+
+    pub fn set_current_leader(&mut self, current_leader: String) {
+        if current_leader != self.current_leader {
+            info!("leader changed, current leader is {current_leader}");
+            self.current_leader = current_leader;
+        }
+    }
+
+    pub fn set_peers(&mut self, peers: Vec<String>) {
+        self.peers = peers;
     }
 
     pub fn locations(&self) -> Vec<DiskLocationRef> {
@@ -400,19 +413,9 @@ impl StoreRef {
         folders: Vec<String>,
         max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
-        master_addr: FastStr,
     ) -> Result<Self> {
         Ok(Self(Arc::new(RwLock::new(
-            Store::new(
-                ip,
-                port,
-                public_url,
-                folders,
-                max_counts,
-                needle_map_type,
-                master_addr,
-            )
-            .await?,
+            Store::new(ip, port, public_url, folders, max_counts, needle_map_type).await?,
         ))))
     }
 

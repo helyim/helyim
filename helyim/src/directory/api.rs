@@ -128,7 +128,7 @@ pub async fn cluster_status_handler(State(ctx): State<DirectoryContext>) -> Json
     let status = ClusterStatus {
         is_leader,
         leader,
-        peers,
+        peers: peers.into_values().collect(),
     };
     Json(status)
 }
