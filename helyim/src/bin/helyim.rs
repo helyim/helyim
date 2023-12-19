@@ -1,7 +1,7 @@
 use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
-    storage::{NeedleMapType, StorageServer},
+    storage::{NeedleMapType, VolumeServer},
     util::args::{Command, MasterOptions, Opts, VolumeOptions},
 };
 use tokio::signal;
@@ -51,7 +51,7 @@ async fn start_volume(
         })
         .collect();
 
-    let mut server = StorageServer::new(
+    let mut server = VolumeServer::new(
         host,
         &public_url,
         paths,

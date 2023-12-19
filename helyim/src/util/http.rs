@@ -9,6 +9,7 @@ use axum::{
 };
 use bytes::Bytes;
 use hyper::{body::to_bytes, header::CONTENT_LENGTH, Body, Client, Method, Request};
+use once_cell::sync::Lazy;
 use serde::de::DeserializeOwned;
 use tracing::error;
 use url::Url;
@@ -129,3 +130,9 @@ pub async fn default_handler() -> Html<&'static str> {
 pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
     FAVICON_ICO.bytes()
 }
+
+pub static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .build()
+        .expect("HTTP CLIENT initialize failed")
+});

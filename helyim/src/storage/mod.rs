@@ -16,7 +16,7 @@ pub use needle::{
 };
 
 mod server;
-pub use server::StorageServer;
+pub use server::VolumeServer;
 
 mod store;
 

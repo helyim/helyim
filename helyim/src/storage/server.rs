@@ -10,7 +10,7 @@ use futures::StreamExt;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient,
-    volume_server_server::{VolumeServer, VolumeServerServer},
+    volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, HeartbeatResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
@@ -54,17 +54,19 @@ use crate::{
     },
 };
 
-pub struct StorageServer {
+pub struct VolumeServer {
     host: FastStr,
     pub options: Arc<VolumeOptions>,
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
+    pub current_master: Option<SocketAddr>,
+    pub seed_master_nodes: Vec<SocketAddr>,
 
     shutdown: async_broadcast::Sender<()>,
 }
 
-impl StorageServer {
+impl VolumeServer {
     pub async fn new(
         host: &str,
         public_url: &str,
@@ -73,7 +75,7 @@ impl StorageServer {
         needle_map_type: NeedleMapType,
         volume_opts: VolumeOptions,
         read_redirect: bool,
-    ) -> Result<StorageServer> {
+    ) -> Result<VolumeServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         let store = StoreRef::new(
@@ -88,11 +90,13 @@ impl StorageServer {
 
         let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
 
-        let storage = StorageServer {
+        let storage = VolumeServer {
             host: FastStr::new(host),
             options: Arc::new(volume_opts),
             needle_map_type,
             read_redirect,
+            current_master: None,
+            seed_master_nodes: Vec::new(),
             store: store.clone(),
             shutdown,
         };
@@ -120,17 +124,6 @@ impl StorageServer {
     pub async fn stop(&mut self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
         Ok(())
-    }
-
-    fn grpc_addr(&self) -> Result<(String, u16)> {
-        let master_server = &self.options.master_server;
-        match master_server.rfind(':') {
-            Some(idx) => {
-                let port = master_server[idx + 1..].parse::<u16>()?;
-                Ok((master_server[..idx].to_string(), port + 1))
-            }
-            None => Ok((master_server.to_string(), 80)),
-        }
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -215,6 +208,13 @@ async fn start_volume_server(
     }
 }
 
+enum HeartbeatHandle {
+    // break and create a new heartbeat loop
+    Next,
+    // keep heartbeat in current loop
+    Continue,
+}
+
 async fn start_heartbeat(
     store: StoreRef,
     mut client: HelyimClient<LoadBalancedChannel>,
@@ -224,40 +224,14 @@ async fn start_heartbeat(
     rt_spawn(async move {
         'next_heartbeat: loop {
             tokio::select! {
-                stream = heartbeat_stream(
+                handle = heartbeat_streaming(
                     store.clone(),
                     &mut client,
                     pulse_seconds,
                     shutdown.clone(),
                 ) => {
-                    match stream {
-                        Ok(mut stream) => {
-                            info!("heartbeat starting up success");
-                            while let Some(response) = stream.next().await {
-                                match response {
-                                    Ok(response) => {
-                                        if let Ok(response) = serde_json::to_string(&response) {
-                                            debug!("heartbeat reply: {response}");
-                                        }
-                                        if response.leader != store.read().await.current_leader {
-                                            info!("leader changed, current leader is {}", response.leader);
-                                            store.write().await.set_current_leader(response.leader);
-                                        }
-                                        store.write().await.set_peers(response.peers);
-                                        store.write().await.set_volume_size_limit(response.volume_size_limit);
-                                    }
-                                    Err(err) => {
-                                        error!("send heartbeat error: {err}, will try again after 2s.");
-                                        tokio::time::sleep(Duration::from_secs(2)).await;
-                                        continue 'next_heartbeat;
-                                    }
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            error!("heartbeat starting up failed: {err}, will try agent after 2s.");
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                        }
+                    if let Err(HeartbeatHandle::Next) = handle {
+                        continue 'next_heartbeat;
                     }
                 }
                 _ = shutdown.recv() => {
@@ -269,12 +243,12 @@ async fn start_heartbeat(
     })
 }
 
-async fn heartbeat_stream(
+async fn heartbeat_streaming(
     store: StoreRef,
     client: &mut HelyimClient<LoadBalancedChannel>,
     pulse_seconds: u64,
     mut shutdown_rx: async_broadcast::Receiver<()>,
-) -> Result<Streaming<HeartbeatResponse>> {
+) -> StdResult<(), HeartbeatHandle> {
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds));
 
     let request_stream = stream! {
@@ -293,8 +267,39 @@ async fn heartbeat_stream(
             }
         }
     };
-    let response = client.heartbeat(request_stream).await?;
-    Ok(response.into_inner())
+
+    match client.heartbeat(request_stream).await?.into_inner() {
+        Ok(mut stream) => {
+            info!("heartbeat starting up success");
+            while let Some(response) = stream.next().await {
+                match response {
+                    Ok(response) => {
+                        if let Ok(response) = serde_json::to_string(&response) {
+                            debug!("heartbeat reply: {response}");
+                        }
+                        if response.leader != store.read().await.current_master {
+                            info!("leader changed, current leader is {}", response.leader);
+                            store.write().await.set_current_master(response.leader);
+                        }
+                        store
+                            .write()
+                            .await
+                            .set_volume_size_limit(response.volume_size_limit);
+                    }
+                    Err(err) => {
+                        error!("send heartbeat error: {err}, will try again after 2s.");
+                        return Err(HeartbeatHandle::Next);
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            error!("heartbeat starting up failed: {err}, will try agent after 2s.");
+            return Err(HeartbeatHandle::Continue);
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -304,7 +309,7 @@ struct StorageGrpcServer {
 }
 
 #[tonic::async_trait]
-impl VolumeServer for StorageGrpcServer {
+impl HelyimVolumeServer for StorageGrpcServer {
     async fn allocate_volume(
         &self,
         request: Request<AllocateVolumeRequest>,

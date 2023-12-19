@@ -41,8 +41,7 @@ pub struct Store {
     pub new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
     pub deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
 
-    pub current_leader: String,
-    pub peers: Vec<String>,
+    pub current_master: String,
 }
 
 unsafe impl Send for Store {}
@@ -80,8 +79,7 @@ impl Store {
             deleted_volumes_tx: None,
             new_ec_shards_tx: None,
             deleted_ec_shards_tx: None,
-            current_leader: String::new(),
-            peers: Vec::new(),
+            current_master: String::new(),
         })
     }
 
@@ -97,12 +95,8 @@ impl Store {
         self.volume_size_limit = volume_size_limit;
     }
 
-    pub fn set_current_leader(&mut self, current_leader: String) {
-        self.current_leader = current_leader;
-    }
-
-    pub fn set_peers(&mut self, peers: Vec<String>) {
-        self.peers = peers;
+    pub fn set_current_master(&mut self, current_master: String) {
+        self.current_master = current_master;
     }
 
     pub fn locations(&self) -> Vec<DiskLocationRef> {
