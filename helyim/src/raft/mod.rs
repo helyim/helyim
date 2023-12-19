@@ -183,7 +183,7 @@ impl RaftServer {
         self.raft.current_leader().await
     }
 
-    pub async fn current_leader_address(&self) -> Option<String> {
+    pub async fn current_leader_address(&self) -> Option<FastStr> {
         let current_leader = self.current_leader().await;
         for (node_id, node) in self
             .raft
@@ -194,7 +194,7 @@ impl RaftServer {
             .nodes()
         {
             if current_leader == Some(*node_id) {
-                return Some(node.to_string());
+                return Some(FastStr::new(&node.addr));
             }
         }
         None
@@ -204,7 +204,7 @@ impl RaftServer {
         self.current_leader().await == Some(self.id)
     }
 
-    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+    pub fn peers(&self) -> BTreeMap<NodeId, FastStr> {
         let mut map = BTreeMap::new();
         for (node_id, node) in self
             .raft
@@ -214,7 +214,7 @@ impl RaftServer {
             .membership()
             .nodes()
         {
-            map.insert(*node_id, node.addr.clone());
+            map.insert(*node_id, FastStr::new(&node.addr));
         }
         map
     }

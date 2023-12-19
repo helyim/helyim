@@ -11,7 +11,7 @@ use ginepro::LoadBalancedChannel;
 use helyim_proto::{
     helyim_client::HelyimClient,
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
-    AllocateVolumeRequest, AllocateVolumeResponse, HeartbeatResponse, VacuumVolumeCheckRequest,
+    AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
     VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
@@ -24,13 +24,13 @@ use helyim_proto::{
 };
 use tokio::task::JoinHandle;
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
-use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info};
 
 use crate::{
     errors::{Error, Result},
-    operation::Looker,
+    operation::{list_master, Looker},
     proto::save_volume_info,
     rt_spawn,
     storage::{
@@ -43,7 +43,7 @@ use crate::{
         needle::NeedleMapType,
         store::StoreRef,
         version::Version,
-        BUFFER_SIZE_LIMIT,
+        VolumeError, BUFFER_SIZE_LIMIT,
     },
     util::{
         args::VolumeOptions,
@@ -60,8 +60,8 @@ pub struct VolumeServer {
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
-    pub current_master: Option<SocketAddr>,
-    pub seed_master_nodes: Vec<SocketAddr>,
+    pub current_master: FastStr,
+    pub seed_master_nodes: Vec<FastStr>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -95,7 +95,7 @@ impl VolumeServer {
             options: Arc::new(volume_opts),
             needle_map_type,
             read_redirect,
-            current_master: None,
+            current_master: FastStr::empty(),
             seed_master_nodes: Vec::new(),
             store: store.clone(),
             shutdown,
@@ -132,7 +132,8 @@ impl VolumeServer {
         let read_redirect = self.read_redirect;
         let pulse_seconds = self.options.pulse_seconds as u64;
 
-        let channel = LoadBalancedChannel::builder(parse_host_port(&self.options.master_server)?)
+        self.update_masters().await?;
+        let channel = LoadBalancedChannel::builder(parse_host_port(&self.current_master)?)
             .channel()
             .await
             .map_err(|err| Error::String(err.to_string()))?;
@@ -160,6 +161,16 @@ impl VolumeServer {
         let shutdown_rx = self.shutdown.new_receiver();
 
         rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
+
+        Ok(())
+    }
+}
+
+impl VolumeServer {
+    async fn update_masters(&mut self) -> StdResult<(), VolumeError> {
+        let cluster_status = list_master(&self.options.master_server).await?;
+        self.current_master = FastStr::new(cluster_status.leader);
+        self.seed_master_nodes = cluster_status.peers;
 
         Ok(())
     }
@@ -251,6 +262,7 @@ async fn heartbeat_streaming(
 ) -> StdResult<(), HeartbeatHandle> {
     let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds));
 
+    let store_ref = store.clone();
     let request_stream = stream! {
         loop {
             tokio::select! {
@@ -268,8 +280,9 @@ async fn heartbeat_streaming(
         }
     };
 
-    match client.heartbeat(request_stream).await?.into_inner() {
-        Ok(mut stream) => {
+    match client.heartbeat(request_stream).await {
+        Ok(response) => {
+            let mut stream = response.into_inner();
             info!("heartbeat starting up success");
             while let Some(response) = stream.next().await {
                 match response {
@@ -277,11 +290,11 @@ async fn heartbeat_streaming(
                         if let Ok(response) = serde_json::to_string(&response) {
                             debug!("heartbeat reply: {response}");
                         }
-                        if response.leader != store.read().await.current_master {
+                        if response.leader != store_ref.read().await.current_master {
                             info!("leader changed, current leader is {}", response.leader);
-                            store.write().await.set_current_master(response.leader);
+                            store_ref.write().await.set_current_master(response.leader);
                         }
-                        store
+                        store_ref
                             .write()
                             .await
                             .set_volume_size_limit(response.volume_size_limit);

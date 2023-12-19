@@ -597,6 +597,9 @@ pub enum VolumeError {
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
 
+    #[error("Reqwest error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+
     #[error("Invalid replica placement: {0}")]
     ReplicaPlacement(String),
     #[error("No writable volumes.")]

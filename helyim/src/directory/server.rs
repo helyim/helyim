@@ -364,12 +364,10 @@ async fn handle_heartbeat(
         .current_leader_address()
         .await
         .unwrap_or_default();
-    let peers = topology.read().await.peers().into_values().collect();
 
     Ok(HeartbeatResponse {
         volume_size_limit,
-        leader,
-        peers,
+        leader: leader.to_string(),
         ..Default::default()
     })
 }
