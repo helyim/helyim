@@ -152,7 +152,7 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let client = HelyimClient::connect(self.current_master.clone()).await?;
+        let client = HelyimClient::connect(self.current_master.to_string()).await?;
         // TODO
         Ok(())
     }

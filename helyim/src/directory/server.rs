@@ -221,6 +221,7 @@ impl Helyim for DirectoryGrpcServer {
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
                             error!("heartbeat response dropped: {}", e);
+                            return;
                         }
                     }
                 }

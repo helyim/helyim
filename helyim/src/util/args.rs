@@ -57,7 +57,7 @@ pub struct VolumeOptions {
     #[arg(long, default_value_t = 8080)]
     pub port: u16,
     #[arg(long, default_value_t = 5)]
-    pub pulse_seconds: i64,
+    pub pulse_seconds: u64,
     /// public access url
     #[arg(long)]
     pub public_url: Option<FastStr>,

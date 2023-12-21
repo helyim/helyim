@@ -579,8 +579,6 @@ pub enum VolumeError {
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("Errno: {0}")]
-    Errno(#[from] rustix::io::Errno),
     #[error("System time error: {0}")]
     SystemTimeError(#[from] SystemTimeError),
     #[error("Raw volume error: {0}")]
@@ -588,15 +586,14 @@ pub enum VolumeError {
     #[error("Parse integer error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
 
+    #[error("Errno: {0}")]
+    Errno(#[from] rustix::io::Errno),
     #[error("Serde json error: {0}")]
     SerdeJson(#[from] serde_json::Error),
-
     #[error("Tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
-
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
-
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
@@ -620,6 +617,14 @@ pub enum VolumeError {
     NeedleMapperNotLoad(VolumeId),
     #[error("No free space: {0}")]
     NoFreeSpace(String),
+
+    // heartbeat
+    #[error("Start heartbeat failed.")]
+    StartHeartbeat,
+    #[error("Send heartbeat to {0} failed.")]
+    SendHeartbeat(FastStr),
+    #[error("Leader changed, current leader is {0}, old leader is {1}")]
+    LeaderChanged(FastStr, FastStr),
 }
 
 impl From<VolumeError> for tonic::Status {

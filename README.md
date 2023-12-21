@@ -64,7 +64,7 @@ cargo run --release --bin helyim -- master --port 9335 \
       
 # start master3, treat it as learner
 cargo run --release --bin helyim -- master --port 9337 \
-      --raft-node-id 3\
+      --raft-node-id 3 \
       --raft-leader 127.0.0.1:9333
 ```
 

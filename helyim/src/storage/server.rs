@@ -22,14 +22,14 @@ use helyim_proto::{
     VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
     VolumeEcShardsUnmountResponse, VolumeInfo,
 };
-use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    errors::{Error, Result},
+    errors::Result,
     operation::{list_master, Looker},
     proto::save_volume_info,
     rt_spawn,
@@ -130,14 +130,10 @@ impl VolumeServer {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
-        let pulse_seconds = self.options.pulse_seconds as u64;
+        let pulse_seconds = self.options.pulse_seconds;
 
         self.update_masters().await?;
-        let channel = LoadBalancedChannel::builder(parse_host_port(&self.current_master)?)
-            .channel()
-            .await
-            .map_err(|err| Error::String(err.to_string()))?;
-        let client = HelyimClient::new(channel);
+        let client = create_helyim_client(&self.current_master).await?;
 
         let ctx = StorageContext {
             store,
@@ -148,13 +144,12 @@ impl VolumeServer {
             looker: Arc::new(Looker::new()),
         };
 
-        start_heartbeat(
+        rt_spawn(Self::heartbeat(
             self.store.clone(),
-            client,
+            self.seed_master_nodes.clone(),
             pulse_seconds,
             self.shutdown.new_receiver(),
-        )
-        .await;
+        ));
 
         // http server
         let addr = format!("{}:{}", self.host, self.options.port).parse()?;
@@ -173,6 +168,136 @@ impl VolumeServer {
         self.seed_master_nodes = cluster_status.peers;
 
         Ok(())
+    }
+}
+
+async fn create_helyim_client(
+    master: &str,
+) -> StdResult<HelyimClient<LoadBalancedChannel>, VolumeError> {
+    let channel = LoadBalancedChannel::builder(parse_host_port(master)?)
+        .channel()
+        .await
+        .map_err(|err| VolumeError::Box(err.into()))?;
+    Ok(HelyimClient::new(channel))
+}
+
+impl VolumeServer {
+    async fn heartbeat(
+        store: StoreRef,
+        seed_masters: Vec<FastStr>,
+        pulse_seconds: u64,
+        mut shutdown: async_broadcast::Receiver<()>,
+    ) {
+        let mut new_leader = FastStr::empty();
+        loop {
+            for master in seed_masters.iter() {
+                if !new_leader.is_empty() && &new_leader != master {
+                    sleep(Duration::from_secs(pulse_seconds)).await;
+                    continue;
+                }
+                store.write().await.set_current_master(master.clone());
+                tokio::select! {
+                    ret = VolumeServer::do_heartbeat(
+                        master,
+                        store.clone(),
+                        pulse_seconds,
+                        shutdown.clone(),
+                    ) => {
+                            match ret {
+                                Err(VolumeError::LeaderChanged(new, old)) => {
+                                    if !new.is_empty() {
+                                        new_leader = new;
+                                    }
+                                }
+                                Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
+                                    warn!("heartbeat to {master} error: {err}");
+                                    sleep(Duration::from_secs(pulse_seconds)).await;
+                                    new_leader = FastStr::empty();
+                                    store.write().await.set_current_master(FastStr::empty());
+                                }
+                                Err(err) => {
+                                    error!("heartbeat but error occur: {err}");
+                                }
+                                _ => {}
+                        }
+                    }
+                    _ = shutdown.recv() => {
+                        info!("stopping heartbeat.");
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn do_heartbeat(
+        master: &FastStr,
+        store: StoreRef,
+        pulse: u64,
+        mut shutdown_rx: async_broadcast::Receiver<()>,
+    ) -> StdResult<(), VolumeError> {
+        let mut interval = tokio::time::interval(Duration::from_secs(pulse));
+
+        let store_ref = store.clone();
+        let request_stream = stream! {
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match store_ref.write().await.collect_heartbeat().await {
+                            Ok(heartbeat) => yield heartbeat,
+                            Err(err) => error!("collect heartbeat error: {err}")
+                        }
+                    }
+                    // to avoid server side got `channel closed` error
+                    _ = shutdown_rx.recv() => {
+                        break;
+                    }
+                }
+            }
+        };
+
+        let mut client = create_helyim_client(master).await?;
+        match client.heartbeat(request_stream).await {
+            Ok(response) => {
+                let mut stream = response.into_inner();
+                info!("heartbeat client starting up success, will heartbeat to {master}");
+                while let Some(response) = stream.next().await {
+                    match response {
+                        Ok(response) => {
+                            if let Ok(response) = serde_json::to_string(&response) {
+                                debug!("heartbeat reply: {response}");
+                            }
+                            let old_leader = store.read().await.current_master.clone();
+                            if !response.leader.is_empty() && response.leader != old_leader {
+                                info!(
+                                    "leader changed, current leader is {}, old leader is \
+                                     {old_leader}",
+                                    response.leader
+                                );
+                                let new_leader = FastStr::new(response.leader);
+                                store.write().await.set_current_master(new_leader.clone());
+                                return Err(VolumeError::LeaderChanged(new_leader, old_leader));
+                            }
+                            store
+                                .write()
+                                .await
+                                .set_volume_size_limit(response.volume_size_limit);
+                        }
+                        Err(err) => {
+                            error!(
+                                "send heartbeat to {master} error: {err}, will try again after 2s."
+                            );
+                            return Err(VolumeError::SendHeartbeat(master.clone()));
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Err(err) => {
+                error!("heartbeat starting up failed: {err}, will try agent after 2s.");
+                Err(VolumeError::StartHeartbeat)
+            }
+        }
     }
 }
 
@@ -217,102 +342,6 @@ async fn start_volume_server(
             exit();
         }
     }
-}
-
-enum HeartbeatHandle {
-    // break and create a new heartbeat loop
-    Next,
-    // keep heartbeat in current loop
-    Continue,
-}
-
-async fn start_heartbeat(
-    store: StoreRef,
-    mut client: HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: u64,
-    mut shutdown: async_broadcast::Receiver<()>,
-) -> JoinHandle<()> {
-    rt_spawn(async move {
-        'next_heartbeat: loop {
-            tokio::select! {
-                handle = heartbeat_streaming(
-                    store.clone(),
-                    &mut client,
-                    pulse_seconds,
-                    shutdown.clone(),
-                ) => {
-                    if let Err(HeartbeatHandle::Next) = handle {
-                        continue 'next_heartbeat;
-                    }
-                }
-                _ = shutdown.recv() => {
-                    info!("stopping heartbeat.");
-                    return;
-                }
-            }
-        }
-    })
-}
-
-async fn heartbeat_streaming(
-    store: StoreRef,
-    client: &mut HelyimClient<LoadBalancedChannel>,
-    pulse_seconds: u64,
-    mut shutdown_rx: async_broadcast::Receiver<()>,
-) -> StdResult<(), HeartbeatHandle> {
-    let mut interval = tokio::time::interval(Duration::from_secs(pulse_seconds));
-
-    let store_ref = store.clone();
-    let request_stream = stream! {
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    match store.write().await.collect_heartbeat().await {
-                        Ok(heartbeat) => yield heartbeat,
-                        Err(err) => error!("collect heartbeat error: {err}")
-                    }
-                }
-                // to avoid server side got `channel closed` error
-                _ = shutdown_rx.recv() => {
-                    break;
-                }
-            }
-        }
-    };
-
-    match client.heartbeat(request_stream).await {
-        Ok(response) => {
-            let mut stream = response.into_inner();
-            info!("heartbeat starting up success");
-            while let Some(response) = stream.next().await {
-                match response {
-                    Ok(response) => {
-                        if let Ok(response) = serde_json::to_string(&response) {
-                            debug!("heartbeat reply: {response}");
-                        }
-                        if response.leader != store_ref.read().await.current_master {
-                            info!("leader changed, current leader is {}", response.leader);
-                            store_ref.write().await.set_current_master(response.leader);
-                        }
-                        store_ref
-                            .write()
-                            .await
-                            .set_volume_size_limit(response.volume_size_limit);
-                    }
-                    Err(err) => {
-                        error!("send heartbeat error: {err}, will try again after 2s.");
-                        return Err(HeartbeatHandle::Next);
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            error!("heartbeat starting up failed: {err}, will try agent after 2s.");
-            return Err(HeartbeatHandle::Continue);
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(Clone)]
