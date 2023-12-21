@@ -285,7 +285,8 @@ impl VolumeServer {
                         }
                         Err(err) => {
                             error!(
-                                "send heartbeat to {master} error: {err}, will try again after 2s."
+                                "send heartbeat to {master} error: {err}, will try again after \
+                                 {pulse}s."
                             );
                             return Err(VolumeError::SendHeartbeat(master.clone()));
                         }
@@ -294,7 +295,7 @@ impl VolumeServer {
                 Ok(())
             }
             Err(err) => {
-                error!("heartbeat starting up failed: {err}, will try agent after 2s.");
+                error!("heartbeat starting up failed: {err}, will try agent after {pulse}s.");
                 Err(VolumeError::StartHeartbeat)
             }
         }

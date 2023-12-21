@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use async_trait::async_trait;
 use openraft::{
-    error::{InstallSnapshotError, NetworkError, RemoteError, Unreachable},
+    error::{InstallSnapshotError, RemoteError, Unreachable},
     network::{RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
@@ -11,7 +11,7 @@ use openraft::{
     BasicNode,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::raft::{
     client::RaftClient,
@@ -38,10 +38,16 @@ impl NetworkFactory {
                 nodes.insert(*node);
             }
         }
-        // TODO: handle error
-        let response = self.client.change_membership(&nodes).await.unwrap();
-        info!("remove member {member} success");
-        Ok(response)
+        match self.client.change_membership(&nodes).await {
+            Ok(response) => {
+                info!("remove member {member} success");
+                Ok(response)
+            }
+            Err(err) => {
+                error!("remove member {member} failed, error: {err}");
+                Err(RpcError::Unreachable(Unreachable::new(&err)))
+            }
+        }
     }
 }
 
@@ -73,7 +79,7 @@ impl NetworkFactory {
         let res: Result<Resp, Err> = resp
             .json()
             .await
-            .map_err(|e| openraft::error::RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| openraft::error::RPCError::Unreachable(Unreachable::new(&e)))?;
 
         res.map_err(|e| openraft::error::RPCError::RemoteError(RemoteError::new(target, e)))
     }
@@ -100,7 +106,6 @@ pub struct NetworkConnection {
     error_count: u64,
 }
 
-/// TODO: when got error, member should be removed from membership
 #[async_trait]
 impl RaftNetwork<TypeConfig> for NetworkConnection {
     async fn send_append_entries(
@@ -111,12 +116,14 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
             .owner
             .send_rpc(self.target, &self.target_node, "raft-append", req)
             .await;
+
         if append_entries.is_err() {
             self.error_count += 1;
-
             if self.error_count >= 10 {
                 self.owner.remove_member(&self.target).await?;
             }
+        } else {
+            self.error_count = 0;
         }
         append_entries
     }
