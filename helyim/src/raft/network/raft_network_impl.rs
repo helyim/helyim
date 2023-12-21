@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 use openraft::{
     error::{InstallSnapshotError, NetworkError, RemoteError, Unreachable},
@@ -9,10 +11,39 @@ use openraft::{
     BasicNode,
 };
 use serde::{de::DeserializeOwned, Serialize};
+use tracing::info;
 
-use crate::raft::types::{NodeId, RpcError, TypeConfig};
+use crate::raft::{
+    client::RaftClient,
+    types::{ClientWriteResponse, NodeId, RpcError, TypeConfig},
+};
 
-pub struct NetworkFactory;
+#[derive(Clone)]
+pub struct NetworkFactory {
+    client: RaftClient,
+}
+
+impl NetworkFactory {
+    pub fn new(addr: &str) -> Self {
+        Self {
+            client: RaftClient::new(addr.to_string()),
+        }
+    }
+
+    pub async fn remove_member(&self, member: &NodeId) -> Result<ClientWriteResponse, RpcError> {
+        let metrics = self.client.metrics().await?;
+        let mut nodes = BTreeSet::new();
+        for (node, _) in metrics.membership_config.nodes() {
+            if node != member {
+                nodes.insert(*node);
+            }
+        }
+        // TODO: handle error
+        let response = self.client.change_membership(&nodes).await.unwrap();
+        info!("remove member {member} success");
+        Ok(response)
+    }
+}
 
 impl NetworkFactory {
     pub async fn send_rpc<Req, Resp, Err>(
@@ -54,9 +85,10 @@ impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
 
     async fn new_client(&mut self, target: NodeId, node: &BasicNode) -> Self::Network {
         NetworkConnection {
-            owner: NetworkFactory {},
+            owner: self.clone(),
             target,
             target_node: node.clone(),
+            error_count: 0,
         }
     }
 }
@@ -65,6 +97,7 @@ pub struct NetworkConnection {
     owner: NetworkFactory,
     target: NodeId,
     target_node: BasicNode,
+    error_count: u64,
 }
 
 /// TODO: when got error, member should be removed from membership
@@ -74,9 +107,18 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
         &mut self,
         req: AppendEntriesRequest<TypeConfig>,
     ) -> Result<AppendEntriesResponse<NodeId>, RpcError> {
-        self.owner
+        let append_entries = self
+            .owner
             .send_rpc(self.target, &self.target_node, "raft-append", req)
-            .await
+            .await;
+        if append_entries.is_err() {
+            self.error_count += 1;
+
+            if self.error_count >= 10 {
+                self.owner.remove_member(&self.target).await?;
+            }
+        }
+        append_entries
     }
 
     async fn send_install_snapshot(

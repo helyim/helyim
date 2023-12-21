@@ -113,7 +113,7 @@ impl RaftServer {
 
         // Create the network layer that will connect and communicate the raft instances and
         // will be used in conjunction with the store created above.
-        let network = NetworkFactory {};
+        let network = NetworkFactory::new(node_addr);
 
         // Create a local raft instance.
         let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine).await?;

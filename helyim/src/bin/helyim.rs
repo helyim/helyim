@@ -105,7 +105,7 @@ fn log_init(
     let file_appender =
         tracing_appender::rolling::daily(log_dir, format!("helyim-{}.log", log_prefix));
     let subscriber = tracing_subscriber::fmt()
-        // .with_writer(file_appender)
+        .with_writer(file_appender)
         .with_env_filter(filter)
         .with_target(true)
         .with_level(true)

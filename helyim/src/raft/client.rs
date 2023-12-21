@@ -20,6 +20,7 @@ use crate::{
     storage::VolumeId,
 };
 
+#[derive(Clone)]
 pub struct RaftClient {
     /// The leader node to send request to.
     ///
