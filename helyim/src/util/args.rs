@@ -9,8 +9,8 @@ use crate::raft::types::NodeId;
 pub struct Opts {
     #[arg(long, default_value("0.0.0.0"))]
     pub host: FastStr,
-    #[arg(long, default_value("./target/logs"))]
-    pub log_path: FastStr,
+    #[command(flatten)]
+    pub log: LogOptions,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -45,9 +45,9 @@ pub struct MasterOptions {
 #[derive(Args, Debug, Clone)]
 pub struct RaftOptions {
     #[arg(long, default_value_t = 1)]
-    pub raft_node_id: NodeId,
+    pub node_id: NodeId,
     #[arg(long)]
-    pub raft_leader: Option<FastStr>,
+    pub peer: Option<FastStr>,
 }
 
 #[derive(Args, Debug)]
@@ -57,7 +57,7 @@ pub struct VolumeOptions {
     #[arg(long, default_value_t = 8080)]
     pub port: u16,
     #[arg(long, default_value_t = 5)]
-    pub pulse_seconds: i64,
+    pub pulse_seconds: u64,
     /// public access url
     #[arg(long)]
     pub public_url: Option<FastStr>,
@@ -76,4 +76,12 @@ pub struct VolumeOptions {
     /// directories to store data files
     #[arg(long)]
     pub dir: Vec<FastStr>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct LogOptions {
+    #[arg(long, default_value("./target/logs"))]
+    pub log_path: FastStr,
+    #[arg(long, default_value("stdout"))]
+    pub log_output: FastStr,
 }

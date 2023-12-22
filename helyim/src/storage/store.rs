@@ -13,7 +13,7 @@ use crate::{
     anyhow,
     errors::{Error, Result},
     storage::{
-        disk_location::{DiskLocation, DiskLocationRef},
+        disk_location::DiskLocation,
         needle::{Needle, NeedleMapType},
         volume::Volume,
         ReplicaPlacement, Ttl, VolumeError, VolumeId,
@@ -26,7 +26,7 @@ pub struct Store {
     pub ip: FastStr,
     pub port: u16,
     pub public_url: FastStr,
-    pub locations: Vec<DiskLocationRef>,
+    pub locations: Vec<DiskLocation>,
 
     pub data_center: FastStr,
     pub rack: FastStr,
@@ -41,8 +41,7 @@ pub struct Store {
     pub new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
     pub deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
 
-    pub current_leader: String,
-    pub peers: Vec<String>,
+    pub current_master: FastStr,
 }
 
 unsafe impl Send for Store {}
@@ -63,7 +62,7 @@ impl Store {
             let mut location = DiskLocation::new(&folders[i], max_counts[i]);
             location.load_existing_volumes(needle_map_type).await?;
 
-            locations.push(DiskLocationRef::new(location));
+            locations.push(location);
         }
 
         Ok(Store {
@@ -80,8 +79,7 @@ impl Store {
             deleted_volumes_tx: None,
             new_ec_shards_tx: None,
             deleted_ec_shards_tx: None,
-            current_leader: String::new(),
-            peers: Vec::new(),
+            current_master: FastStr::empty(),
         })
     }
 
@@ -97,25 +95,21 @@ impl Store {
         self.volume_size_limit = volume_size_limit;
     }
 
-    pub fn set_current_leader(&mut self, current_leader: String) {
-        self.current_leader = current_leader;
+    pub fn set_current_master(&mut self, current_master: FastStr) {
+        self.current_master = current_master;
     }
 
-    pub fn set_peers(&mut self, peers: Vec<String>) {
-        self.peers = peers;
-    }
-
-    pub fn locations(&self) -> Vec<DiskLocationRef> {
-        self.locations.clone()
+    pub fn locations(&self) -> &[DiskLocation] {
+        self.locations.as_ref()
     }
 
     pub async fn has_volume(&self, vid: VolumeId) -> Result<bool> {
         Ok(self.find_volume(vid).await?.is_some())
     }
 
-    pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<Arc<Volume>>> {
+    pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<&Volume>> {
         for location in self.locations.iter() {
-            let volume = location.read().await.get_volume(vid);
+            let volume = location.get_volume(vid);
             if volume.is_some() {
                 return Ok(volume);
             }
@@ -153,7 +147,7 @@ impl Store {
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
         for location in self.locations.iter_mut() {
-            location.write().await.delete_volume(vid).await?;
+            location.delete_volume(vid).await?;
             delete = true;
         }
         if delete {
@@ -164,15 +158,14 @@ impl Store {
         }
     }
 
-    async fn find_free_location(&self) -> Result<Option<DiskLocationRef>> {
+    async fn find_free_location(&mut self) -> Result<Option<&mut DiskLocation>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
-        for location in self.locations.iter() {
-            let free = location.read().await.max_volume_count
-                - location.read().await.get_volumes_len() as i64;
+        for location in self.locations.iter_mut() {
+            let free = location.max_volume_count - location.volumes.len() as i64;
             if free > max_free {
                 max_free = free;
-                disk_location = Some(location.clone());
+                disk_location = Some(location);
             }
         }
 
@@ -180,7 +173,7 @@ impl Store {
     }
 
     async fn do_add_volume(
-        &self,
+        &mut self,
         vid: VolumeId,
         collection: FastStr,
         needle_map_type: NeedleMapType,
@@ -202,7 +195,7 @@ impl Store {
             .ok_or::<Error>(anyhow!("no more free space left"))?;
 
         let volume = Volume::new(
-            location.read().await.directory.clone(),
+            location.directory.clone(),
             collection,
             vid,
             needle_map_type,
@@ -210,13 +203,13 @@ impl Store {
             ttl,
             preallocate,
         )?;
-        location.write().await.add_volume(vid, Arc::new(volume));
+        location.add_volume(vid, volume);
 
         Ok(())
     }
 
     pub async fn add_volume(
-        &self,
+        &mut self,
         volumes: Vec<u32>,
         collection: String,
         needle_map_type: NeedleMapType,
@@ -249,8 +242,8 @@ impl Store {
         let mut max_volume_count = 0;
         for location in self.locations.iter_mut() {
             let mut deleted_vids = Vec::new();
-            max_volume_count += location.read().await.max_volume_count;
-            for (vid, volume) in location.read().await.get_volumes().iter() {
+            max_volume_count += location.max_volume_count;
+            for (vid, volume) in location.volumes.iter() {
                 let volume_max_file_key = volume.max_file_key()?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
@@ -279,7 +272,7 @@ impl Store {
                 }
             }
             for vid in deleted_vids {
-                if let Err(err) = location.write().await.delete_volume(vid).await {
+                if let Err(err) = location.delete_volume(vid).await {
                     warn!("delete volume {vid} err: {err}");
                 }
             }

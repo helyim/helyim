@@ -240,7 +240,7 @@ impl Topology {
         }
     }
 
-    pub async fn current_leader_address(&self) -> Option<String> {
+    pub async fn current_leader_address(&self) -> Option<FastStr> {
         match self.raft.as_ref() {
             Some(raft) => raft.current_leader_address().await,
             None => None,
@@ -254,7 +254,7 @@ impl Topology {
         }
     }
 
-    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+    pub fn peers(&self) -> BTreeMap<NodeId, FastStr> {
         match self.raft.as_ref() {
             Some(raft) => raft.peers(),
             None => BTreeMap::new(),

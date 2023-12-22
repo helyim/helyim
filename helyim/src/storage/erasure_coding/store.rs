@@ -35,7 +35,7 @@ impl Store {
         shard_id: ShardId,
     ) -> Option<Arc<EcVolumeShard>> {
         for location in self.locations.iter() {
-            let shard = location.read().await.find_ec_shard(vid, shard_id).await;
+            let shard = location.find_ec_shard(vid, shard_id).await;
             if shard.is_some() {
                 return shard;
             }
@@ -45,7 +45,7 @@ impl Store {
 
     pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeRef> {
         for location in self.locations.iter() {
-            if let Some(volume) = location.read().await.ec_volumes.get(&vid) {
+            if let Some(volume) = location.ec_volumes.get(&vid) {
                 return Some(volume.clone());
             }
         }
@@ -53,8 +53,8 @@ impl Store {
     }
 
     pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<(), EcVolumeError> {
-        for location in self.locations.iter() {
-            location.write().await.destroy_ec_volume(vid).await?;
+        for location in self.locations.iter_mut() {
+            location.destroy_ec_volume(vid).await?;
         }
         Ok(())
     }
@@ -66,12 +66,7 @@ impl Store {
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
         for location in self.locations.iter_mut() {
-            match location
-                .write()
-                .await
-                .load_ec_shard(&collection, vid, shard_id)
-                .await
-            {
+            match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
                     if let Some(tx) = self.new_ec_shards_tx.as_mut() {
                         let shard_bits = 0;
@@ -105,8 +100,8 @@ impl Store {
     ) -> Result<(), EcVolumeError> {
         match self.find_ec_shard(vid, shard_id).await {
             Some(shard) => {
-                for location in self.locations.iter() {
-                    if location.write().await.unload_ec_shard(vid, shard_id).await {
+                for location in self.locations.iter_mut() {
+                    if location.unload_ec_shard(vid, shard_id).await {
                         if let Some(tx) = self.deleted_ec_shards_tx.as_mut() {
                             let shard_bits = 0;
                             tx.send(VolumeEcShardInformationMessage {
@@ -152,7 +147,7 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let client = HelyimClient::connect(self.current_leader.clone()).await?;
+        let client = HelyimClient::connect(self.current_master.to_string()).await?;
         // TODO
         Ok(())
     }

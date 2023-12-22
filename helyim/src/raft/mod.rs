@@ -113,7 +113,7 @@ impl RaftServer {
 
         // Create the network layer that will connect and communicate the raft instances and
         // will be used in conjunction with the store created above.
-        let network = NetworkFactory {};
+        let network = NetworkFactory::new(node_addr);
 
         // Create a local raft instance.
         let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine).await?;
@@ -127,11 +127,11 @@ impl RaftServer {
         })
     }
 
-    pub async fn start_node_with_leader(
+    pub async fn start_node_with_peer(
         &self,
         node_id: NodeId,
         node_addr: &str,
-        leader: Option<&FastStr>,
+        peer: Option<&FastStr>,
     ) -> Result<(), RaftError> {
         // wait for server to startup
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -140,9 +140,9 @@ impl RaftServer {
         members.insert(node_id);
 
         // if only one peer, treat it as leader
-        match leader {
-            Some(leader) => {
-                let raft_client = RaftClient::new(leader.to_string());
+        match peer {
+            Some(peer) => {
+                let raft_client = RaftClient::new(peer.to_string());
 
                 // add current raft node as learner
                 if let Err(err) = raft_client
@@ -183,7 +183,7 @@ impl RaftServer {
         self.raft.current_leader().await
     }
 
-    pub async fn current_leader_address(&self) -> Option<String> {
+    pub async fn current_leader_address(&self) -> Option<FastStr> {
         let current_leader = self.current_leader().await;
         for (node_id, node) in self
             .raft
@@ -194,7 +194,7 @@ impl RaftServer {
             .nodes()
         {
             if current_leader == Some(*node_id) {
-                return Some(node.to_string());
+                return Some(FastStr::new(&node.addr));
             }
         }
         None
@@ -204,7 +204,7 @@ impl RaftServer {
         self.current_leader().await == Some(self.id)
     }
 
-    pub fn peers(&self) -> BTreeMap<NodeId, String> {
+    pub fn peers(&self) -> BTreeMap<NodeId, FastStr> {
         let mut map = BTreeMap::new();
         for (node_id, node) in self
             .raft
@@ -214,7 +214,7 @@ impl RaftServer {
             .membership()
             .nodes()
         {
-            map.insert(*node_id, node.addr.clone());
+            map.insert(*node_id, FastStr::new(&node.addr));
         }
         map
     }

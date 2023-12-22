@@ -1,8 +1,8 @@
 use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
-    storage::{NeedleMapType, StorageServer},
-    util::args::{Command, MasterOptions, Opts, VolumeOptions},
+    storage::{NeedleMapType, VolumeServer},
+    util::args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
 };
 use tokio::signal;
 use tracing::{info, Level};
@@ -51,7 +51,7 @@ async fn start_volume(
         })
         .collect();
 
-    let mut server = StorageServer::new(
+    let mut server = VolumeServer::new(
         host,
         &public_url,
         paths,
@@ -94,16 +94,16 @@ async fn shutdown_signal() {
 
 fn log_init(
     level: Level,
-    log_dir: &str,
+    opts: &LogOptions,
     log_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // ignore all crates logs
     std::env::set_var("RUST_LOG", "none");
     let helyim = env!("CARGO_PKG_NAME");
     let filter = EnvFilter::from_default_env().add_directive(format!("{helyim}={level}").parse()?);
-
-    let file_appender =
-        tracing_appender::rolling::daily(log_dir, format!("helyim-{}.log", log_prefix));
+    let file_appender = tracing_appender::rolling::daily(
+        opts.log_path.as_str(),
+        format!("helyim-{}.log", log_prefix),
+    );
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_appender)
         .with_env_filter(filter)
@@ -136,9 +136,10 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
     let opts = Opts::parse();
     info!("opts: {:?}", opts);
 
+    let log_opts = opts.log.clone();
     match opts.command {
         Command::Master(master) => {
-            log_init(level, &opts.log_path, "master")?;
+            log_init(level, &log_opts, "master")?;
 
             info!("starting master server....");
             start_master(&opts.host, master).await
@@ -146,7 +147,7 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
         Command::Volume(volume) => {
             log_init(
                 level,
-                &opts.log_path,
+                &log_opts,
                 &format!("volume-{}-{}", volume.ip, volume.port),
             )?;
 
