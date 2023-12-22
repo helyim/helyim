@@ -409,7 +409,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
         self.store
-            .read()
+            .write()
             .await
             .commit_compact_volume(request.volume_id)
             .await?;

@@ -65,7 +65,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&self) -> Result<(), VolumeError> {
+    pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -92,12 +92,9 @@ impl Volume {
             }
         }
 
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).data_file = None;
-            (*this).needle_mapper = None;
-            (*this).load(false, true)
-        }
+        self.data_file = None;
+        self.needle_mapper = None;
+        self.load(false, true)
     }
 
     pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {

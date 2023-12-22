@@ -44,10 +44,6 @@ pub struct Store {
     pub current_master: FastStr,
 }
 
-unsafe impl Send for Store {}
-
-unsafe impl Sync for Store {}
-
 impl Store {
     pub async fn new(
         ip: &str,
@@ -110,6 +106,16 @@ impl Store {
     pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<&Volume>> {
         for location in self.locations.iter() {
             let volume = location.get_volume(vid);
+            if volume.is_some() {
+                return Ok(volume);
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn find_volume_mut(&mut self, vid: VolumeId) -> Result<Option<&mut Volume>> {
+        for location in self.locations.iter_mut() {
+            let volume = location.get_volume_mut(vid);
             if volume.is_some() {
                 return Ok(volume);
             }
@@ -320,8 +326,8 @@ impl Store {
         }
     }
 
-    pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid).await? {
+    pub async fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<()> {
+        match self.find_volume_mut(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
                 volume.commit_compact()?;
