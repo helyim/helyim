@@ -359,7 +359,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
         self.store
-            .read()
+            .write()
             .await
             .add_volume(
                 request.volumes,
@@ -478,9 +478,9 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
         let mut rebuilt_shard_ids = Vec::new();
         for location in self.store.read().await.locations().iter() {
-            let ecx_filename = format!("{}{}.ecx", location.read().await.directory, base_filename);
+            let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
-                let base_filename = format!("{}{}", location.read().await.directory, base_filename);
+                let base_filename = format!("{}{}", location.directory, base_filename);
                 rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
                 rebuild_ecx_file(&base_filename)?;
                 break;
@@ -508,10 +508,10 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let mut found = false;
 
         for location in self.store.read().await.locations().iter() {
-            let ecx_filename = format!("{}{}.ecx", location.read().await.directory, base_filename);
+            let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 found = true;
-                base_filename = format!("{}{}", location.read().await.directory, base_filename);
+                base_filename = format!("{}{}", location.directory, base_filename);
                 for shard in request.shard_ids {
                     fs::remove_file(format!("{}{}", base_filename, to_ext(shard as ShardId)))?;
                 }
@@ -539,7 +539,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let ec_prefix = format!("{}.ec", filename);
 
         for location in self.store.read().await.locations().iter() {
-            let read_dir = fs::read_dir(location.read().await.directory.to_string())?;
+            let read_dir = fs::read_dir(location.directory.to_string())?;
             for entry in read_dir {
                 match entry?.file_name().into_string() {
                     Ok(entry_name) => {
@@ -676,7 +676,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
 
         for location in self.store.read().await.locations().iter() {
-            if let Some(volume) = location.read().await.find_ec_volume(request.volume_id) {
+            if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
                     .read()
                     .await

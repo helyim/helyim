@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, fs, path::Path};
 
 use faststr::FastStr;
 use futures::future::join_all;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
@@ -20,7 +20,7 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, Arc<Volume>>,
+    pub volumes: HashMap<VolumeId, Volume>,
     pub ec_volumes: HashMap<VolumeId, EcVolumeRef>,
 }
 
@@ -43,7 +43,7 @@ impl DiskLocation {
         let dir = Path::new(&dir);
 
         #[allow(clippy::type_complexity)]
-        let mut handles: Vec<JoinHandle<Result<(VolumeId, Arc<Volume>), VolumeError>>> = vec![];
+        let mut handles: Vec<JoinHandle<Result<(VolumeId, Volume), VolumeError>>> = vec![];
         for entry in fs::read_dir(dir)? {
             let file = entry?.path();
             let path = file.as_path();
@@ -66,7 +66,7 @@ impl DiskLocation {
                             0,
                         )?;
 
-                        Ok((vid, Arc::new(volume)))
+                        Ok((vid, volume))
                     });
                     handles.push(handle);
                 }
@@ -81,20 +81,12 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub fn add_volume(&mut self, vid: VolumeId, volume: Arc<Volume>) {
+    pub fn add_volume(&mut self, vid: VolumeId, volume: Volume) {
         self.volumes.insert(vid, volume);
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
-        self.volumes.get(&vid).cloned()
-    }
-
-    pub fn get_volumes(&self) -> HashMap<VolumeId, Arc<Volume>> {
-        self.volumes.clone()
-    }
-
-    pub fn get_volumes_len(&self) -> usize {
-        self.volumes.len()
+    pub fn get_volume(&self, vid: VolumeId) -> Option<&Volume> {
+        self.volumes.get(&vid)
     }
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
@@ -128,21 +120,4 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeErro
             }
         })?;
     Ok((id.parse()?, collection))
-}
-
-#[derive(Clone)]
-pub struct DiskLocationRef(Arc<RwLock<DiskLocation>>);
-
-impl DiskLocationRef {
-    pub fn new(location: DiskLocation) -> Self {
-        Self(Arc::new(RwLock::new(location)))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DiskLocation> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DiskLocation> {
-        self.0.write().await
-    }
 }
