@@ -127,11 +127,11 @@ impl RaftServer {
         })
     }
 
-    pub async fn start_node_with_leader(
+    pub async fn start_node_with_peer(
         &self,
         node_id: NodeId,
         node_addr: &str,
-        leader: Option<&FastStr>,
+        peer: Option<&FastStr>,
     ) -> Result<(), RaftError> {
         // wait for server to startup
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -140,9 +140,9 @@ impl RaftServer {
         members.insert(node_id);
 
         // if only one peer, treat it as leader
-        match leader {
-            Some(leader) => {
-                let raft_client = RaftClient::new(leader.to_string());
+        match peer {
+            Some(peer) => {
+                let raft_client = RaftClient::new(peer.to_string());
 
                 // add current raft node as learner
                 if let Err(err) = raft_client
