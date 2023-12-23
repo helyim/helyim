@@ -564,15 +564,6 @@ impl Volume {
     }
 }
 
-impl Volume {
-    pub fn set_super_block(&self, super_block: SuperBlock) {
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).super_block = Arc::new(super_block);
-        }
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum VolumeError {
     #[error("Io error: {0}")]

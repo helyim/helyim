@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
+    topology::{volume_layout::VolumeLayout, DataNodeRef},
 };
 
 #[derive(Clone, Serialize)]
@@ -13,7 +13,7 @@ pub struct Collection {
     name: FastStr,
     volume_size_limit: u64,
     #[serde(skip)]
-    pub volume_layouts: HashMap<FastStr, VolumeLayoutRef>,
+    pub volume_layouts: HashMap<FastStr, VolumeLayout>,
 }
 
 impl Collection {
@@ -29,7 +29,7 @@ impl Collection {
         &mut self,
         rp: ReplicaPlacement,
         ttl: Option<Ttl>,
-    ) -> &mut VolumeLayoutRef {
+    ) -> &mut VolumeLayout {
         let key = match ttl {
             Some(ttl) => format!("{}{}", rp, ttl),
             None => rp.to_string(),
@@ -39,12 +39,12 @@ impl Collection {
 
         self.volume_layouts
             .entry(FastStr::from_string(key))
-            .or_insert_with(|| VolumeLayoutRef::new(rp, ttl, volume_size))
+            .or_insert_with(|| VolumeLayout::new(rp, ttl, volume_size))
     }
 
     pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         for layout in self.volume_layouts.values() {
-            let ret = layout.read().await.lookup(vid);
+            let ret = layout.lookup(vid);
             if ret.is_some() {
                 return ret;
             }

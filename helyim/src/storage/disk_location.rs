@@ -89,6 +89,10 @@ impl DiskLocation {
         self.volumes.get(&vid)
     }
 
+    pub fn get_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
+        self.volumes.get_mut(&vid)
+    }
+
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some(v) = self.volumes.remove(&vid) {
             v.destroy()?;

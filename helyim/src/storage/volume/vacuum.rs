@@ -27,7 +27,7 @@ use crate::{
         },
         Needle, NeedleError, NeedleValue, VolumeError, VolumeId,
     },
-    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
+    topology::{volume_layout::VolumeLayout, DataNodeRef},
     util::time::now,
 };
 
@@ -65,7 +65,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&self) -> Result<(), VolumeError> {
+    pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -92,12 +92,9 @@ impl Volume {
             }
         }
 
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).data_file = None;
-            (*this).needle_mapper = None;
-            (*this).load(false, true)
-        }
+        self.data_file = None;
+        self.needle_mapper = None;
+        self.load(false, true)
     }
 
     pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {
@@ -397,12 +394,12 @@ pub async fn batch_vacuum_volume_check(
 }
 
 pub async fn batch_vacuum_volume_compact(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &mut VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
     preallocate: u64,
 ) -> bool {
-    volume_layout.write().await.remove_from_writable(volume_id);
+    volume_layout.remove_from_writable(volume_id);
     let mut compact_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCompactRequest {
@@ -431,7 +428,7 @@ pub async fn batch_vacuum_volume_compact(
 }
 
 pub async fn batch_vacuum_volume_commit(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &mut VolumeLayout,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
 ) -> bool {
@@ -462,8 +459,6 @@ pub async fn batch_vacuum_volume_commit(
     if commit_success {
         for data_node in data_nodes {
             volume_layout
-                .write()
-                .await
                 .set_volume_available(volume_id, data_node, is_readonly)
                 .await;
         }

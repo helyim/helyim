@@ -125,8 +125,8 @@ impl DataNode {
         }
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
-        self.volumes.get(&vid).cloned()
+    pub fn get_volume(&self, vid: VolumeId) -> Option<&VolumeInfo> {
+        self.volumes.get(&vid)
     }
 
     pub async fn rack_id(&self) -> FastStr {

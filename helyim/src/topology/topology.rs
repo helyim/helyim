@@ -21,7 +21,7 @@ use crate::{
     },
     topology::{
         collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
-        node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
+        node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataNodeRef,
     },
 };
 
@@ -113,7 +113,7 @@ impl Topology {
             option.ttl,
         );
 
-        vl.read().await.active_volume_count(option).await > 0
+        vl.active_volume_count(option).await > 0
     }
 
     pub async fn pick_for_write(
@@ -132,7 +132,6 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            let layout = layout.read().await;
             let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
             (vid, nodes[0].clone())
         };
@@ -141,27 +140,23 @@ impl Topology {
         Ok((file_id, count, node))
     }
 
-    pub async fn register_volume_layout(&mut self, volume: VolumeInfo, data_node: DataNodeRef) {
+    pub async fn register_volume_layout(&mut self, volume: &VolumeInfo, data_node: DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
             volume.ttl,
         )
-        .write()
-        .await
-        .register_volume(&volume, data_node)
+        .register_volume(volume, data_node)
         .await
     }
 
-    pub async fn unregister_volume_layout(&mut self, volume: VolumeInfo) {
+    pub fn unregister_volume_layout(&mut self, volume: &VolumeInfo) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
             volume.ttl,
         )
-        .write()
-        .await
-        .unregister_volume(&volume);
+        .unregister_volume(volume);
     }
 
     pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
@@ -190,14 +185,9 @@ impl Topology {
         for (_name, collection) in self.collections.iter_mut() {
             for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
                 // TODO: avoid cloning the HashMap
-                let locations = volume_layout.read().await.locations.clone();
+                let locations = volume_layout.locations.clone();
                 for (vid, data_nodes) in locations {
-                    if volume_layout
-                        .read()
-                        .await
-                        .readonly_volumes
-                        .contains_key(&vid)
-                    {
+                    if volume_layout.readonly_volumes.contains_key(&vid) {
                         continue;
                     }
 
@@ -220,7 +210,7 @@ impl Topology {
         collection: FastStr,
         rp: ReplicaPlacement,
         ttl: Ttl,
-    ) -> &mut VolumeLayoutRef {
+    ) -> &mut VolumeLayout {
         self.collections
             .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))

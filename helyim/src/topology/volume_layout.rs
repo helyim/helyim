@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use rand::{self, Rng};
 use serde::Serialize;
-use tokio::sync::RwLock;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
@@ -23,7 +22,7 @@ pub struct VolumeLayout {
 }
 
 impl VolumeLayout {
-    fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
+    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
         VolumeLayout {
             rp,
             ttl,
@@ -133,12 +132,12 @@ impl VolumeLayout {
         let locations = self.locations.entry(v.id).or_default();
         VolumeLayout::set_node(locations, dn).await;
 
+        let mut removed = vec![];
         for location in locations.iter() {
-            let volume = location.read().await.get_volume(v.id);
-            match volume {
+            match location.read().await.get_volume(v.id) {
                 Some(v) => {
                     if v.read_only {
-                        self.remove_from_writable(v.id);
+                        removed.push(v.id);
                         self.readonly_volumes.insert(v.id, true);
                         return;
                     } else {
@@ -146,11 +145,15 @@ impl VolumeLayout {
                     }
                 }
                 None => {
-                    self.remove_from_writable(v.id);
+                    removed.push(v.id);
                     self.readonly_volumes.remove(&v.id);
                     return;
                 }
             }
+        }
+
+        for vid in removed {
+            self.remove_from_writable(vid);
         }
 
         self.remember_oversized_volume(v);
@@ -235,26 +238,5 @@ impl VolumeLayout {
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         self.locations.get(&vid).cloned()
-    }
-}
-
-#[derive(Clone)]
-pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
-
-impl VolumeLayoutRef {
-    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> Self {
-        Self(Arc::new(RwLock::new(VolumeLayout::new(
-            rp,
-            ttl,
-            volume_size_limit,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, VolumeLayout> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, VolumeLayout> {
-        self.0.write().await
     }
 }
