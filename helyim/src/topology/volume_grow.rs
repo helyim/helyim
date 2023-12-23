@@ -127,7 +127,7 @@ impl VolumeGrowth {
             topology
                 .write()
                 .await
-                .register_volume_layout(volume_info, dn)
+                .register_volume_layout(&volume_info, dn)
                 .await;
         }
         Ok(())
