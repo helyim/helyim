@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use rand::{self, Rng};
 use serde::Serialize;
-use tokio::sync::RwLock;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
@@ -23,7 +22,7 @@ pub struct VolumeLayout {
 }
 
 impl VolumeLayout {
-    fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
+    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
         VolumeLayout {
             rp,
             ttl,
@@ -235,26 +234,5 @@ impl VolumeLayout {
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         self.locations.get(&vid).cloned()
-    }
-}
-
-#[derive(Clone)]
-pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
-
-impl VolumeLayoutRef {
-    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> Self {
-        Self(Arc::new(RwLock::new(VolumeLayout::new(
-            rp,
-            ttl,
-            volume_size_limit,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, VolumeLayout> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, VolumeLayout> {
-        self.0.write().await
     }
 }

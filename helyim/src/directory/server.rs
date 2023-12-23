@@ -352,11 +352,7 @@ async fn handle_heartbeat(
     }
 
     for v in deleted_volumes.iter() {
-        topology
-            .write()
-            .await
-            .unregister_volume_layout(v.clone())
-            .await;
+        topology.write().await.unregister_volume_layout(v.clone());
     }
 
     let leader = topology
