@@ -132,12 +132,12 @@ impl VolumeLayout {
         let locations = self.locations.entry(v.id).or_default();
         VolumeLayout::set_node(locations, dn).await;
 
+        let mut removed = vec![];
         for location in locations.iter() {
-            let volume = location.read().await.get_volume(v.id);
-            match volume {
+            match location.read().await.get_volume(v.id) {
                 Some(v) => {
                     if v.read_only {
-                        self.remove_from_writable(v.id);
+                        removed.push(v.id);
                         self.readonly_volumes.insert(v.id, true);
                         return;
                     } else {
@@ -145,11 +145,15 @@ impl VolumeLayout {
                     }
                 }
                 None => {
-                    self.remove_from_writable(v.id);
+                    removed.push(v.id);
                     self.readonly_volumes.remove(&v.id);
                     return;
                 }
             }
+        }
+
+        for vid in removed {
+            self.remove_from_writable(vid);
         }
 
         self.remember_oversized_volume(v);
