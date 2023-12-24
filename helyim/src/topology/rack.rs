@@ -13,32 +13,23 @@ use tokio::sync::RwLock;
 use crate::{
     errors::Result,
     storage::{VolumeError, VolumeId},
-    topology::{data_center::WeakDataCenterRef, node::Node, DataNodeRef},
+    topology::{data_center::SimpleDataCenter, node::Node, DataNodeRef},
 };
 
 #[derive(Serialize)]
 pub struct Rack {
-    node: Node,
     // children
     #[serde(skip)]
     pub data_nodes: HashMap<FastStr, DataNodeRef>,
-    // parent
-    #[serde(skip)]
-    pub data_center: WeakDataCenterRef,
+    pub inner: Arc<SimpleRack>,
 }
 
 impl Rack {
     pub fn new(id: FastStr) -> Rack {
-        let node = Node::new(id);
         Self {
-            node,
+            inner: Arc::new(SimpleRack::new(id)),
             data_nodes: HashMap::new(),
-            data_center: WeakDataCenterRef::new(),
         }
-    }
-
-    pub fn set_data_center(&mut self, data_center: WeakDataCenterRef) {
-        self.data_center = data_center;
     }
 
     pub async fn get_or_create_data_node(
@@ -58,13 +49,6 @@ impl Rack {
                 self.data_nodes.insert(id, data_node.clone());
                 Ok(data_node)
             }
-        }
-    }
-
-    pub async fn data_center_id(&self) -> FastStr {
-        match self.data_center.upgrade() {
-            Some(data_center) => data_center.read().await.id.clone(),
-            None => FastStr::empty(),
         }
     }
 
@@ -92,6 +76,10 @@ impl Rack {
 }
 
 impl Rack {
+    pub fn downgrade(&self) -> Weak<SimpleRack> {
+        Arc::downgrade(&self.inner)
+    }
+
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for data_node in self.data_nodes.values() {
@@ -115,15 +103,42 @@ impl Rack {
         }
         free_volumes
     }
+}
+
+#[derive(Serialize)]
+pub struct SimpleRack {
+    node: Node,
+    // parent
+    data_center: Weak<SimpleDataCenter>,
+}
+
+impl SimpleRack {
+    pub fn new(id: FastStr) -> Self {
+        Self {
+            node: Node::new(id),
+            data_center: Weak::new(),
+        }
+    }
+
+    pub fn set_data_center(&self, data_center: Weak<SimpleDataCenter>) {
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).data_center = data_center;
+        }
+    }
+
+    pub async fn data_center_id(&self) -> FastStr {
+        match self.data_center.upgrade() {
+            Some(data_center) => data_center.id.clone(),
+            None => FastStr::empty(),
+        }
+    }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.read()
-                .await
-                .adjust_volume_count(volume_count_delta)
-                .await;
+            dc.adjust_volume_count(volume_count_delta).await;
         }
     }
 
@@ -131,9 +146,7 @@ impl Rack {
         self._adjust_active_volume_count(active_volume_count_delta);
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.read()
-                .await
-                .adjust_active_volume_count(active_volume_count_delta)
+            dc.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
     }
@@ -142,10 +155,7 @@ impl Rack {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.read()
-                .await
-                .adjust_ec_shard_count(ec_shard_count_delta)
-                .await;
+            dc.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
 
@@ -153,10 +163,7 @@ impl Rack {
         self._adjust_max_volume_count(max_volume_count_delta);
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.read()
-                .await
-                .adjust_max_volume_count(max_volume_count_delta)
-                .await;
+            dc.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
 
@@ -164,15 +171,26 @@ impl Rack {
         self._adjust_max_volume_id(vid);
 
         if let Some(dc) = self.data_center.upgrade() {
-            dc.read()
-                .await
-                .adjust_max_volume_id(self.max_volume_id())
-                .await;
+            dc.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for Rack {
+    type Target = Arc<SimpleRack>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for Rack {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Deref for SimpleRack {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
@@ -180,7 +198,7 @@ impl Deref for Rack {
     }
 }
 
-impl DerefMut for Rack {
+impl DerefMut for SimpleRack {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
     }

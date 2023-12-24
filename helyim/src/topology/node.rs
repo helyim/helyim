@@ -1,9 +1,6 @@
 use std::{
     cmp::Ordering as CmpOrdering,
-    sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use faststr::FastStr;
@@ -11,25 +8,25 @@ use serde::{Deserialize, Serialize};
 
 pub type NodeId = FastStr;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
-    volume_count: Arc<AtomicU64>,
-    active_volume_count: Arc<AtomicU64>,
-    ec_shard_count: Arc<AtomicU64>,
-    max_volume_count: Arc<AtomicU64>,
-    max_volume_id: Arc<AtomicU32>,
+    volume_count: AtomicU64,
+    active_volume_count: AtomicU64,
+    ec_shard_count: AtomicU64,
+    max_volume_count: AtomicU64,
+    max_volume_id: AtomicU32,
 }
 
 impl Node {
     pub fn new(id: NodeId) -> Self {
         Self {
             id,
-            volume_count: Arc::new(AtomicU64::new(0)),
-            active_volume_count: Arc::new(AtomicU64::new(0)),
-            ec_shard_count: Arc::new(AtomicU64::new(0)),
-            max_volume_count: Arc::new(AtomicU64::new(0)),
-            max_volume_id: Arc::new(AtomicU32::new(0)),
+            volume_count: AtomicU64::new(0),
+            active_volume_count: AtomicU64::new(0),
+            ec_shard_count: AtomicU64::new(0),
+            max_volume_count: AtomicU64::new(0),
+            max_volume_id: AtomicU32::new(0),
         }
     }
 

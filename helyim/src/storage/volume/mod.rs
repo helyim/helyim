@@ -397,8 +397,8 @@ impl Volume {
             ttl: self.super_block.ttl,
             collection: self.collection.clone(),
             version: self.version(),
-            file_count: self.file_count()? as i64,
-            delete_count: self.deleted_count()? as i64,
+            file_count: self.file_count()?,
+            delete_count: self.deleted_count()?,
             delete_bytes: self.deleted_bytes()?,
             read_only: self.readonly(),
         })

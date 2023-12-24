@@ -27,7 +27,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct Topology {
-    node: Node,
+    inner: Arc<SimpleTopology>,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
@@ -46,7 +46,7 @@ pub struct Topology {
 impl Clone for Topology {
     fn clone(&self) -> Self {
         Self {
-            node: self.node.clone(),
+            inner: self.inner.clone(),
             sequencer: self.sequencer.clone(),
             collections: self.collections.clone(),
             ec_shards: self.ec_shards.clone(),
@@ -60,9 +60,8 @@ impl Clone for Topology {
 
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
-        let node = Node::new(FastStr::new("topo"));
         Topology {
-            node,
+            inner: Arc::new(SimpleTopology::new(FastStr::new("topo"))),
             sequencer,
             collections: HashMap::new(),
             ec_shards: HashMap::new(),
@@ -253,6 +252,9 @@ impl Topology {
 }
 
 impl Topology {
+    pub fn downgrade(&self) -> Weak<SimpleTopology> {
+        Arc::downgrade(&self.inner)
+    }
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for dc in self.data_centers.values() {
@@ -275,6 +277,19 @@ impl Topology {
             free_volumes += dc.read().await.free_volumes().await;
         }
         free_volumes
+    }
+}
+
+#[derive(Serialize)]
+pub struct SimpleTopology {
+    node: Node,
+}
+
+impl SimpleTopology {
+    pub fn new(id: FastStr) -> Self {
+        Self {
+            node: Node::new(id),
+        }
     }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
@@ -299,6 +314,20 @@ impl Topology {
 }
 
 impl Deref for Topology {
+    type Target = Arc<SimpleTopology>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for Topology {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Deref for SimpleTopology {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
@@ -306,16 +335,10 @@ impl Deref for Topology {
     }
 }
 
-impl DerefMut for Topology {
+impl DerefMut for SimpleTopology {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum TopologyError {
-    #[error("Other error: {0}")]
-    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
 }
 
 pub async fn topology_vacuum_loop(

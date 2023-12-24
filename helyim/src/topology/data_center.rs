@@ -11,15 +11,12 @@ use tokio::sync::RwLock;
 
 use crate::{
     storage::{VolumeError, VolumeId},
-    topology::{node::Node, rack::RackRef, topology::WeakTopologyRef, DataNodeRef},
+    topology::{node::Node, rack::RackRef, topology::SimpleTopology, DataNodeRef},
 };
 
 #[derive(Serialize)]
 pub struct DataCenter {
-    node: Node,
-    // parent
-    #[serde(skip)]
-    pub topology: WeakTopologyRef,
+    inner: Arc<SimpleDataCenter>,
     // children
     #[serde(skip)]
     pub racks: HashMap<FastStr, RackRef>,
@@ -27,16 +24,10 @@ pub struct DataCenter {
 
 impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
-        let node = Node::new(id);
         Self {
-            node,
-            topology: WeakTopologyRef::new(),
+            inner: Arc::new(SimpleDataCenter::new(id)),
             racks: HashMap::new(),
         }
-    }
-
-    pub fn set_topology(&mut self, topology: WeakTopologyRef) {
-        self.topology = topology;
     }
 
     pub fn get_or_create_rack(&mut self, id: FastStr) -> RackRef {
@@ -74,6 +65,10 @@ impl DataCenter {
 }
 
 impl DataCenter {
+    pub fn downgrade(&self) -> Weak<SimpleDataCenter> {
+        Arc::downgrade(&self.inner)
+    }
+
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for rack in self.racks.values() {
@@ -97,15 +92,36 @@ impl DataCenter {
         }
         free_volumes
     }
+}
+
+#[derive(Serialize)]
+pub struct SimpleDataCenter {
+    node: Node,
+    // parent
+    #[serde(skip)]
+    pub topology: Weak<SimpleTopology>,
+}
+
+impl SimpleDataCenter {
+    pub fn new(id: FastStr) -> Self {
+        Self {
+            node: Node::new(id),
+            topology: Weak::new(),
+        }
+    }
+
+    pub fn set_topology(&self, topology: Weak<SimpleTopology>) {
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).topology = topology;
+        }
+    }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.read()
-                .await
-                .adjust_volume_count(volume_count_delta)
-                .await;
+            topo.adjust_volume_count(volume_count_delta).await;
         }
     }
 
@@ -113,9 +129,7 @@ impl DataCenter {
         self._adjust_active_volume_count(active_volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.read()
-                .await
-                .adjust_active_volume_count(active_volume_count_delta)
+            topo.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
     }
@@ -124,10 +138,7 @@ impl DataCenter {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.read()
-                .await
-                .adjust_ec_shard_count(ec_shard_count_delta)
-                .await;
+            topo.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
 
@@ -135,10 +146,7 @@ impl DataCenter {
         self._adjust_max_volume_count(max_volume_count_delta);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.read()
-                .await
-                .adjust_max_volume_count(max_volume_count_delta)
-                .await;
+            topo.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
 
@@ -146,15 +154,26 @@ impl DataCenter {
         self._adjust_max_volume_id(vid);
 
         if let Some(topo) = self.topology.upgrade() {
-            topo.read()
-                .await
-                .adjust_max_volume_id(self.max_volume_id())
-                .await;
+            topo.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for DataCenter {
+    type Target = Arc<SimpleDataCenter>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for DataCenter {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Deref for SimpleDataCenter {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
@@ -162,7 +181,7 @@ impl Deref for DataCenter {
     }
 }
 
-impl DerefMut for DataCenter {
+impl DerefMut for SimpleDataCenter {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
     }

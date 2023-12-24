@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{atomic::AtomicU64, Arc, Weak},
 };
 
 use faststr::FastStr;
@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use crate::{
     errors::{Error, Result},
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
-    topology::{node::Node, rack::WeakRackRef},
+    topology::{node::Node, rack::SimpleRack},
 };
 
 #[derive(Serialize)]
@@ -28,9 +28,7 @@ pub struct DataNode {
     pub port: u16,
     pub public_url: FastStr,
     pub last_seen: i64,
-    node: Node,
-    #[serde(skip)]
-    pub rack: WeakRackRef,
+    inner: Arc<SimpleDataNode>,
     volumes: HashMap<VolumeId, VolumeInfo>,
     pub ec_shards: HashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
@@ -57,16 +55,12 @@ impl DataNode {
             .await
             .map_err(|err| Error::String(err.to_string()))?;
 
-        let node = Node::new(id);
-        node.set_max_volume_count(max_volume_count);
-
         Ok(DataNode {
             ip,
             port,
             public_url,
             last_seen: 0,
-            node,
-            rack: WeakRackRef::new(),
+            inner: Arc::new(SimpleDataNode::new(id, max_volume_count)),
             volumes: HashMap::new(),
             ec_shards: HashMap::new(),
             ec_shard_count: AtomicU64::new(0),
@@ -129,22 +123,6 @@ impl DataNode {
         self.volumes.get(&vid)
     }
 
-    pub async fn rack_id(&self) -> FastStr {
-        match self.rack.upgrade() {
-            Some(rack) => rack.read().await.id.clone(),
-            None => FastStr::empty(),
-        }
-    }
-    pub async fn data_center_id(&self) -> FastStr {
-        match self.rack.upgrade() {
-            Some(rack) => rack.read().await.data_center_id().await,
-            None => FastStr::empty(),
-        }
-    }
-    pub fn set_rack(&mut self, rack: WeakRackRef) {
-        self.rack = rack;
-    }
-
     pub async fn allocate_volume(
         &mut self,
         request: AllocateVolumeRequest,
@@ -186,7 +164,43 @@ impl DataNode {
     }
 }
 
-impl DataNode {
+#[derive(Serialize)]
+pub struct SimpleDataNode {
+    node: Node,
+    rack: Weak<SimpleRack>,
+}
+
+impl SimpleDataNode {
+    pub fn new(id: FastStr, max_volume_count: u64) -> Self {
+        let node = Node::new(id);
+        node.set_max_volume_count(max_volume_count);
+        Self {
+            node,
+            rack: Weak::new(),
+        }
+    }
+
+    pub async fn rack_id(&self) -> FastStr {
+        match self.rack.upgrade() {
+            Some(rack) => rack.id.clone(),
+            None => FastStr::empty(),
+        }
+    }
+
+    pub async fn data_center_id(&self) -> FastStr {
+        match self.rack.upgrade() {
+            Some(rack) => rack.data_center_id().await,
+            None => FastStr::empty(),
+        }
+    }
+
+    pub fn set_rack(&self, rack: Weak<SimpleRack>) {
+        unsafe {
+            let this = self as *const Self as *mut Self;
+            (*this).rack = rack;
+        }
+    }
+
     pub fn free_volumes(&self) -> u64 {
         self.max_volume_count() - self.volume_count()
     }
@@ -203,10 +217,7 @@ impl DataNode {
         self._adjust_volume_count(volume_count_delta);
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_volume_count(volume_count_delta)
-                .await;
+            rack.adjust_volume_count(volume_count_delta).await;
         }
     }
 
@@ -214,9 +225,7 @@ impl DataNode {
         self._adjust_active_volume_count(active_volume_count_delta);
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_active_volume_count(active_volume_count_delta)
+            rack.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
     }
@@ -225,10 +234,7 @@ impl DataNode {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_ec_shard_count(ec_shard_count_delta)
-                .await;
+            rack.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
 
@@ -236,10 +242,7 @@ impl DataNode {
         self._adjust_max_volume_count(max_volume_count_delta);
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_max_volume_count(max_volume_count_delta)
-                .await;
+            rack.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
 
@@ -247,15 +250,26 @@ impl DataNode {
         self._adjust_max_volume_id(vid);
 
         if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_max_volume_id(self.max_volume_id())
-                .await;
+            rack.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for DataNode {
+    type Target = Arc<SimpleDataNode>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for DataNode {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Deref for SimpleDataNode {
     type Target = Node;
 
     fn deref(&self) -> &Self::Target {
@@ -263,7 +277,7 @@ impl Deref for DataNode {
     }
 }
 
-impl DerefMut for DataNode {
+impl DerefMut for SimpleDataNode {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
     }
