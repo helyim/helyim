@@ -27,7 +27,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct Topology {
-    inner: Arc<SimpleTopology>,
+    inner: SimpleTopology,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: HashMap<FastStr, Collection>,
@@ -61,7 +61,7 @@ impl Clone for Topology {
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
         Topology {
-            inner: Arc::new(SimpleTopology::new(FastStr::new("topo"))),
+            inner: SimpleTopology::new(FastStr::new("topo")),
             sequencer,
             collections: HashMap::new(),
             ec_shards: HashMap::new(),
@@ -247,9 +247,10 @@ impl Topology {
 }
 
 impl Topology {
-    pub fn downgrade(&self) -> Weak<SimpleTopology> {
-        Arc::downgrade(&self.inner)
+    pub fn to_simple(&self) -> SimpleTopology {
+        self.inner.clone()
     }
+
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for dc in self.data_centers.values() {
@@ -275,15 +276,15 @@ impl Topology {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct SimpleTopology {
-    node: Node,
+    node: Arc<Node>,
 }
 
 impl SimpleTopology {
     pub fn new(id: FastStr) -> Self {
         Self {
-            node: Node::new(id),
+            node: Arc::new(Node::new(id)),
         }
     }
 
@@ -309,7 +310,7 @@ impl SimpleTopology {
 }
 
 impl Deref for Topology {
-    type Target = Arc<SimpleTopology>;
+    type Target = SimpleTopology;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -323,7 +324,7 @@ impl DerefMut for Topology {
 }
 
 impl Deref for SimpleTopology {
-    type Target = Node;
+    type Target = Arc<Node>;
 
     fn deref(&self) -> &Self::Target {
         &self.node

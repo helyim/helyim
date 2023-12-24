@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
 use faststr::FastStr;
@@ -20,13 +20,13 @@ pub struct Rack {
     // children
     #[serde(skip)]
     pub data_nodes: HashMap<FastStr, DataNodeRef>,
-    pub inner: Arc<SimpleRack>,
+    pub inner: SimpleRack,
 }
 
 impl Rack {
     pub fn new(id: FastStr) -> Rack {
         Self {
-            inner: Arc::new(SimpleRack::new(id)),
+            inner: SimpleRack::new(id),
             data_nodes: HashMap::new(),
         }
     }
@@ -75,8 +75,8 @@ impl Rack {
 }
 
 impl Rack {
-    pub fn downgrade(&self) -> Weak<SimpleRack> {
-        Arc::downgrade(&self.inner)
+    pub fn to_simple(&self) -> SimpleRack {
+        self.inner.clone()
     }
 
     pub async fn volume_count(&self) -> u64 {
@@ -104,30 +104,27 @@ impl Rack {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct SimpleRack {
-    node: Node,
+    node: Arc<Node>,
     // parent
-    data_center: Weak<SimpleDataCenter>,
+    data_center: Option<SimpleDataCenter>,
 }
 
 impl SimpleRack {
     pub fn new(id: FastStr) -> Self {
         Self {
-            node: Node::new(id),
-            data_center: Weak::new(),
+            node: Arc::new(Node::new(id)),
+            data_center: None,
         }
     }
 
-    pub fn set_data_center(&self, data_center: Weak<SimpleDataCenter>) {
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).data_center = data_center;
-        }
+    pub fn set_data_center(&mut self, data_center: SimpleDataCenter) {
+        self.data_center = Some(data_center);
     }
 
     pub async fn data_center_id(&self) -> FastStr {
-        match self.data_center.upgrade() {
+        match self.data_center.as_ref() {
             Some(data_center) => data_center.id.clone(),
             None => FastStr::empty(),
         }
@@ -136,7 +133,7 @@ impl SimpleRack {
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
-        if let Some(dc) = self.data_center.upgrade() {
+        if let Some(dc) = self.data_center.as_ref() {
             dc.adjust_volume_count(volume_count_delta).await;
         }
     }
@@ -144,7 +141,7 @@ impl SimpleRack {
     pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
 
-        if let Some(dc) = self.data_center.upgrade() {
+        if let Some(dc) = self.data_center.as_ref() {
             dc.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
@@ -153,7 +150,7 @@ impl SimpleRack {
     pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
-        if let Some(dc) = self.data_center.upgrade() {
+        if let Some(dc) = self.data_center.as_ref() {
             dc.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
@@ -161,7 +158,7 @@ impl SimpleRack {
     pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
 
-        if let Some(dc) = self.data_center.upgrade() {
+        if let Some(dc) = self.data_center.as_ref() {
             dc.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
@@ -169,14 +166,14 @@ impl SimpleRack {
     pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
-        if let Some(dc) = self.data_center.upgrade() {
+        if let Some(dc) = self.data_center.as_ref() {
             dc.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for Rack {
-    type Target = Arc<SimpleRack>;
+    type Target = SimpleRack;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -190,7 +187,7 @@ impl DerefMut for Rack {
 }
 
 impl Deref for SimpleRack {
-    type Target = Node;
+    type Target = Arc<Node>;
 
     fn deref(&self) -> &Self::Target {
         &self.node

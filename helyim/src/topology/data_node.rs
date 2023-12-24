@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{atomic::AtomicU64, Arc, Weak},
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use faststr::FastStr;
@@ -28,7 +28,7 @@ pub struct DataNode {
     pub port: u16,
     pub public_url: FastStr,
     pub last_seen: i64,
-    inner: Arc<SimpleDataNode>,
+    inner: SimpleDataNode,
     volumes: HashMap<VolumeId, VolumeInfo>,
     pub ec_shards: HashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
@@ -60,7 +60,7 @@ impl DataNode {
             port,
             public_url,
             last_seen: 0,
-            inner: Arc::new(SimpleDataNode::new(id, max_volume_count)),
+            inner: SimpleDataNode::new(id, max_volume_count),
             volumes: HashMap::new(),
             ec_shards: HashMap::new(),
             ec_shard_count: AtomicU64::new(0),
@@ -164,41 +164,35 @@ impl DataNode {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct SimpleDataNode {
-    node: Node,
-    rack: Weak<SimpleRack>,
+    node: Arc<Node>,
+    rack: Option<SimpleRack>,
 }
 
 impl SimpleDataNode {
     pub fn new(id: FastStr, max_volume_count: u64) -> Self {
-        let node = Node::new(id);
+        let node = Arc::new(Node::new(id));
         node.set_max_volume_count(max_volume_count);
-        Self {
-            node,
-            rack: Weak::new(),
-        }
+        Self { node, rack: None }
     }
 
     pub async fn rack_id(&self) -> FastStr {
-        match self.rack.upgrade() {
+        match self.rack.as_ref() {
             Some(rack) => rack.id.clone(),
             None => FastStr::empty(),
         }
     }
 
     pub async fn data_center_id(&self) -> FastStr {
-        match self.rack.upgrade() {
+        match self.rack.as_ref() {
             Some(rack) => rack.data_center_id().await,
             None => FastStr::empty(),
         }
     }
 
-    pub fn set_rack(&self, rack: Weak<SimpleRack>) {
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).rack = rack;
-        }
+    pub fn set_rack(&mut self, rack: SimpleRack) {
+        self.rack = Some(rack);
     }
 
     pub fn free_volumes(&self) -> u64 {
@@ -216,7 +210,7 @@ impl SimpleDataNode {
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
+        if let Some(rack) = self.rack.as_ref() {
             rack.adjust_volume_count(volume_count_delta).await;
         }
     }
@@ -224,7 +218,7 @@ impl SimpleDataNode {
     pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
+        if let Some(rack) = self.rack.as_ref() {
             rack.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
@@ -233,7 +227,7 @@ impl SimpleDataNode {
     pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
+        if let Some(rack) = self.rack.as_ref() {
             rack.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
@@ -241,7 +235,7 @@ impl SimpleDataNode {
     pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
+        if let Some(rack) = self.rack.as_ref() {
             rack.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
@@ -249,14 +243,14 @@ impl SimpleDataNode {
     pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
-        if let Some(rack) = self.rack.upgrade() {
+        if let Some(rack) = self.rack.as_ref() {
             rack.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for DataNode {
-    type Target = Arc<SimpleDataNode>;
+    type Target = SimpleDataNode;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -270,7 +264,7 @@ impl DerefMut for DataNode {
 }
 
 impl Deref for SimpleDataNode {
-    type Target = Node;
+    type Target = Arc<Node>;
 
     fn deref(&self) -> &Self::Target {
         &self.node

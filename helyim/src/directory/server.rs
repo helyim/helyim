@@ -310,14 +310,14 @@ async fn handle_heartbeat(
     let rack = get_or_default(heartbeat.rack);
 
     let mut topology = topology.write().await;
-    let weak_topo = (*topology).downgrade();
+    let simple_topo = topology.to_simple();
 
     let data_center = topology.get_or_create_data_center(data_center).await;
-    data_center.set_topology(weak_topo);
-    let weak_dc = data_center.downgrade();
+    let simple_dc = data_center.to_simple();
+    data_center.set_topology(simple_topo);
 
     let rack = data_center.get_or_create_rack(rack);
-    rack.set_data_center(weak_dc);
+    rack.set_data_center(simple_dc);
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
@@ -329,7 +329,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as u64,
         )
         .await?;
-    node.write().await.set_rack(rack.downgrade());
+    node.write().await.set_rack(rack.to_simple());
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {

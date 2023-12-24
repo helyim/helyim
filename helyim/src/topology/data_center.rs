@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
 use faststr::FastStr;
@@ -15,7 +15,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct DataCenter {
-    inner: Arc<SimpleDataCenter>,
+    inner: SimpleDataCenter,
     // children
     #[serde(skip)]
     pub racks: HashMap<FastStr, Rack>,
@@ -24,7 +24,7 @@ pub struct DataCenter {
 impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
         Self {
-            inner: Arc::new(SimpleDataCenter::new(id)),
+            inner: SimpleDataCenter::new(id),
             racks: HashMap::new(),
         }
     }
@@ -59,8 +59,8 @@ impl DataCenter {
 }
 
 impl DataCenter {
-    pub fn downgrade(&self) -> Weak<SimpleDataCenter> {
-        Arc::downgrade(&self.inner)
+    pub fn to_simple(&self) -> SimpleDataCenter {
+        self.inner.clone()
     }
 
     pub async fn volume_count(&self) -> u64 {
@@ -88,33 +88,30 @@ impl DataCenter {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct SimpleDataCenter {
-    node: Node,
+    node: Arc<Node>,
     // parent
     #[serde(skip)]
-    pub topology: Weak<SimpleTopology>,
+    pub topology: Option<SimpleTopology>,
 }
 
 impl SimpleDataCenter {
     pub fn new(id: FastStr) -> Self {
         Self {
-            node: Node::new(id),
-            topology: Weak::new(),
+            node: Arc::new(Node::new(id)),
+            topology: None,
         }
     }
 
-    pub fn set_topology(&self, topology: Weak<SimpleTopology>) {
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).topology = topology;
-        }
+    pub fn set_topology(&mut self, topology: SimpleTopology) {
+        self.topology = Some(topology);
     }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
-        if let Some(topo) = self.topology.upgrade() {
+        if let Some(topo) = self.topology.as_ref() {
             topo.adjust_volume_count(volume_count_delta).await;
         }
     }
@@ -122,7 +119,7 @@ impl SimpleDataCenter {
     pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
 
-        if let Some(topo) = self.topology.upgrade() {
+        if let Some(topo) = self.topology.as_ref() {
             topo.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
@@ -131,7 +128,7 @@ impl SimpleDataCenter {
     pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
-        if let Some(topo) = self.topology.upgrade() {
+        if let Some(topo) = self.topology.as_ref() {
             topo.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
@@ -139,7 +136,7 @@ impl SimpleDataCenter {
     pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
 
-        if let Some(topo) = self.topology.upgrade() {
+        if let Some(topo) = self.topology.as_ref() {
             topo.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
@@ -147,14 +144,14 @@ impl SimpleDataCenter {
     pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
-        if let Some(topo) = self.topology.upgrade() {
+        if let Some(topo) = self.topology.as_ref() {
             topo.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
 
 impl Deref for DataCenter {
-    type Target = Arc<SimpleDataCenter>;
+    type Target = SimpleDataCenter;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -168,7 +165,7 @@ impl DerefMut for DataCenter {
 }
 
 impl Deref for SimpleDataCenter {
-    type Target = Node;
+    type Target = Arc<Node>;
 
     fn deref(&self) -> &Self::Target {
         &self.node
