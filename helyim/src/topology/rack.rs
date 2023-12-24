@@ -8,7 +8,6 @@ use std::{
 use faststr::FastStr;
 use rand::Rng;
 use serde::Serialize;
-use tokio::sync::RwLock;
 
 use crate::{
     errors::Result,
@@ -201,45 +200,5 @@ impl Deref for SimpleRack {
 impl DerefMut for SimpleRack {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.node
-    }
-}
-
-#[derive(Clone)]
-pub struct RackRef(Arc<RwLock<Rack>>);
-
-impl RackRef {
-    pub fn new(id: FastStr) -> Self {
-        Self(Arc::new(RwLock::new(Rack::new(id))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Rack> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Rack> {
-        self.0.write().await
-    }
-
-    pub fn downgrade(&self) -> WeakRackRef {
-        WeakRackRef(Arc::downgrade(&self.0))
-    }
-}
-
-#[derive(Clone)]
-pub struct WeakRackRef(Weak<RwLock<Rack>>);
-
-impl Default for WeakRackRef {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WeakRackRef {
-    pub fn new() -> Self {
-        Self(Weak::new())
-    }
-
-    pub fn upgrade(&self) -> Option<RackRef> {
-        self.0.upgrade().map(RackRef)
     }
 }

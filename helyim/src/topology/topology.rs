@@ -20,7 +20,7 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
+        collection::Collection, data_center::DataCenter, erasure_coding::EcShardLocations,
         node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout, DataNodeRef,
     },
 };
@@ -37,7 +37,7 @@ pub struct Topology {
     volume_size_limit: u64,
     // children
     #[serde(skip)]
-    pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
+    pub(crate) data_centers: HashMap<FastStr, DataCenter>,
 
     #[serde(skip)]
     raft: Option<RaftServer>,
@@ -72,15 +72,10 @@ impl Topology {
         }
     }
 
-    pub async fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
-        match self.data_centers.get(&name) {
-            Some(data_node) => data_node.clone(),
-            None => {
-                let data_center = DataCenterRef::new(name.clone());
-                self.data_centers.insert(name, data_center.clone());
-                data_center
-            }
-        }
+    pub async fn get_or_create_data_center(&mut self, name: FastStr) -> &mut DataCenter {
+        self.data_centers
+            .entry(name.clone())
+            .or_insert_with(|| DataCenter::new(name))
     }
 
     pub async fn lookup(
@@ -258,7 +253,7 @@ impl Topology {
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for dc in self.data_centers.values() {
-            count += dc.read().await.volume_count().await;
+            count += dc.volume_count().await;
         }
         count
     }
@@ -266,7 +261,7 @@ impl Topology {
     pub async fn max_volume_count(&self) -> u64 {
         let mut max_volumes = 0;
         for dc in self.data_centers.values() {
-            max_volumes += dc.read().await.max_volume_count().await;
+            max_volumes += dc.max_volume_count().await;
         }
         max_volumes
     }
@@ -274,7 +269,7 @@ impl Topology {
     pub async fn free_volumes(&self) -> u64 {
         let mut free_volumes = 0;
         for dc in self.data_centers.values() {
-            free_volumes += dc.read().await.free_volumes().await;
+            free_volumes += dc.free_volumes().await;
         }
         free_volumes
     }

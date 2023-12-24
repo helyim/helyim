@@ -309,25 +309,18 @@ async fn handle_heartbeat(
     let data_center = get_or_default(heartbeat.data_center);
     let rack = get_or_default(heartbeat.rack);
 
-    let data_center = topology
-        .write()
-        .await
-        .get_or_create_data_center(data_center)
-        .await;
-    data_center
-        .write()
-        .await
-        .set_topology(topology.read().await.downgrade());
+    let mut topology = topology.write().await;
+    let weak_topo = (*topology).downgrade();
 
-    let rack = data_center.write().await.get_or_create_rack(rack);
-    rack.write()
-        .await
-        .set_data_center(data_center.read().await.downgrade());
+    let data_center = topology.get_or_create_data_center(data_center).await;
+    data_center.set_topology(weak_topo);
+    let weak_dc = data_center.downgrade();
+
+    let rack = data_center.get_or_create_rack(rack);
+    rack.set_data_center(weak_dc);
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
-        .write()
-        .await
         .get_or_create_data_node(
             FastStr::new(node_addr),
             FastStr::new(ip),
@@ -336,7 +329,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as u64,
         )
         .await?;
-    node.write().await.set_rack(rack.read().await.downgrade());
+    node.write().await.set_rack(rack.downgrade());
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {
@@ -349,23 +342,14 @@ async fn handle_heartbeat(
     let deleted_volumes = node.write().await.update_volumes(infos.clone()).await;
 
     for v in infos {
-        topology
-            .write()
-            .await
-            .register_volume_layout(&v, node.clone())
-            .await;
+        topology.register_volume_layout(&v, node.clone()).await;
     }
 
     for v in deleted_volumes {
-        topology.write().await.unregister_volume_layout(&v);
+        topology.unregister_volume_layout(&v);
     }
 
-    let leader = topology
-        .read()
-        .await
-        .current_leader_address()
-        .await
-        .unwrap_or_default();
+    let leader = topology.current_leader_address().await.unwrap_or_default();
 
     Ok(HeartbeatResponse {
         volume_size_limit,
