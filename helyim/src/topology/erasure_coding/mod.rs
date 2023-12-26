@@ -104,7 +104,7 @@ impl Topology {
         }
 
         data_node
-            .write()
+            .read()
             .await
             .delta_update_ec_shards(&mut new_shards, &mut deleted_shards)
             .await;

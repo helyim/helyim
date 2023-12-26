@@ -1,10 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{atomic::AtomicU64, Arc},
 };
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use ginepro::LoadBalancedChannel;
 use helyim_proto::{
@@ -31,8 +32,8 @@ pub struct DataNode {
     node: Node,
     #[serde(skip)]
     pub rack: WeakRackRef,
-    volumes: HashMap<VolumeId, VolumeInfo>,
-    pub ec_shards: HashMap<VolumeId, EcVolumeInfo>,
+    volumes: DashMap<VolumeId, VolumeInfo>,
+    pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
     #[serde(skip)]
     client: VolumeServerClient<LoadBalancedChannel>,
@@ -67,8 +68,8 @@ impl DataNode {
             last_seen: 0,
             node,
             rack: WeakRackRef::new(),
-            volumes: HashMap::new(),
-            ec_shards: HashMap::new(),
+            volumes: DashMap::new(),
+            ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
             client: VolumeServerClient::new(channel),
         })
@@ -78,7 +79,7 @@ impl DataNode {
         format!("{}:{}", self.ip, self.port)
     }
 
-    pub async fn update_volumes(&mut self, volume_infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
+    pub async fn update_volumes(&self, volume_infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
         let mut volumes = HashSet::new();
         for info in volume_infos.iter() {
             volumes.insert(info.id);
@@ -87,8 +88,8 @@ impl DataNode {
         let mut deleted_id = vec![];
         let mut deleted = vec![];
 
-        for (id, volume) in self.volumes.iter() {
-            if !volumes.contains(id) {
+        for volume in self.volumes.iter() {
+            if !volumes.contains(volume.key()) {
                 deleted_id.push(volume.id);
 
                 self.adjust_volume_count(-1).await;
@@ -103,7 +104,7 @@ impl DataNode {
         }
 
         for id in deleted_id.iter() {
-            if let Some(volume) = self.volumes.remove(id) {
+            if let Some((_, volume)) = self.volumes.remove(id) {
                 deleted.push(volume);
             }
         }
@@ -112,7 +113,7 @@ impl DataNode {
     }
 
     #[allow(clippy::map_entry)]
-    pub async fn add_or_update_volume(&mut self, v: VolumeInfo) {
+    pub async fn add_or_update_volume(&self, v: VolumeInfo) {
         if self.volumes.contains_key(&v.id) {
             self.volumes.insert(v.id, v);
         } else {
@@ -126,7 +127,7 @@ impl DataNode {
     }
 
     pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
-        self.volumes.get(&vid).cloned()
+        self.volumes.get(&vid).map(|volume| volume.value().clone())
     }
 
     pub async fn rack_id(&self) -> FastStr {
