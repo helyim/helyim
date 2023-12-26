@@ -14,11 +14,13 @@ static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\.ec[0-9][0-9]").unwrap())
 
 impl DiskLocation {
     pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeRef> {
-        self.ec_volumes.get(&vid).cloned()
+        self.ec_volumes
+            .get(&vid)
+            .map(|volume| volume.value().clone())
     }
 
     pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<(), EcVolumeError> {
-        if let Some(volume) = self.ec_volumes.remove(&vid) {
+        if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
             volume.read().await.destroy()?;
         }
         Ok(())

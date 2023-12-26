@@ -57,7 +57,7 @@ pub struct StorageContext {
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in ctx.store.read().await.locations().iter() {
-        for (_, volume) in location.volumes.iter() {
+        for volume in location.volumes.iter() {
             infos.push(volume.get_volume_info()?);
         }
     }

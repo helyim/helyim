@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{fs, path::Path};
 
+use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
 use futures::future::join_all;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
@@ -20,8 +21,8 @@ use crate::{
 pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
-    pub volumes: HashMap<VolumeId, Volume>,
-    pub ec_volumes: HashMap<VolumeId, EcVolumeRef>,
+    pub volumes: DashMap<VolumeId, Volume>,
+    pub ec_volumes: DashMap<VolumeId, EcVolumeRef>,
 }
 
 impl DiskLocation {
@@ -29,8 +30,8 @@ impl DiskLocation {
         DiskLocation {
             directory: FastStr::new(dir),
             max_volume_count,
-            volumes: HashMap::new(),
-            ec_volumes: HashMap::new(),
+            volumes: DashMap::new(),
+            ec_volumes: DashMap::new(),
         }
     }
 
@@ -81,16 +82,16 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub fn add_volume(&mut self, vid: VolumeId, volume: Volume) {
+    pub fn add_volume(&self, vid: VolumeId, volume: Volume) {
         self.volumes.insert(vid, volume);
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<&Volume> {
+    pub fn get_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, Volume>> {
         self.volumes.get(&vid)
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
-        if let Some(v) = self.volumes.remove(&vid) {
+    pub async fn delete_volume(&self, vid: VolumeId) -> Result<(), VolumeError> {
+        if let Some((vid, v)) = self.volumes.remove(&vid) {
             v.destroy()?;
             info!(
                 "remove volume {vid} success, where disk location is {}",

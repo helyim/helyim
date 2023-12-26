@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use futures::channel::mpsc::Sender;
 use helyim_proto::{
@@ -107,7 +108,7 @@ impl Store {
         Ok(self.find_volume(vid).await?.is_some())
     }
 
-    pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<&Volume>> {
+    pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<Ref<VolumeId, Volume>>> {
         for location in self.locations.iter() {
             let volume = location.get_volume(vid);
             if volume.is_some() {
@@ -235,15 +236,16 @@ impl Store {
         Ok(())
     }
 
-    pub async fn collect_heartbeat(&mut self) -> Result<HeartbeatRequest> {
+    pub async fn collect_heartbeat(&self) -> Result<HeartbeatRequest> {
         let mut heartbeat = HeartbeatRequest::default();
 
         let mut max_file_key: u64 = 0;
         let mut max_volume_count = 0;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             let mut deleted_vids = Vec::new();
             max_volume_count += location.max_volume_count;
-            for (vid, volume) in location.volumes.iter() {
+            for volume in location.volumes.iter() {
+                let vid = volume.key();
                 let volume_max_file_key = volume.max_file_key()?;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
