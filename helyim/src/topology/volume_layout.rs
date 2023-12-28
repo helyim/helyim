@@ -10,18 +10,18 @@ use crate::{
     topology::{data_node::DataNodeRef, volume_grow::VolumeGrowOption},
 };
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 pub struct VolumeLayout {
     rp: ReplicaPlacement,
     ttl: Option<Ttl>,
     volume_size_limit: u64,
 
     #[serde(skip)]
-    writable_volumes: Arc<RwLock<Vec<VolumeId>>>,
-    pub readonly_volumes: Arc<DashMap<VolumeId, bool>>,
-    oversize_volumes: Arc<DashMap<VolumeId, bool>>,
+    writable_volumes: RwLock<Vec<VolumeId>>,
+    pub readonly_volumes: DashMap<VolumeId, bool>,
+    oversize_volumes: DashMap<VolumeId, bool>,
     #[serde(skip)]
-    pub locations: Arc<DashMap<VolumeId, Vec<DataNodeRef>>>,
+    pub locations: DashMap<VolumeId, Vec<DataNodeRef>>,
 }
 
 impl VolumeLayout {
@@ -30,10 +30,10 @@ impl VolumeLayout {
             rp,
             ttl,
             volume_size_limit,
-            writable_volumes: Arc::new(RwLock::new(Vec::new())),
-            readonly_volumes: Arc::new(DashMap::new()),
-            oversize_volumes: Arc::new(DashMap::new()),
-            locations: Arc::new(DashMap::new()),
+            writable_volumes: RwLock::new(Vec::new()),
+            readonly_volumes: DashMap::new(),
+            oversize_volumes: DashMap::new(),
+            locations: DashMap::new(),
         }
     }
 
