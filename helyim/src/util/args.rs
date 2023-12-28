@@ -7,8 +7,6 @@ use crate::raft::types::NodeId;
 #[command(name = "helyim")]
 #[command(author, version, about, long_about = None)]
 pub struct Opts {
-    #[arg(long, default_value("0.0.0.0"))]
-    pub host: FastStr,
     #[command(flatten)]
     pub log: LogOptions,
     #[command(subcommand)]

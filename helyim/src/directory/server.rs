@@ -28,11 +28,10 @@ use crate::{
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
-    util::{args::MasterOptions, exit, get_or_default, http::default_handler},
+    util::{args::MasterOptions, exit, get_or_default, grpc::grpc_port, http::default_handler},
 };
 
 pub struct DirectoryServer {
-    pub host: FastStr,
     pub options: Arc<MasterOptions>,
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
@@ -43,7 +42,6 @@ pub struct DirectoryServer {
 
 impl DirectoryServer {
     pub async fn new(
-        host: &str,
         options: MasterOptions,
         garbage_threshold: f64,
         sequencer: Sequencer,
@@ -67,7 +65,6 @@ impl DirectoryServer {
         ));
 
         let master = DirectoryServer {
-            host: FastStr::new(host),
             options: master_opts,
             garbage_threshold,
             volume_grow: Arc::new(VolumeGrowth),
@@ -75,7 +72,7 @@ impl DirectoryServer {
             shutdown,
         };
 
-        let addr = format!("{}:{}", host, master.options.port + 1).parse()?;
+        let addr = format!("{}:{}", master.options.ip, grpc_port(master.options.port)).parse()?;
         rt_spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
@@ -118,7 +115,7 @@ impl DirectoryServer {
             volume_grow: self.volume_grow.clone(),
             options: self.options.clone(),
         };
-        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
+        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 

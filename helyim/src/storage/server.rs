@@ -7,9 +7,7 @@ use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
-use ginepro::LoadBalancedChannel;
 use helyim_proto::{
-    helyim_client::HelyimClient,
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
@@ -49,13 +47,12 @@ use crate::{
         args::VolumeOptions,
         exit,
         file::file_exists,
+        grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
-        parser::parse_host_port,
     },
 };
 
 pub struct VolumeServer {
-    host: FastStr,
     pub options: Arc<VolumeOptions>,
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
@@ -68,7 +65,6 @@ pub struct VolumeServer {
 
 impl VolumeServer {
     pub async fn new(
-        host: &str,
         public_url: &str,
         folders: Vec<String>,
         max_counts: Vec<i64>,
@@ -88,10 +84,9 @@ impl VolumeServer {
         )
         .await?;
 
-        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
+        let addr = format!("{}:{}", volume_opts.ip, grpc_port(volume_opts.port)).parse()?;
 
         let storage = VolumeServer {
-            host: FastStr::new(host),
             options: Arc::new(volume_opts),
             needle_map_type,
             read_redirect,
@@ -133,14 +128,12 @@ impl VolumeServer {
         let pulse_seconds = self.options.pulse_seconds;
 
         self.update_masters().await?;
-        let client = create_helyim_client(&self.current_master).await?;
 
         let ctx = StorageContext {
             store,
             needle_map_type,
             read_redirect,
             pulse_seconds,
-            client: client.clone(),
             looker: Arc::new(Looker::new()),
         };
 
@@ -152,7 +145,7 @@ impl VolumeServer {
         ));
 
         // http server
-        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
+        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
 
         rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
@@ -169,16 +162,6 @@ impl VolumeServer {
 
         Ok(())
     }
-}
-
-async fn create_helyim_client(
-    master: &str,
-) -> StdResult<HelyimClient<LoadBalancedChannel>, VolumeError> {
-    let channel = LoadBalancedChannel::builder(parse_host_port(master)?)
-        .channel()
-        .await
-        .map_err(|err| VolumeError::Box(err.into()))?;
-    Ok(HelyimClient::new(channel))
 }
 
 impl VolumeServer {
@@ -256,7 +239,7 @@ impl VolumeServer {
             }
         };
 
-        let mut client = create_helyim_client(master).await?;
+        let client = helyim_client(master)?;
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();

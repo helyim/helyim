@@ -1,15 +1,13 @@
 use std::time::Duration;
 
 use faststr::FastStr;
-use ginepro::LoadBalancedChannel;
 use helyim_proto::{
-    helyim_client::HelyimClient, lookup_volume_response::VolumeLocation, LookupVolumeRequest,
-    LookupVolumeResponse,
+    lookup_volume_response::VolumeLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
 use moka::sync::{Cache, CacheBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::Result, storage::VolumeId};
+use crate::{errors::Result, storage::VolumeId, util::grpc::helyim_client};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,24 +44,18 @@ impl Looker {
         }
     }
 
-    async fn do_lookup(
-        &self,
-        vids: &[VolumeId],
-        client: &mut HelyimClient<LoadBalancedChannel>,
-    ) -> Result<LookupVolumeResponse> {
+    async fn do_lookup(&self, vids: &[VolumeId], master: &str) -> Result<LookupVolumeResponse> {
         let request = LookupVolumeRequest {
             volumes: vids.iter().map(|vid| vid.to_string()).collect(),
             collection: String::default(),
         };
+
+        let client = helyim_client(master)?;
         let response = client.lookup_volume(request).await?;
         Ok(response.into_inner())
     }
 
-    pub async fn lookup(
-        &self,
-        vids: Vec<VolumeId>,
-        client: &mut HelyimClient<LoadBalancedChannel>,
-    ) -> Result<Vec<VolumeLocation>> {
+    pub async fn lookup(&self, vids: Vec<VolumeId>, master: &str) -> Result<Vec<VolumeLocation>> {
         let mut volume_locations = Vec::with_capacity(vids.len());
         let mut volume_ids = vec![];
         for vid in vids {
@@ -73,7 +65,7 @@ impl Looker {
             }
         }
 
-        match self.do_lookup(&volume_ids, client).await {
+        match self.do_lookup(&volume_ids, master).await {
             Ok(lookup) => {
                 for location in lookup.volume_locations {
                     volume_locations.push(location.clone());

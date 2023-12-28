@@ -7,20 +7,20 @@ use std::{
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use ginepro::LoadBalancedChannel;
 use helyim_proto::{
-    volume_server_client::VolumeServerClient, AllocateVolumeRequest, AllocateVolumeResponse,
-    VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
-    VacuumVolumeCleanupResponse, VacuumVolumeCommitRequest, VacuumVolumeCommitResponse,
-    VacuumVolumeCompactRequest, VacuumVolumeCompactResponse,
+    AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
+    VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
+    VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
+    VacuumVolumeCompactResponse,
 };
 use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::{Error, Result},
+    errors::Result,
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
     topology::{node::Node, rack::WeakRackRef},
+    util::grpc::volume_server_client,
 };
 
 #[derive(Serialize)]
@@ -35,8 +35,6 @@ pub struct DataNode {
     volumes: DashMap<VolumeId, VolumeInfo>,
     pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
-    #[serde(skip)]
-    client: VolumeServerClient<LoadBalancedChannel>,
 }
 
 impl std::fmt::Display for DataNode {
@@ -53,11 +51,6 @@ impl DataNode {
         public_url: FastStr,
         max_volume_count: u64,
     ) -> Result<DataNode> {
-        let channel = LoadBalancedChannel::builder((ip.to_string(), port + 1))
-            .channel()
-            .await
-            .map_err(|err| Error::String(err.to_string()))?;
-
         let node = Node::new(id);
         node.set_max_volume_count(max_volume_count);
 
@@ -71,7 +64,6 @@ impl DataNode {
             volumes: DashMap::new(),
             ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
-            client: VolumeServerClient::new(channel),
         })
     }
 
@@ -150,7 +142,9 @@ impl DataNode {
         &mut self,
         request: AllocateVolumeRequest,
     ) -> StdResult<AllocateVolumeResponse, VolumeError> {
-        let response = self.client.allocate_volume(request).await?;
+        let addr = self.url();
+        let client = volume_server_client(&addr)?;
+        let response = client.allocate_volume(request.clone()).await?;
         Ok(response.into_inner())
     }
 
@@ -158,7 +152,9 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCheckRequest,
     ) -> StdResult<VacuumVolumeCheckResponse, VolumeError> {
-        let response = self.client.vacuum_volume_check(request).await?;
+        let addr = self.url();
+        let client = volume_server_client(&addr)?;
+        let response = client.vacuum_volume_check(request).await?;
         Ok(response.into_inner())
     }
 
@@ -166,7 +162,9 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCompactRequest,
     ) -> StdResult<VacuumVolumeCompactResponse, VolumeError> {
-        let response = self.client.vacuum_volume_compact(request).await?;
+        let addr = self.url();
+        let client = volume_server_client(&addr)?;
+        let response = client.vacuum_volume_compact(request).await?;
         Ok(response.into_inner())
     }
 
@@ -174,7 +172,9 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCommitRequest,
     ) -> StdResult<VacuumVolumeCommitResponse, VolumeError> {
-        let response = self.client.vacuum_volume_commit(request).await?;
+        let addr = self.url();
+        let client = volume_server_client(&addr)?;
+        let response = client.vacuum_volume_commit(request).await?;
         Ok(response.into_inner())
     }
 
@@ -182,7 +182,9 @@ impl DataNode {
         &mut self,
         request: VacuumVolumeCleanupRequest,
     ) -> StdResult<VacuumVolumeCleanupResponse, VolumeError> {
-        let response = self.client.vacuum_volume_cleanup(request).await?;
+        let addr = self.url();
+        let client = volume_server_client(&addr)?;
+        let response = client.vacuum_volume_cleanup(request).await?;
         Ok(response.into_inner())
     }
 }

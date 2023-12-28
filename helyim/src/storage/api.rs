@@ -20,8 +20,6 @@ use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use faststr::FastStr;
 use futures::stream::once;
-use ginepro::LoadBalancedChannel;
-use helyim_proto::helyim_client::HelyimClient;
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
@@ -50,7 +48,6 @@ pub struct StorageContext {
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
     pub pulse_seconds: u64,
-    pub client: HelyimClient<LoadBalancedChannel>,
     pub looker: Arc<Looker>,
 }
 
@@ -157,7 +154,10 @@ async fn replicate_delete(
     }
 
     let params = vec![("type", "replicate")];
-    let mut volume_locations = ctx.looker.lookup(vec![vid], &mut ctx.client).await?;
+    let mut volume_locations = ctx
+        .looker
+        .lookup(vec![vid], &ctx.store.read().await.current_master)
+        .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         async_scoped::TokioScope::scope_and_block(|s| {
@@ -261,7 +261,10 @@ async fn replicate_write(
     let params = vec![("type", "replicate")];
     let data = bincode::serialize(&needle)?;
 
-    let mut volume_locations = ctx.looker.lookup(vec![vid], &mut ctx.client).await?;
+    let mut volume_locations = ctx
+        .looker
+        .lookup(vec![vid], &ctx.store.read().await.current_master)
+        .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         async_scoped::TokioScope::scope_and_block(|s| {

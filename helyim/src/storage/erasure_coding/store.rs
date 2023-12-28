@@ -8,10 +8,7 @@ use std::{
 
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
-use helyim_proto::{
-    helyim_client::HelyimClient, volume_server_client::VolumeServerClient,
-    VolumeEcShardInformationMessage, VolumeEcShardReadRequest,
-};
+use helyim_proto::{VolumeEcShardInformationMessage, VolumeEcShardReadRequest};
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};
 
@@ -26,6 +23,7 @@ use crate::{
         store::Store,
         NeedleId, VolumeId,
     },
+    util::grpc::{helyim_client, volume_server_client},
 };
 
 impl Store {
@@ -147,7 +145,7 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let client = HelyimClient::connect(self.current_master.to_string()).await?;
+        let client = helyim_client(&self.current_master)?;
         // TODO
         Ok(())
     }
@@ -198,7 +196,7 @@ impl Store {
         buf: &mut [u8],
         offset: u64,
     ) -> Result<(usize, bool), EcVolumeError> {
-        let mut client = VolumeServerClient::connect(src_node).await?;
+        let client = volume_server_client(&src_node)?;
         let response = client
             .volume_ec_shard_read(VolumeEcShardReadRequest {
                 volume_id,

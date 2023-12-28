@@ -585,6 +585,8 @@ pub enum VolumeError {
     SerdeJson(#[from] serde_json::Error),
     #[error("Tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
+    #[error("Tonic transport error: {0}")]
+    TonicTransport(#[from] tonic::transport::Error),
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
     #[error("Reqwest error: {0}")]
