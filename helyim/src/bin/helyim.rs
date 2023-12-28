@@ -8,27 +8,16 @@ use tokio::signal;
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
-async fn start_master(
-    host: &str,
-    master_opts: MasterOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut dir = DirectoryServer::new(
-        host,
-        master_opts,
-        0.3,
-        Sequencer::new(SequencerType::Memory)?,
-    )
-    .await?;
+async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let mut dir =
+        DirectoryServer::new(master_opts, 0.3, Sequencer::new(SequencerType::Memory)?).await?;
     dir.start().await?;
     shutdown_signal().await;
     dir.stop().await?;
     Ok(())
 }
 
-async fn start_volume(
-    host: &str,
-    volume_opts: VolumeOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
     let public_url = volume_opts
         .public_url
         .clone()
@@ -52,7 +41,6 @@ async fn start_volume(
         .collect();
 
     let mut server = VolumeServer::new(
-        host,
         &public_url,
         paths,
         max_volumes,
@@ -142,7 +130,7 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
             log_init(level, &log_opts, "master")?;
 
             info!("starting master server....");
-            start_master(&opts.host, master).await
+            start_master(master).await
         }
         Command::Volume(volume) => {
             log_init(
@@ -152,7 +140,7 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             info!("starting volume....");
-            start_volume(&opts.host, volume).await
+            start_volume(volume).await
         }
     }
 }
