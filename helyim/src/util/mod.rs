@@ -5,6 +5,8 @@ pub mod args;
 
 pub mod file;
 
+pub mod grpc;
+
 pub mod http;
 
 #[macro_use]
