@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{atomic::AtomicU64, Arc, Weak},
 };
 
 use dashmap::DashMap;
@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use crate::{
     errors::Result,
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
-    topology::{node::Node, rack::WeakRackRef},
+    topology::{node::Node, rack::Rack},
     util::grpc::volume_server_client,
 };
 
@@ -31,7 +31,7 @@ pub struct DataNode {
     pub last_seen: i64,
     node: Node,
     #[serde(skip)]
-    pub rack: WeakRackRef,
+    pub rack: RwLock<Weak<Rack>>,
     volumes: DashMap<VolumeId, VolumeInfo>,
     pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
@@ -60,7 +60,7 @@ impl DataNode {
             public_url,
             last_seen: 0,
             node,
-            rack: WeakRackRef::new(),
+            rack: RwLock::new(Weak::new()),
             volumes: DashMap::new(),
             ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
@@ -123,23 +123,23 @@ impl DataNode {
     }
 
     pub async fn rack_id(&self) -> FastStr {
-        match self.rack.upgrade() {
-            Some(rack) => rack.read().await.id.clone(),
+        match self.rack.read().await.upgrade() {
+            Some(rack) => rack.id.clone(),
             None => FastStr::empty(),
         }
     }
     pub async fn data_center_id(&self) -> FastStr {
-        match self.rack.upgrade() {
-            Some(rack) => rack.read().await.data_center_id().await,
+        match self.rack.read().await.upgrade() {
+            Some(rack) => rack.data_center_id().await,
             None => FastStr::empty(),
         }
     }
-    pub fn set_rack(&mut self, rack: WeakRackRef) {
-        self.rack = rack;
+    pub async fn set_rack(&self, rack: Weak<Rack>) {
+        *self.rack.write().await = rack;
     }
 
     pub async fn allocate_volume(
-        &mut self,
+        &self,
         request: AllocateVolumeRequest,
     ) -> StdResult<AllocateVolumeResponse, VolumeError> {
         let addr = self.url();
@@ -149,7 +149,7 @@ impl DataNode {
     }
 
     pub async fn vacuum_volume_check(
-        &mut self,
+        &self,
         request: VacuumVolumeCheckRequest,
     ) -> StdResult<VacuumVolumeCheckResponse, VolumeError> {
         let addr = self.url();
@@ -159,7 +159,7 @@ impl DataNode {
     }
 
     pub async fn vacuum_volume_compact(
-        &mut self,
+        &self,
         request: VacuumVolumeCompactRequest,
     ) -> StdResult<VacuumVolumeCompactResponse, VolumeError> {
         let addr = self.url();
@@ -169,7 +169,7 @@ impl DataNode {
     }
 
     pub async fn vacuum_volume_commit(
-        &mut self,
+        &self,
         request: VacuumVolumeCommitRequest,
     ) -> StdResult<VacuumVolumeCommitResponse, VolumeError> {
         let addr = self.url();
@@ -179,7 +179,7 @@ impl DataNode {
     }
 
     pub async fn vacuum_volume_cleanup(
-        &mut self,
+        &self,
         request: VacuumVolumeCleanupRequest,
     ) -> StdResult<VacuumVolumeCleanupResponse, VolumeError> {
         let addr = self.url();
@@ -205,21 +205,16 @@ impl DataNode {
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_volume_count(volume_count_delta)
-                .await;
+        if let Some(rack) = self.rack.read().upgrade() {
+            rack.adjust_volume_count(volume_count_delta).await;
         }
     }
 
     pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_active_volume_count(active_volume_count_delta)
+        if let Some(rack) = self.rack.read().upgrade() {
+            rack.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
     }
@@ -227,33 +222,24 @@ impl DataNode {
     pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_ec_shard_count(ec_shard_count_delta)
-                .await;
+        if let Some(rack) = self.rack.read().upgrade() {
+            rack.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
 
     pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_max_volume_count(max_volume_count_delta)
-                .await;
+        if let Some(rack) = self.rack.read().upgrade() {
+            rack.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
 
     pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
-        if let Some(rack) = self.rack.upgrade() {
-            rack.read()
-                .await
-                .adjust_max_volume_id(self.max_volume_id())
-                .await;
+        if let Some(rack) = self.rack.read().upgrade() {
+            rack.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }
 }
@@ -272,27 +258,4 @@ impl DerefMut for DataNode {
     }
 }
 
-#[derive(Clone)]
-pub struct DataNodeRef(Arc<RwLock<DataNode>>);
-
-impl DataNodeRef {
-    pub async fn new(
-        id: FastStr,
-        ip: FastStr,
-        port: u16,
-        public_url: FastStr,
-        max_volume_count: u64,
-    ) -> Result<Self> {
-        Ok(Self(Arc::new(RwLock::new(
-            DataNode::new(id, ip, port, public_url, max_volume_count).await?,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, DataNode> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, DataNode> {
-        self.0.write().await
-    }
-}
+pub type DataNodeRef = Arc<DataNode>;

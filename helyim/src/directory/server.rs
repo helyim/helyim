@@ -258,9 +258,9 @@ impl Helyim for DirectoryGrpcServer {
             {
                 Some(nodes) => {
                     for dn in nodes.iter() {
-                        let public_url = dn.read().await.public_url.to_string();
+                        let public_url = dn.public_url.to_string();
                         locations.push(Location {
-                            url: dn.read().await.url(),
+                            url: dn.url(),
                             public_url,
                         });
                     }
@@ -314,7 +314,7 @@ async fn handle_heartbeat(
     data_center.write().await.set_topology(topology.downgrade());
 
     let rack = data_center.write().await.get_or_create_rack(rack);
-    rack.write().await.set_data_center(data_center.downgrade());
+    rack.set_data_center(Arc::downgrade(&data_center));
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
@@ -328,7 +328,7 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as u64,
         )
         .await?;
-    node.write().await.set_rack(rack.downgrade());
+    node.set_rack(Arc::downgrade(&rack)).await;
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {
@@ -338,7 +338,7 @@ async fn handle_heartbeat(
         };
     }
 
-    let deleted_volumes = node.write().await.update_volumes(infos.clone()).await;
+    let deleted_volumes = node.update_volumes(infos.clone()).await;
 
     for v in infos {
         topology

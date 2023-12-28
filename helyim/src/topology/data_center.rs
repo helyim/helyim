@@ -54,15 +54,15 @@ impl DataCenter {
         // randomly select one
         let mut free_volumes = 0;
         for (_, rack) in self.racks.iter() {
-            free_volumes += rack.read().await.free_volumes().await;
+            free_volumes += rack.free_volumes().await;
         }
 
         let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for (_, rack) in self.racks.iter() {
-            free_volumes -= rack.read().await.free_volumes().await;
+            free_volumes -= rack.free_volumes().await;
             if free_volumes == idx {
-                return rack.read().await.reserve_one_volume().await;
+                return rack.reserve_one_volume().await;
             }
         }
 
@@ -77,7 +77,7 @@ impl DataCenter {
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
         for rack in self.racks.values() {
-            count += rack.read().await.volume_count().await;
+            count += rack.volume_count().await;
         }
         count
     }
@@ -85,7 +85,7 @@ impl DataCenter {
     pub async fn max_volume_count(&self) -> u64 {
         let mut max_volumes = 0;
         for rack in self.racks.values() {
-            max_volumes += rack.read().await.max_volume_count().await;
+            max_volumes += rack.max_volume_count().await;
         }
         max_volumes
     }
@@ -93,7 +93,7 @@ impl DataCenter {
     pub async fn free_volumes(&self) -> u64 {
         let mut free_volumes = 0;
         for rack in self.racks.values() {
-            free_volumes += rack.read().await.free_volumes().await;
+            free_volumes += rack.free_volumes().await;
         }
         free_volumes
     }

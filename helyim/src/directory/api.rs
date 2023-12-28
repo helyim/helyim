@@ -60,8 +60,8 @@ pub async fn assign_handler(
         .await?;
     let assignment = Assignment {
         fid: fid.to_string(),
-        url: node.read().await.url(),
-        public_url: node.read().await.public_url.clone(),
+        url: node.url(),
+        public_url: node.public_url.clone(),
         count,
         error: String::default(),
     };
@@ -93,8 +93,8 @@ pub async fn lookup_handler(
         Some(nodes) => {
             for dn in nodes.iter() {
                 locations.push(Location {
-                    url: dn.read().await.url(),
-                    public_url: dn.read().await.public_url.clone(),
+                    url: dn.url(),
+                    public_url: dn.public_url.clone(),
                 });
             }
 

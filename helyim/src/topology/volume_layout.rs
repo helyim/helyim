@@ -44,15 +44,11 @@ impl VolumeLayout {
         for vid in self.writable_volumes.iter() {
             if let Some(nodes) = self.locations.get(vid) {
                 for node in nodes.iter() {
-                    if node.read().await.data_center_id().await == option.data_center {
-                        if !option.rack.is_empty()
-                            && node.read().await.rack_id().await != option.rack
-                        {
+                    if node.data_center_id().await == option.data_center {
+                        if !option.rack.is_empty() && node.rack_id().await != option.rack {
                             continue;
                         }
-                        if !option.data_node.is_empty()
-                            && node.read().await.id() != option.data_node
-                        {
+                        if !option.data_node.is_empty() && node.id() != option.data_node {
                             continue;
                         }
                         count += 1;
@@ -89,15 +85,11 @@ impl VolumeLayout {
         for vid in self.writable_volumes.iter() {
             if let Some(locations) = self.locations.get(vid) {
                 for node in locations.iter() {
-                    if node.read().await.data_center_id().await == option.data_center {
-                        if !option.rack.is_empty()
-                            && node.read().await.rack_id().await != option.rack
-                        {
+                    if node.data_center_id().await == option.data_center {
+                        if !option.rack.is_empty() && node.rack_id().await != option.rack {
                             continue;
                         }
-                        if !option.data_node.is_empty()
-                            && node.read().await.id() != option.data_node
-                        {
+                        if !option.data_node.is_empty() && node.id() != option.data_node {
                             continue;
                         }
 
@@ -119,9 +111,7 @@ impl VolumeLayout {
 
     async fn set_node(locations: &mut Vec<DataNodeRef>, dn: DataNodeRef) {
         for location in locations.iter_mut() {
-            if location.read().await.ip == dn.read().await.ip
-                && location.read().await.port == dn.read().await.port
-            {
+            if location.ip == dn.ip && location.port == dn.port {
                 *location = dn.clone();
                 return;
             }
@@ -134,7 +124,7 @@ impl VolumeLayout {
         VolumeLayout::set_node(locations, dn).await;
 
         for location in locations.iter() {
-            let volume = location.read().await.get_volume(v.id);
+            let volume = location.get_volume(v.id);
             match volume {
                 Some(v) => {
                     if v.read_only {
@@ -191,7 +181,7 @@ impl VolumeLayout {
         data_node: &DataNodeRef,
         readonly: bool,
     ) -> bool {
-        if let Some(volume_info) = data_node.read().await.get_volume(vid) {
+        if let Some(volume_info) = data_node.get_volume(vid) {
             if let Some(locations) = self.locations.get_mut(&vid) {
                 VolumeLayout::set_node(locations, data_node.clone()).await;
             }

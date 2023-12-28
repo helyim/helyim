@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
+use dashmap::DashMap;
 
 use faststr::FastStr;
 use helyim_proto::AllocateVolumeRequest;
@@ -50,11 +51,11 @@ impl VolumeGrowth {
         let racks = &main_data_node.read().await.racks;
         let (main_rack, other_racks) = find_main_rack(racks, option, &rp).await?;
         for rack in other_racks {
-            let node = rack.read().await.reserve_one_volume().await?;
+            let node = rack.reserve_one_volume().await?;
             ret.push(node);
         }
 
-        let data_nodes = &main_rack.read().await.data_nodes;
+        let data_nodes = &main_rack.data_nodes;
         let (main_dn, other_nodes) = find_main_node(data_nodes, option, &rp).await?;
 
         ret.push(main_dn);
@@ -99,16 +100,14 @@ impl VolumeGrowth {
         nodes: Vec<DataNodeRef>,
     ) -> Result<(), VolumeError> {
         for dn in nodes {
-            dn.write()
-                .await
-                .allocate_volume(AllocateVolumeRequest {
-                    volumes: vec![vid],
-                    collection: option.collection.to_string(),
-                    replication: option.replica_placement.to_string(),
-                    ttl: option.ttl.to_string(),
-                    preallocate: option.preallocate,
-                })
-                .await?;
+            dn.allocate_volume(AllocateVolumeRequest {
+                volumes: vec![vid],
+                collection: option.collection.to_string(),
+                replication: option.replica_placement.to_string(),
+                ttl: option.ttl.to_string(),
+                preallocate: option.preallocate,
+            })
+            .await?;
 
             let volume_info = VolumeInfo {
                 id: vid,
@@ -120,10 +119,7 @@ impl VolumeGrowth {
                 ..Default::default()
             };
 
-            dn.write()
-                .await
-                .add_or_update_volume(volume_info.clone())
-                .await;
+            dn.add_or_update_volume(volume_info.clone()).await;
             topology
                 .write()
                 .await
@@ -180,8 +176,8 @@ async fn find_main_data_center(
         let mut possible_racks_count = 0;
         for (_, rack) in data_center.read().await.racks.iter() {
             let mut possible_nodes_count = 0;
-            for (_, dn) in rack.read().await.data_nodes.iter() {
-                if dn.read().await.free_volumes() >= 1 {
+            for dn in rack.data_nodes.iter() {
+                if dn.free_volumes() >= 1 {
                     possible_nodes_count += 1;
                 }
             }
@@ -231,19 +227,19 @@ async fn find_main_rack(
     let mut candidates = vec![];
 
     for (_, rack) in racks.iter() {
-        if !option.rack.is_empty() && option.rack != rack.read().await.id {
+        if !option.rack.is_empty() && option.rack != rack.id {
             continue;
         }
-        if rack.read().await.free_volumes().await < rp.same_rack_count as u64 + 1 {
+        if rack.free_volumes().await < rp.same_rack_count as u64 + 1 {
             continue;
         }
-        let data_nodes_len = rack.read().await.data_nodes.len();
+        let data_nodes_len = rack.data_nodes.len();
         if data_nodes_len < rp.same_rack_count as usize + 1 {
             continue;
         }
         let mut possible_nodes = 0;
-        for (_, node) in rack.read().await.data_nodes.iter() {
-            if node.read().await.free_volumes() >= 1 {
+        for node in rack.data_nodes.iter() {
+            if node.free_volumes() >= 1 {
                 possible_nodes += 1;
             }
         }
@@ -261,7 +257,7 @@ async fn find_main_rack(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_rack = candidates[first_idx].clone();
-    debug!("picked main rack: {}", main_rack.read().await.id());
+    debug!("picked main rack: {}", main_rack.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_rack_count as usize);
     candidates.remove(first_idx);
@@ -281,17 +277,18 @@ async fn find_main_rack(
 }
 
 async fn find_main_node(
-    data_nodes: &HashMap<FastStr, DataNodeRef>,
+    data_nodes: &DashMap<FastStr, DataNodeRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(DataNodeRef, Vec<DataNodeRef>), VolumeError> {
     let mut candidates = vec![];
 
-    for (node_id, node) in data_nodes.iter() {
+    for node in data_nodes.iter() {
+        let node_id = node.key();
         if !option.data_node.is_empty() && option.data_node != *node_id {
             continue;
         }
-        if node.read().await.free_volumes() < 1 {
+        if node.free_volumes() < 1 {
             continue;
         }
         candidates.push(node.clone());
@@ -303,7 +300,7 @@ async fn find_main_node(
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();
-    debug!("picked main data node: {}", main_dn.read().await.id());
+    debug!("picked main data node: {}", main_dn.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
     candidates.remove(first_idx);
