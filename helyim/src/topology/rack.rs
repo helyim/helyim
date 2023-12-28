@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{Arc, Weak},
@@ -38,8 +37,8 @@ impl Rack {
         }
     }
 
-    pub fn set_data_center(&self, data_center: Weak<DataCenter>) {
-        *self.data_center.write() = data_center;
+    pub async fn set_data_center(&self, data_center: Weak<DataCenter>) {
+        *self.data_center.write().await = data_center;
     }
 
     pub async fn get_or_create_data_node(
@@ -64,8 +63,8 @@ impl Rack {
     }
 
     pub async fn data_center_id(&self) -> FastStr {
-        match self.data_center.read().upgrade() {
-            Some(data_center) => data_center.read().await.id.clone(),
+        match self.data_center.read().await.upgrade() {
+            Some(data_center) => data_center.id.clone(),
             None => FastStr::empty(),
         }
     }
@@ -96,7 +95,7 @@ impl Rack {
 impl Rack {
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
-        for data_node in self.data_nodes.values() {
+        for data_node in self.data_nodes.iter() {
             count += data_node.volume_count();
         }
         count
@@ -104,7 +103,7 @@ impl Rack {
 
     pub async fn max_volume_count(&self) -> u64 {
         let mut max_volumes = 0;
-        for data_node in self.data_nodes.values() {
+        for data_node in self.data_nodes.iter() {
             max_volumes += data_node.max_volume_count();
         }
         max_volumes
@@ -112,7 +111,7 @@ impl Rack {
 
     pub async fn free_volumes(&self) -> u64 {
         let mut free_volumes = 0;
-        for data_node in self.data_nodes.values() {
+        for data_node in self.data_nodes.iter() {
             free_volumes += data_node.free_volumes();
         }
         free_volumes
@@ -175,37 +174,3 @@ impl DerefMut for Rack {
 }
 
 pub type RackRef = Arc<Rack>;
-
-impl RackRef {
-    pub fn new(id: FastStr) -> Self {
-        Self(Arc::new(RwLock::new(Rack::new(id))))
-    }
-
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Rack> {
-        self.0.write().await
-    }
-
-    pub fn downgrade(&self) -> WeakRackRef {
-        WeakRackRef(Arc::downgrade(&self.0))
-    }
-}
-
-#[derive(Clone)]
-pub struct WeakRackRef(Weak<RwLock<Rack>>);
-
-impl Default for WeakRackRef {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WeakRackRef {
-    pub fn new() -> Self {
-        Self(Weak::new())
-    }
-
-    pub fn upgrade(&self) -> Option<RackRef> {
-        self.0.upgrade().map(RackRef)
-    }
-}

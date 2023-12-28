@@ -37,7 +37,7 @@ impl DiskLocation {
 
     /// concurrent loading volumes
     pub async fn load_existing_volumes(
-        &mut self,
+        &self,
         needle_map_type: NeedleMapType,
     ) -> Result<(), VolumeError> {
         let dir = self.directory.to_string();

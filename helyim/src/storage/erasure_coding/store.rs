@@ -50,8 +50,8 @@ impl Store {
         None
     }
 
-    pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<(), EcVolumeError> {
-        for location in self.locations.iter_mut() {
+    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
+        for location in self.locations.iter() {
             location.destroy_ec_volume(vid).await?;
         }
         Ok(())
@@ -63,7 +63,7 @@ impl Store {
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
                     if let Some(tx) = self.new_ec_shards_tx.as_mut() {
@@ -92,22 +92,21 @@ impl Store {
     }
 
     pub async fn unmount_ec_shards(
-        &mut self,
+        &self,
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
         match self.find_ec_shard(vid, shard_id).await {
             Some(shard) => {
-                for location in self.locations.iter_mut() {
+                for location in self.locations.iter() {
                     if location.unload_ec_shard(vid, shard_id).await {
-                        if let Some(tx) = self.deleted_ec_shards_tx.as_mut() {
+                        if let Some(tx) = self.deleted_ec_shards_tx.as_ref() {
                             let shard_bits = 0;
-                            tx.send(VolumeEcShardInformationMessage {
+                            tx.unbounded_send(VolumeEcShardInformationMessage {
                                 id: vid,
                                 collection: shard.collection.to_string(),
                                 ec_index_bits: add_shard_id(shard_bits, shard_id),
-                            })
-                            .await?;
+                            })?;
                         }
                         break;
                     }
@@ -145,7 +144,7 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let client = helyim_client(&self.current_master)?;
+        let client = helyim_client(&self.current_master.read().await)?;
         // TODO
         Ok(())
     }

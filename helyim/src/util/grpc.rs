@@ -6,7 +6,7 @@ use ginepro::LoadBalancedChannel;
 use helyim_proto::{helyim_client::HelyimClient, volume_server_client::VolumeServerClient};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{storage::VolumeError, util::parser::parse_host_port};
 
@@ -33,27 +33,14 @@ pub fn volume_server_client(
                 let (ip, port) = parse_host_port(addr)?;
                 let grpc_port = grpc_port(port);
 
-                match block_on(async {
-                    let channel = LoadBalancedChannel::builder((ip.clone(), grpc_port))
-                        .channel()
-                        .await
+                let channel =
+                    block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
                         .map_err(|err| VolumeError::Box(err.into()))?;
-                    Ok(VolumeServerClient::new(channel))
-                }) {
-                    Ok(client) => {
-                        info!("create volume server tonic client success, addr: {ip}:{grpc_port}");
-                        // WARN: addr is not the grpc addr
-                        let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
-                        Ok(client)
-                    }
-                    Err(err) => {
-                        error!(
-                            "create volume server tonic client failed, addr: {ip}:{grpc_port}, \
-                             error: {err}"
-                        );
-                        Err(err)
-                    }
-                }
+                let client = VolumeServerClient::new(channel);
+                info!("create volume server tonic client success, addr: {ip}:{grpc_port}");
+                // WARN: addr is not the grpc addr
+                let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
+                Ok(client)
             }
         }
     }
@@ -73,27 +60,14 @@ pub fn helyim_client(addr: &str) -> Result<&mut HelyimClient<LoadBalancedChannel
                 let (ip, port) = parse_host_port(addr)?;
                 let grpc_port = grpc_port(port);
 
-                match block_on(async {
-                    let channel = LoadBalancedChannel::builder((ip.clone(), grpc_port))
-                        .channel()
-                        .await
+                let channel =
+                    block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
                         .map_err(|err| VolumeError::Box(err.into()))?;
-                    Ok(HelyimClient::new(channel))
-                }) {
-                    Ok(client) => {
-                        info!("create helyim tonic client success, addr: {ip}:{grpc_port}");
-                        // WARN: addr is not the grpc addr
-                        let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
-                        Ok(client)
-                    }
-                    Err(err) => {
-                        error!(
-                            "create helyim tonic client failed, addr: {ip}:{grpc_port}, error: \
-                             {err}"
-                        );
-                        Err(err)
-                    }
-                }
+                let client = HelyimClient::new(channel);
+                info!("create helyim tonic client success, addr: {ip}:{grpc_port}");
+                // WARN: addr is not the grpc addr
+                let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
+                Ok(client)
             }
         }
     }

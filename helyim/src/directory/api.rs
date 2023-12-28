@@ -26,7 +26,7 @@ pub async fn assign_handler(
     FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> StdResult<Json<Assignment>, VolumeError> {
     // TODO: support proxyToLeader
-    if !ctx.topology.read().await.is_leader().await {
+    if !ctx.topology.is_leader().await {
         return Err(VolumeError::String(
             "directory server is not the cluster leader.".to_string(),
         ));
@@ -38,26 +38,15 @@ pub async fn assign_handler(
     };
     let option = Arc::new(request.volume_grow_option(&ctx.options.default_replication)?);
 
-    if !ctx
-        .topology
-        .write()
-        .await
-        .has_writable_volume(option.clone())
-        .await
-    {
-        if ctx.topology.read().await.free_volumes().await == 0 {
+    if !ctx.topology.has_writable_volume(option.clone()).await {
+        if ctx.topology.free_volumes().await == 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
             .grow_by_type(option.clone(), ctx.topology.clone())
             .await?;
     }
-    let (fid, count, node) = ctx
-        .topology
-        .write()
-        .await
-        .pick_for_write(count, option)
-        .await?;
+    let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
         url: node.url(),
@@ -82,8 +71,6 @@ pub async fn lookup_handler(
     let mut locations = vec![];
     let data_nodes = ctx
         .topology
-        .write()
-        .await
         .lookup(
             &request.collection.unwrap_or_default(),
             volume_id.parse::<u32>()?,
@@ -110,20 +97,18 @@ pub async fn lookup_handler(
 }
 
 pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
-    let topology = ctx.topology.read().await.topology();
+    let topology = ctx.topology.topology();
     Ok(Json(topology))
 }
 
 pub async fn cluster_status_handler(State(ctx): State<DirectoryContext>) -> Json<ClusterStatus> {
-    let is_leader = ctx.topology.read().await.is_leader().await;
+    let is_leader = ctx.topology.is_leader().await;
     let leader = ctx
         .topology
-        .read()
-        .await
         .current_leader_address()
         .await
         .unwrap_or_default();
-    let peers = ctx.topology.read().await.peers();
+    let peers = ctx.topology.peers().await;
 
     let status = ClusterStatus {
         is_leader,

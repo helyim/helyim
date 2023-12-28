@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
-use dashmap::DashMap;
+use std::sync::Arc;
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use helyim_proto::AllocateVolumeRequest;
 use rand::Rng;
@@ -40,15 +40,15 @@ impl VolumeGrowth {
 
         let mut ret = vec![];
 
-        let data_centers = &topology.read().await.data_centers;
+        let data_centers = &topology.data_centers;
         let (main_data_node, other_centers) =
             find_main_data_center(data_centers, option, &rp).await?;
         for dc in other_centers {
-            let node = dc.read().await.reserve_one_volume().await?;
+            let node = dc.reserve_one_volume().await?;
             ret.push(node);
         }
 
-        let racks = &main_data_node.read().await.racks;
+        let racks = &main_data_node.racks;
         let (main_rack, other_racks) = find_main_rack(racks, option, &rp).await?;
         for rack in other_racks {
             let node = rack.reserve_one_volume().await?;
@@ -73,7 +73,7 @@ impl VolumeGrowth {
     ) -> Result<usize, VolumeError> {
         let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
-        let vid = topology.read().await.next_volume_id().await?;
+        let vid = topology.next_volume_id().await?;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
@@ -120,11 +120,7 @@ impl VolumeGrowth {
             };
 
             dn.add_or_update_volume(volume_info.clone()).await;
-            topology
-                .write()
-                .await
-                .register_volume_layout(volume_info, dn)
-                .await;
+            topology.register_volume_layout(volume_info, dn).await;
         }
         Ok(())
     }
@@ -154,27 +150,27 @@ pub struct VolumeGrowOption {
 }
 
 async fn find_main_data_center(
-    data_centers: &HashMap<FastStr, DataCenterRef>,
+    data_centers: &DashMap<FastStr, DataCenterRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(DataCenterRef, Vec<DataCenterRef>), VolumeError> {
     let mut candidates = vec![];
 
-    for (_, data_center) in data_centers.iter() {
-        if !option.data_center.is_empty() && data_center.read().await.id() != option.data_center {
+    for data_center in data_centers.iter() {
+        if !option.data_center.is_empty() && data_center.id() != option.data_center {
             continue;
         }
-        let racks_len = data_center.read().await.racks.len();
+        let racks_len = data_center.racks.len();
         if racks_len < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_center.read().await.free_volumes().await
+        if data_center.free_volumes().await
             < rp.diff_rack_count as u64 + rp.same_rack_count as u64 + 1
         {
             continue;
         }
         let mut possible_racks_count = 0;
-        for (_, rack) in data_center.read().await.racks.iter() {
+        for rack in data_center.racks.iter() {
             let mut possible_nodes_count = 0;
             for dn in rack.data_nodes.iter() {
                 if dn.free_volumes() >= 1 {
@@ -199,7 +195,7 @@ async fn find_main_data_center(
 
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dc = candidates[first_idx].clone();
-    debug!("picked main data center: {}", main_dc.read().await.id());
+    debug!("picked main data center: {}", main_dc.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.diff_data_center_count as usize);
     candidates.remove(first_idx);
@@ -220,13 +216,13 @@ async fn find_main_data_center(
 }
 
 async fn find_main_rack(
-    racks: &HashMap<FastStr, RackRef>,
+    racks: &DashMap<FastStr, RackRef>,
     option: &VolumeGrowOption,
     rp: &ReplicaPlacement,
 ) -> Result<(RackRef, Vec<RackRef>), VolumeError> {
     let mut candidates = vec![];
 
-    for (_, rack) in racks.iter() {
+    for rack in racks.iter() {
         if !option.rack.is_empty() && option.rack != rack.id {
             continue;
         }

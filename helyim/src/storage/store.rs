@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
-use futures::channel::mpsc::Sender;
+use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::{
     HeartbeatRequest, VolumeEcShardInformationMessage, VolumeInformationMessage,
     VolumeShortInformationMessage,
@@ -34,15 +37,15 @@ pub struct Store {
     pub connected: bool,
 
     // read from master
-    pub volume_size_limit: u64,
+    pub volume_size_limit: AtomicU64,
     pub needle_map_type: NeedleMapType,
 
-    pub new_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
-    pub deleted_volumes_tx: Option<Sender<VolumeShortInformationMessage>>,
-    pub new_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
-    pub deleted_ec_shards_tx: Option<Sender<VolumeEcShardInformationMessage>>,
+    pub new_volumes_tx: Option<UnboundedSender<VolumeShortInformationMessage>>,
+    pub deleted_volumes_tx: Option<UnboundedSender<VolumeShortInformationMessage>>,
+    pub new_ec_shards_tx: Option<UnboundedSender<VolumeEcShardInformationMessage>>,
+    pub deleted_ec_shards_tx: Option<UnboundedSender<VolumeEcShardInformationMessage>>,
 
-    pub current_master: FastStr,
+    pub current_master: RwLock<FastStr>,
 }
 
 unsafe impl Send for Store {}
@@ -60,7 +63,7 @@ impl Store {
     ) -> Result<Store> {
         let mut locations = vec![];
         for i in 0..folders.len() {
-            let mut location = DiskLocation::new(&folders[i], max_counts[i]);
+            let location = DiskLocation::new(&folders[i], max_counts[i]);
             location.load_existing_volumes(needle_map_type).await?;
 
             locations.push(location);
@@ -75,12 +78,12 @@ impl Store {
             data_center: FastStr::empty(),
             rack: FastStr::empty(),
             connected: false,
-            volume_size_limit: 0,
+            volume_size_limit: AtomicU64::new(0),
             new_volumes_tx: None,
             deleted_volumes_tx: None,
             new_ec_shards_tx: None,
             deleted_ec_shards_tx: None,
-            current_master: FastStr::empty(),
+            current_master: RwLock::new(FastStr::empty()),
         })
     }
 
@@ -92,12 +95,17 @@ impl Store {
         self.port
     }
 
-    pub fn set_volume_size_limit(&mut self, volume_size_limit: u64) {
-        self.volume_size_limit = volume_size_limit;
+    pub fn volume_size_limit(&self) -> u64 {
+        self.volume_size_limit.load(Ordering::Relaxed)
     }
 
-    pub fn set_current_master(&mut self, current_master: FastStr) {
-        self.current_master = current_master;
+    pub fn set_volume_size_limit(&self, volume_size_limit: u64) {
+        self.volume_size_limit
+            .store(volume_size_limit, Ordering::Relaxed);
+    }
+
+    pub async fn set_current_master(&self, current_master: FastStr) {
+        *self.current_master.write().await = current_master;
     }
 
     pub fn locations(&self) -> &[DiskLocation] {
@@ -159,10 +167,10 @@ impl Store {
         }
     }
 
-    async fn find_free_location(&mut self) -> Result<Option<&mut DiskLocation>> {
+    async fn find_free_location(&self) -> Result<Option<&DiskLocation>> {
         let mut disk_location = None;
         let mut max_free: i64 = 0;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             let free = location.max_volume_count - location.volumes.len() as i64;
             if free > max_free {
                 max_free = free;
@@ -174,7 +182,7 @@ impl Store {
     }
 
     async fn do_add_volume(
-        &mut self,
+        &self,
         vid: VolumeId,
         collection: FastStr,
         needle_map_type: NeedleMapType,
@@ -210,7 +218,7 @@ impl Store {
     }
 
     pub async fn add_volume(
-        &mut self,
+        &self,
         volumes: Vec<u32>,
         collection: String,
         needle_map_type: NeedleMapType,
@@ -251,7 +259,7 @@ impl Store {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.expired(self.volume_size_limit)? {
+                if !volume.expired(self.volume_size_limit())? {
                     let super_block = volume.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
@@ -394,28 +402,4 @@ mod tests {
     }
 }
 
-#[derive(Clone)]
-pub struct StoreRef(Arc<RwLock<Store>>);
-
-impl StoreRef {
-    pub async fn new(
-        ip: &str,
-        port: u16,
-        public_url: &str,
-        folders: Vec<String>,
-        max_counts: Vec<i64>,
-        needle_map_type: NeedleMapType,
-    ) -> Result<Self> {
-        Ok(Self(Arc::new(RwLock::new(
-            Store::new(ip, port, public_url, folders, max_counts, needle_map_type).await?,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Store> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Store> {
-        self.0.write().await
-    }
-}
+pub type StoreRef = Arc<Store>;

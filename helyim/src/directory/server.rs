@@ -27,7 +27,7 @@ use crate::{
     rt_spawn,
     sequence::Sequencer,
     storage::VolumeInfo,
-    topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, TopologyRef},
+    topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyRef},
     util::{args::MasterOptions, exit, get_or_default, grpc::grpc_port, http::default_handler},
 };
 
@@ -51,11 +51,11 @@ impl DirectoryServer {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
         let volume_size_limit_mb = master_opts.volume_size_limit_mb;
 
-        let topology = TopologyRef::new(
+        let topology = Arc::new(Topology::new(
             sequencer,
             volume_size_limit_mb * 1024 * 1024,
             master_opts.pulse_seconds,
-        );
+        ));
 
         rt_spawn(topology_vacuum_loop(
             topology.clone(),
@@ -104,10 +104,7 @@ impl DirectoryServer {
         // start raft node and control cluster with `raft_client`
         let raft_server = RaftServer::start_node(raft_node_id, &raft_node_addr).await?;
         raft_server.set_topology(&self.topology.clone()).await;
-        self.topology
-            .write()
-            .await
-            .set_raft_server(raft_server.clone());
+        self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
         let ctx = DirectoryContext {
@@ -249,13 +246,7 @@ impl Helyim for DirectoryGrpcServer {
 
             let mut locations = vec![];
             let mut error = String::default();
-            match self
-                .topology
-                .write()
-                .await
-                .lookup(&request.collection, volume_id)
-                .await
-            {
+            match self.topology.lookup(&request.collection, volume_id).await {
                 Some(nodes) => {
                     for dn in nodes.iter() {
                         let public_url = dn.public_url.to_string();
@@ -294,10 +285,7 @@ async fn handle_heartbeat(
     volume_size_limit: u64,
     addr: SocketAddr,
 ) -> Result<HeartbeatResponse> {
-    topology
-        .write()
-        .await
-        .set_max_sequence(heartbeat.max_file_key);
+    topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
         ip = addr.ip().to_string();
@@ -306,20 +294,14 @@ async fn handle_heartbeat(
     let data_center = get_or_default(heartbeat.data_center);
     let rack = get_or_default(heartbeat.rack);
 
-    let data_center = topology
-        .write()
-        .await
-        .get_or_create_data_center(data_center)
-        .await;
-    data_center.write().await.set_topology(topology.downgrade());
+    let data_center = topology.get_or_create_data_center(data_center).await;
+    data_center.set_topology(Arc::downgrade(topology)).await;
 
-    let rack = data_center.write().await.get_or_create_rack(rack);
-    rack.set_data_center(Arc::downgrade(&data_center));
+    let rack = data_center.get_or_create_rack(rack);
+    rack.set_data_center(Arc::downgrade(&data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let node = rack
-        .write()
-        .await
         .get_or_create_data_node(
             FastStr::new(node_addr),
             FastStr::new(ip),
@@ -341,27 +323,14 @@ async fn handle_heartbeat(
     let deleted_volumes = node.update_volumes(infos.clone()).await;
 
     for v in infos {
-        topology
-            .write()
-            .await
-            .register_volume_layout(v, node.clone())
-            .await;
+        topology.register_volume_layout(v, node.clone()).await;
     }
 
     for v in deleted_volumes.iter() {
-        topology
-            .write()
-            .await
-            .unregister_volume_layout(v.clone())
-            .await;
+        topology.unregister_volume_layout(v.clone()).await;
     }
 
-    let leader = topology
-        .read()
-        .await
-        .current_leader_address()
-        .await
-        .unwrap_or_default();
+    let leader = topology.current_leader_address().await.unwrap_or_default();
 
     Ok(HeartbeatResponse {
         volume_size_limit,

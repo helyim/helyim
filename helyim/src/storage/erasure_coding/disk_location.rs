@@ -19,7 +19,7 @@ impl DiskLocation {
             .map(|volume| volume.value().clone())
     }
 
-    pub async fn destroy_ec_volume(&mut self, vid: VolumeId) -> Result<(), EcVolumeError> {
+    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
         if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
             volume.read().await.destroy()?;
         }
@@ -38,7 +38,7 @@ impl DiskLocation {
     }
 
     pub async fn load_ec_shard(
-        &mut self,
+        &self,
         collection: &str,
         vid: VolumeId,
         shard_id: ShardId,
@@ -56,7 +56,7 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn unload_ec_shard(&mut self, vid: VolumeId, shard_id: ShardId) -> bool {
+    pub async fn unload_ec_shard(&self, vid: VolumeId, shard_id: ShardId) -> bool {
         match self.ec_volumes.get(&vid) {
             Some(volume) => {
                 if volume.write().await.delete_shard(shard_id).is_some()
@@ -71,7 +71,7 @@ impl DiskLocation {
     }
 
     pub async fn load_ec_shards(
-        &mut self,
+        &self,
         shards: &[String],
         collection: &str,
         vid: VolumeId,
@@ -84,7 +84,7 @@ impl DiskLocation {
         Ok(())
     }
 
-    pub async fn load_all_shards(&mut self) -> Result<(), EcVolumeError> {
+    pub async fn load_all_shards(&self) -> Result<(), EcVolumeError> {
         let dir = fs::read_dir(self.directory.to_string())?;
         let mut entries = Vec::new();
         for entry in dir {

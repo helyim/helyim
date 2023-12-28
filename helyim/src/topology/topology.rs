@@ -1,11 +1,12 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
-    sync::{Arc, Weak},
+    sync::Arc,
     time::Duration,
 };
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -20,8 +21,13 @@ use crate::{
         ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo,
     },
     topology::{
-        collection::Collection, data_center::DataCenterRef, erasure_coding::EcShardLocations,
-        node::Node, volume_grow::VolumeGrowOption, volume_layout::VolumeLayoutRef, DataNodeRef,
+        collection::Collection,
+        data_center::{DataCenter, DataCenterRef},
+        erasure_coding::EcShardLocations,
+        node::Node,
+        volume_grow::VolumeGrowOption,
+        volume_layout::VolumeLayoutRef,
+        DataNodeRef,
     },
 };
 
@@ -30,17 +36,17 @@ pub struct Topology {
     node: Node,
     #[serde(skip)]
     sequencer: Sequencer,
-    pub collections: HashMap<FastStr, Collection>,
+    pub collections: DashMap<FastStr, Collection>,
     #[serde(skip)]
-    pub ec_shards: HashMap<VolumeId, EcShardLocations>,
+    pub ec_shards: DashMap<VolumeId, EcShardLocations>,
     pulse: u64,
     volume_size_limit: u64,
     // children
     #[serde(skip)]
-    pub(crate) data_centers: HashMap<FastStr, DataCenterRef>,
+    pub(crate) data_centers: DashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
-    raft: Option<RaftServer>,
+    raft: RwLock<Option<RaftServer>>,
 }
 
 impl Clone for Topology {
@@ -52,8 +58,8 @@ impl Clone for Topology {
             ec_shards: self.ec_shards.clone(),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
-            data_centers: HashMap::new(),
-            raft: None,
+            data_centers: DashMap::new(),
+            raft: RwLock::new(None),
         }
     }
 }
@@ -64,33 +70,29 @@ impl Topology {
         Topology {
             node,
             sequencer,
-            collections: HashMap::new(),
-            ec_shards: HashMap::new(),
+            collections: DashMap::new(),
+            ec_shards: DashMap::new(),
             pulse,
             volume_size_limit,
-            data_centers: HashMap::new(),
-            raft: None,
+            data_centers: DashMap::new(),
+            raft: RwLock::new(None),
         }
     }
 
-    pub async fn get_or_create_data_center(&mut self, name: FastStr) -> DataCenterRef {
+    pub async fn get_or_create_data_center(&self, name: FastStr) -> DataCenterRef {
         match self.data_centers.get(&name) {
-            Some(data_node) => data_node.clone(),
+            Some(data_node) => data_node.value().clone(),
             None => {
-                let data_center = DataCenterRef::new(name.clone());
+                let data_center = Arc::new(DataCenter::new(name.clone()));
                 self.data_centers.insert(name, data_center.clone());
                 data_center
             }
         }
     }
 
-    pub async fn lookup(
-        &mut self,
-        collection: &str,
-        volume_id: VolumeId,
-    ) -> Option<Vec<DataNodeRef>> {
+    pub async fn lookup(&self, collection: &str, volume_id: VolumeId) -> Option<Vec<DataNodeRef>> {
         if collection.is_empty() {
-            for c in self.collections.values() {
+            for c in self.collections.iter() {
                 let data_node = c.lookup(volume_id).await;
                 if data_node.is_some() {
                     return data_node;
@@ -106,18 +108,19 @@ impl Topology {
         None
     }
 
-    pub async fn has_writable_volume(&mut self, option: Arc<VolumeGrowOption>) -> bool {
+    pub async fn has_writable_volume(&self, option: Arc<VolumeGrowOption>) -> bool {
         let vl = self.get_volume_layout(
             option.collection.clone(),
             option.replica_placement,
             option.ttl,
         );
 
-        vl.read().await.active_volume_count(option).await > 0
+        let active_volume_count = vl.read().await.active_volume_count(option).await;
+        active_volume_count > 0
     }
 
     pub async fn pick_for_write(
-        &mut self,
+        &self,
         count: u64,
         option: Arc<VolumeGrowOption>,
     ) -> StdResult<(FileId, u64, DataNodeRef), VolumeError> {
@@ -141,7 +144,7 @@ impl Topology {
         Ok((file_id, count, node))
     }
 
-    pub async fn register_volume_layout(&mut self, volume: VolumeInfo, data_node: DataNodeRef) {
+    pub async fn register_volume_layout(&self, volume: VolumeInfo, data_node: DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
@@ -153,7 +156,7 @@ impl Topology {
         .await
     }
 
-    pub async fn unregister_volume_layout(&mut self, volume: VolumeInfo) {
+    pub async fn unregister_volume_layout(&self, volume: VolumeInfo) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
@@ -161,13 +164,14 @@ impl Topology {
         )
         .write()
         .await
-        .unregister_volume(&volume);
+        .unregister_volume(&volume)
+        .await;
     }
 
     pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
         let vid = self.max_volume_id();
         let next = vid + 1;
-        if let Some(raft) = self.raft.as_ref() {
+        if let Some(raft) = self.raft.read().await.as_ref() {
             let raft = raft.clone();
             rt_spawn(async move {
                 if let Err(err) = raft.set_max_volume_id(next).await {
@@ -178,7 +182,7 @@ impl Topology {
         Ok(next)
     }
 
-    pub fn set_max_sequence(&mut self, seq: u64) {
+    pub fn set_max_sequence(&self, seq: u64) {
         self.sequencer.set_max(seq);
     }
 
@@ -186,12 +190,14 @@ impl Topology {
         self.clone()
     }
 
-    pub async fn vacuum(&mut self, garbage_threshold: f64, preallocate: u64) {
-        for (_name, collection) in self.collections.iter_mut() {
-            for (_key, volume_layout) in collection.volume_layouts.iter_mut() {
+    pub async fn vacuum(&self, garbage_threshold: f64, preallocate: u64) {
+        for collection in self.collections.iter() {
+            for volume_layout in collection.volume_layouts.iter() {
+                let volume_layout = volume_layout.value().clone();
                 // TODO: avoid cloning the HashMap
                 let locations = volume_layout.read().await.locations.clone();
-                for (vid, data_nodes) in locations {
+                for data_nodes in locations.iter() {
+                    let vid = *data_nodes.key();
                     if volume_layout
                         .read()
                         .await
@@ -202,10 +208,15 @@ impl Topology {
                     }
 
                     if batch_vacuum_volume_check(vid, &data_nodes, garbage_threshold).await
-                        && batch_vacuum_volume_compact(volume_layout, vid, &data_nodes, preallocate)
-                            .await
+                        && batch_vacuum_volume_compact(
+                            &volume_layout,
+                            vid,
+                            &data_nodes,
+                            preallocate,
+                        )
+                        .await
                     {
-                        batch_vacuum_volume_commit(volume_layout, vid, &data_nodes).await;
+                        batch_vacuum_volume_commit(&volume_layout, vid, &data_nodes).await;
                         // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
                     }
                 }
@@ -216,11 +227,11 @@ impl Topology {
 
 impl Topology {
     fn get_volume_layout(
-        &mut self,
+        &self,
         collection: FastStr,
         rp: ReplicaPlacement,
         ttl: Ttl,
-    ) -> &mut VolumeLayoutRef {
+    ) -> VolumeLayoutRef {
         self.collections
             .entry(collection.clone())
             .or_insert(Collection::new(collection, self.volume_size_limit))
@@ -229,33 +240,33 @@ impl Topology {
 }
 
 impl Topology {
-    pub fn set_raft_server(&mut self, raft: RaftServer) {
-        self.raft = Some(raft);
+    pub async fn set_raft_server(&self, raft: RaftServer) {
+        *self.raft.write().await = Some(raft);
     }
 
     pub async fn current_leader(&self) -> Option<NodeId> {
-        match self.raft.as_ref() {
+        match self.raft.read().await.as_ref() {
             Some(raft) => raft.current_leader().await,
             None => None,
         }
     }
 
     pub async fn current_leader_address(&self) -> Option<FastStr> {
-        match self.raft.as_ref() {
+        match self.raft.read().await.as_ref() {
             Some(raft) => raft.current_leader_address().await,
             None => None,
         }
     }
 
     pub async fn is_leader(&self) -> bool {
-        match self.raft.as_ref() {
+        match self.raft.read().await.as_ref() {
             Some(raft) => raft.is_leader().await,
             None => false,
         }
     }
 
-    pub fn peers(&self) -> BTreeMap<NodeId, FastStr> {
-        match self.raft.as_ref() {
+    pub async fn peers(&self) -> BTreeMap<NodeId, FastStr> {
+        match self.raft.read().await.as_ref() {
             Some(raft) => raft.peers(),
             None => BTreeMap::new(),
         }
@@ -265,24 +276,24 @@ impl Topology {
 impl Topology {
     pub async fn volume_count(&self) -> u64 {
         let mut count = 0;
-        for dc in self.data_centers.values() {
-            count += dc.read().await.volume_count().await;
+        for dc in self.data_centers.iter() {
+            count += dc.volume_count().await;
         }
         count
     }
 
     pub async fn max_volume_count(&self) -> u64 {
         let mut max_volumes = 0;
-        for dc in self.data_centers.values() {
-            max_volumes += dc.read().await.max_volume_count().await;
+        for dc in self.data_centers.iter() {
+            max_volumes += dc.max_volume_count().await;
         }
         max_volumes
     }
 
     pub async fn free_volumes(&self) -> u64 {
         let mut free_volumes = 0;
-        for dc in self.data_centers.values() {
-            free_volumes += dc.read().await.free_volumes().await;
+        for dc in self.data_centers.iter() {
+            free_volumes += dc.free_volumes().await;
         }
         free_volumes
     }
@@ -339,9 +350,9 @@ pub async fn topology_vacuum_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if topology.read().await.is_leader().await {
+                if topology.is_leader().await {
                     debug!("topology vacuum starting.");
-                    topology.write().await.vacuum(garbage_threshold, preallocate).await;
+                    topology.vacuum(garbage_threshold, preallocate).await;
                     debug!("topology vacuum success.")
                 }
             }
@@ -353,46 +364,4 @@ pub async fn topology_vacuum_loop(
     info!("topology vacuum loop stopped")
 }
 
-#[derive(Clone)]
-pub struct TopologyRef(Arc<RwLock<Topology>>);
-
-impl TopologyRef {
-    pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Self {
-        Self(Arc::new(RwLock::new(Topology::new(
-            sequencer,
-            volume_size_limit,
-            pulse,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Topology> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Topology> {
-        self.0.write().await
-    }
-
-    pub fn downgrade(&self) -> WeakTopologyRef {
-        WeakTopologyRef(Arc::downgrade(&self.0))
-    }
-}
-
-#[derive(Clone)]
-pub struct WeakTopologyRef(Weak<RwLock<Topology>>);
-
-impl WeakTopologyRef {
-    pub fn new() -> Self {
-        Self(Weak::new())
-    }
-
-    pub fn upgrade(&self) -> Option<TopologyRef> {
-        self.0.upgrade().map(TopologyRef)
-    }
-}
-
-impl Default for WeakTopologyRef {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub type TopologyRef = Arc<Topology>;

@@ -205,7 +205,7 @@ impl DataNode {
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
 
-        if let Some(rack) = self.rack.read().upgrade() {
+        if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_volume_count(volume_count_delta).await;
         }
     }
@@ -213,7 +213,7 @@ impl DataNode {
     pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
 
-        if let Some(rack) = self.rack.read().upgrade() {
+        if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_active_volume_count(active_volume_count_delta)
                 .await;
         }
@@ -222,7 +222,7 @@ impl DataNode {
     pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
-        if let Some(rack) = self.rack.read().upgrade() {
+        if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_ec_shard_count(ec_shard_count_delta).await;
         }
     }
@@ -230,7 +230,7 @@ impl DataNode {
     pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
 
-        if let Some(rack) = self.rack.read().upgrade() {
+        if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_max_volume_count(max_volume_count_delta).await;
         }
     }
@@ -238,7 +238,7 @@ impl DataNode {
     pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
 
-        if let Some(rack) = self.rack.read().upgrade() {
+        if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_max_volume_id(self.max_volume_id()).await;
         }
     }

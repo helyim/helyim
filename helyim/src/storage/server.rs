@@ -39,7 +39,7 @@ use crate::{
             write_sorted_file_from_index, ShardId,
         },
         needle::NeedleMapType,
-        store::StoreRef,
+        store::{Store, StoreRef},
         version::Version,
         VolumeError, BUFFER_SIZE_LIMIT,
     },
@@ -74,15 +74,17 @@ impl VolumeServer {
     ) -> Result<VolumeServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let store = StoreRef::new(
-            &volume_opts.ip,
-            volume_opts.port,
-            public_url,
-            folders,
-            max_counts,
-            needle_map_type,
-        )
-        .await?;
+        let store = Arc::new(
+            Store::new(
+                &volume_opts.ip,
+                volume_opts.port,
+                public_url,
+                folders,
+                max_counts,
+                needle_map_type,
+            )
+            .await?,
+        );
 
         let addr = format!("{}:{}", volume_opts.ip, grpc_port(volume_opts.port)).parse()?;
 
@@ -178,7 +180,7 @@ impl VolumeServer {
                     sleep(Duration::from_secs(pulse_seconds)).await;
                     continue;
                 }
-                store.write().await.set_current_master(master.clone());
+                store.set_current_master(master.clone()).await;
                 tokio::select! {
                     ret = VolumeServer::do_heartbeat(
                         master,
@@ -196,7 +198,7 @@ impl VolumeServer {
                                     warn!("heartbeat to {master} error: {err}");
                                     sleep(Duration::from_secs(pulse_seconds)).await;
                                     new_leader = FastStr::empty();
-                                    store.write().await.set_current_master(FastStr::empty());
+                                    store.set_current_master(FastStr::empty()).await;
                                 }
                                 Err(err) => {
                                     error!("heartbeat but error occur: {err}");
@@ -226,7 +228,7 @@ impl VolumeServer {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match store_ref.write().await.collect_heartbeat().await {
+                        match store_ref.collect_heartbeat().await {
                             Ok(heartbeat) => yield heartbeat,
                             Err(err) => error!("collect heartbeat error: {err}")
                         }
@@ -250,7 +252,7 @@ impl VolumeServer {
                             if let Ok(response) = serde_json::to_string(&response) {
                                 debug!("heartbeat reply: {response}");
                             }
-                            let old_leader = store.read().await.current_master.clone();
+                            let old_leader = store.current_master.read().await.clone();
                             if !response.leader.is_empty() && response.leader != old_leader {
                                 info!(
                                     "leader changed, current leader is {}, old leader is \
@@ -258,13 +260,10 @@ impl VolumeServer {
                                     response.leader
                                 );
                                 let new_leader = FastStr::new(response.leader);
-                                store.write().await.set_current_master(new_leader.clone());
+                                store.set_current_master(new_leader.clone()).await;
                                 return Err(VolumeError::LeaderChanged(new_leader, old_leader));
                             }
-                            store
-                                .write()
-                                .await
-                                .set_volume_size_limit(response.volume_size_limit);
+                            store.set_volume_size_limit(response.volume_size_limit);
                         }
                         Err(err) => {
                             error!(
@@ -342,8 +341,6 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
         self.store
-            .write()
-            .await
             .add_volume(
                 request.volumes,
                 request.collection,
@@ -362,12 +359,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self
-            .store
-            .read()
-            .await
-            .check_compact_volume(request.volume_id)
-            .await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -378,8 +370,6 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} compact", request.volume_id);
         self.store
-            .read()
-            .await
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
@@ -391,11 +381,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
-        self.store
-            .read()
-            .await
-            .commit_compact_volume(request.volume_id)
-            .await?;
+        self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -408,11 +394,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} cleanup", request.volume_id);
-        self.store
-            .read()
-            .await
-            .commit_cleanup_volume(request.volume_id)
-            .await?;
+        self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
@@ -421,13 +403,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
         let request = request.into_inner();
-        match self
-            .store
-            .read()
-            .await
-            .find_volume(request.volume_id)
-            .await?
-        {
+        match self.store.find_volume(request.volume_id).await? {
             Some(volume) => {
                 let base_filename = volume.filename();
                 let collection = volume.collection.clone();
@@ -460,7 +436,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
 
         let mut rebuilt_shard_ids = Vec::new();
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}{}", location.directory, base_filename);
@@ -490,7 +466,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let mut base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
         let mut found = false;
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 found = true;
@@ -521,7 +497,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let idx_filename = format!("{}.idx", filename);
         let ec_prefix = format!("{}.ec", filename);
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let read_dir = fs::read_dir(location.directory.to_string())?;
             for entry in read_dir {
                 match entry?.file_name().into_string() {
@@ -580,13 +556,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
         let request = request.into_inner();
 
-        if let Some(volume) = self
-            .store
-            .read()
-            .await
-            .find_ec_volume(request.volume_id)
-            .await
-        {
+        if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
             if let Some(shard) = volume.read().await.find_shard(request.shard_id as ShardId) {
                 if request.file_key != 0 {
                     let needle_value =
@@ -658,7 +628,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
         let request = request.into_inner();
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
                     .read()
@@ -685,13 +655,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
         let request = request.into_inner();
 
-        match self
-            .store
-            .read()
-            .await
-            .find_ec_volume(request.volume_id)
-            .await
-        {
+        match self.store.find_ec_volume(request.volume_id).await {
             Some(volume) => {
                 if volume.read().await.collection() == request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));

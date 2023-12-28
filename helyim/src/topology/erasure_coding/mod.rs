@@ -120,7 +120,7 @@ impl Topology {
         data_node: &DataNodeRef,
     ) {
         match self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
-            Some(locations) => {
+            Some(mut locations) => {
                 for shard_id in ec_shard_infos.shard_bits.shard_ids() {
                     let _ = locations.add_shard(shard_id, data_node.clone()).await;
                 }
@@ -140,7 +140,7 @@ impl Topology {
         ec_shard_infos: &EcVolumeInfo,
         data_node: &DataNodeRef,
     ) {
-        if let Some(locations) = self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
+        if let Some(mut locations) = self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
             for shard_id in ec_shard_infos.shard_bits.shard_ids() {
                 let _ = locations.delete_shard(shard_id, data_node).await;
             }

@@ -396,12 +396,16 @@ pub async fn batch_vacuum_volume_check(
 }
 
 pub async fn batch_vacuum_volume_compact(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
     preallocate: u64,
 ) -> bool {
-    volume_layout.write().await.remove_from_writable(volume_id);
+    volume_layout
+        .write()
+        .await
+        .remove_from_writable(volume_id)
+        .await;
     let mut compact_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCompactRequest {
@@ -430,7 +434,7 @@ pub async fn batch_vacuum_volume_compact(
 }
 
 pub async fn batch_vacuum_volume_commit(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
 ) -> bool {
