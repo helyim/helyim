@@ -121,13 +121,9 @@ impl VolumeLayout {
     }
 
     pub async fn register_volume(&self, v: &VolumeInfo, dn: DataNodeRef) {
-        if !self.locations.contains_key(&v.id) {
-            self.locations.insert(v.id, vec![]);
-        }
-
         // release write lock
         {
-            let mut locations = self.locations.get_mut(&v.id).unwrap();
+            let mut locations = self.locations.entry(v.id).or_default();
             VolumeLayout::set_node(&mut locations, dn).await;
         }
 
