@@ -222,12 +222,15 @@ impl Topology {
         rp: ReplicaPlacement,
         ttl: Ttl,
     ) -> VolumeLayoutRef {
-        if !self.collections.contains_key(&collection_name) {
-            let collection = Collection::new(collection_name.clone(), self.volume_size_limit);
-            self.collections.insert(collection_name.clone(), collection);
+        match self.collections.get(&collection_name) {
+            Some(collection) => collection.get_or_create_volume_layout(rp, Some(ttl)),
+            None => {
+                let collection = Collection::new(collection_name.clone(), self.volume_size_limit);
+                let vl = collection.get_or_create_volume_layout(rp, Some(ttl));
+                self.collections.insert(collection_name, collection);
+                vl
+            }
         }
-        let collection = self.collections.get(&collection_name).unwrap();
-        collection.get_or_create_volume_layout(rp, Some(ttl))
     }
 }
 

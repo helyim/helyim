@@ -39,16 +39,15 @@ impl Collection {
             None => rp.to_string(),
         };
 
-        let volume_size = self.volume_size_limit;
-
-        if !self.volume_layouts.contains_key(key.as_str()) {
-            let volume_layout = Arc::new(VolumeLayout::new(rp, ttl, volume_size));
-            self.volume_layouts
-                .insert(FastStr::new(key.as_str()), volume_layout);
+        match self.volume_layouts.get(key.as_str()) {
+            Some(vl) => vl.value().clone(),
+            None => {
+                let volume_layout = Arc::new(VolumeLayout::new(rp, ttl, self.volume_size_limit));
+                self.volume_layouts
+                    .insert(FastStr::new(key.as_str()), volume_layout.clone());
+                volume_layout
+            }
         }
-
-        let volume_layout = self.volume_layouts.get(key.as_str()).unwrap();
-        volume_layout.value().clone()
     }
 
     pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
