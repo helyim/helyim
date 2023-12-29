@@ -115,7 +115,7 @@ impl Topology {
             option.ttl,
         );
 
-        let active_volume_count = vl.read().await.active_volume_count(option).await;
+        let active_volume_count = vl.active_volume_count(option).await;
         active_volume_count > 0
     }
 
@@ -135,7 +135,6 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            let layout = layout.read().await;
             let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
             (vid, nodes[0].clone())
         };
@@ -150,8 +149,6 @@ impl Topology {
             volume.replica_placement,
             volume.ttl,
         )
-        .write()
-        .await
         .register_volume(&volume, data_node)
         .await
     }
@@ -162,8 +159,6 @@ impl Topology {
             volume.replica_placement,
             volume.ttl,
         )
-        .write()
-        .await
         .unregister_volume(&volume)
         .await;
     }
@@ -195,15 +190,10 @@ impl Topology {
             for volume_layout in collection.volume_layouts.iter() {
                 let volume_layout = volume_layout.value().clone();
                 // TODO: avoid cloning the HashMap
-                let locations = volume_layout.read().await.locations.clone();
+                let locations = volume_layout.locations.clone();
                 for data_nodes in locations.iter() {
                     let vid = *data_nodes.key();
-                    if volume_layout
-                        .read()
-                        .await
-                        .readonly_volumes
-                        .contains_key(&vid)
-                    {
+                    if volume_layout.readonly_volumes.contains_key(&vid) {
                         continue;
                     }
 
@@ -228,14 +218,16 @@ impl Topology {
 impl Topology {
     fn get_volume_layout(
         &self,
-        collection: FastStr,
+        collection_name: FastStr,
         rp: ReplicaPlacement,
         ttl: Ttl,
     ) -> VolumeLayoutRef {
-        self.collections
-            .entry(collection.clone())
-            .or_insert(Collection::new(collection, self.volume_size_limit))
-            .get_or_create_volume_layout(rp, Some(ttl))
+        if !self.collections.contains_key(&collection_name) {
+            let collection = Collection::new(collection_name.clone(), self.volume_size_limit);
+            self.collections.insert(collection_name.clone(), collection);
+        }
+        let collection = self.collections.get(&collection_name).unwrap();
+        collection.get_or_create_volume_layout(rp, Some(ttl))
     }
 }
 

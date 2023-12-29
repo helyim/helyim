@@ -69,7 +69,7 @@ impl VolumeGrowth {
     async fn find_and_grow(
         &self,
         option: &VolumeGrowOption,
-        topology: TopologyRef,
+        topology: &TopologyRef,
     ) -> Result<usize, VolumeError> {
         let nodes = self.find_empty_slots(option, topology.clone()).await?;
         let len = nodes.len();
@@ -86,7 +86,7 @@ impl VolumeGrowth {
     ) -> Result<usize, VolumeError> {
         let mut grow_count = 0;
         for _ in 0..count {
-            grow_count += self.find_and_grow(option, topology.clone()).await?;
+            grow_count += self.find_and_grow(option, &topology).await?;
         }
 
         Ok(grow_count)
@@ -96,7 +96,7 @@ impl VolumeGrowth {
         &self,
         vid: VolumeId,
         option: &VolumeGrowOption,
-        topology: TopologyRef,
+        topology: &TopologyRef,
         nodes: Vec<DataNodeRef>,
     ) -> Result<(), VolumeError> {
         for dn in nodes {

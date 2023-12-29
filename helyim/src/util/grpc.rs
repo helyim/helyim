@@ -24,24 +24,21 @@ pub fn volume_server_client(
 ) -> Result<&mut VolumeServerClient<LoadBalancedChannel>, VolumeError> {
     let clients =
         VOLUME_SERVER_CLIENTS.deref() as *const VolumeServerClientMap as *mut VolumeServerClientMap;
-    unsafe {
-        match (*clients).get_mut(addr) {
-            Some(client) => Ok(client),
-            None => {
-                let _lock = GRPC_CLIENT_LOCK.lock();
+    match unsafe { (*clients).get_mut(addr) } {
+        Some(client) => Ok(client),
+        None => {
+            let (ip, port) = parse_host_port(addr)?;
+            let grpc_port = grpc_port(port);
 
-                let (ip, port) = parse_host_port(addr)?;
-                let grpc_port = grpc_port(port);
+            let channel = block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
+                .map_err(|err| VolumeError::Box(err.into()))?;
+            let client = VolumeServerClient::new(channel);
+            info!("create volume server client success, addr: {ip}:{grpc_port}");
 
-                let channel =
-                    block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
-                        .map_err(|err| VolumeError::Box(err.into()))?;
-                let client = VolumeServerClient::new(channel);
-                info!("create volume server tonic client success, addr: {ip}:{grpc_port}");
-                // WARN: addr is not the grpc addr
-                let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
-                Ok(client)
-            }
+            let _lock = GRPC_CLIENT_LOCK.lock();
+            // WARN: addr is not the grpc addr
+            let client = unsafe { (*clients).entry(FastStr::new(addr)).or_insert(client) };
+            Ok(client)
         }
     }
 }
@@ -51,24 +48,22 @@ static HELYIM_CLIENTS: Lazy<HelyimClientMap> = Lazy::new(HashMap::new);
 
 pub fn helyim_client(addr: &str) -> Result<&mut HelyimClient<LoadBalancedChannel>, VolumeError> {
     let clients = HELYIM_CLIENTS.deref() as *const HelyimClientMap as *mut HelyimClientMap;
-    unsafe {
-        match (*clients).get_mut(addr) {
-            Some(client) => Ok(client),
-            None => {
-                let _lock = GRPC_CLIENT_LOCK.lock();
+    match unsafe { (*clients).get_mut(addr) } {
+        Some(client) => Ok(client),
+        None => {
+            let (ip, port) = parse_host_port(addr)?;
+            let grpc_port = grpc_port(port);
 
-                let (ip, port) = parse_host_port(addr)?;
-                let grpc_port = grpc_port(port);
+            let channel = block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
+                .map_err(|err| VolumeError::Box(err.into()))?;
+            let client = HelyimClient::new(channel);
 
-                let channel =
-                    block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
-                        .map_err(|err| VolumeError::Box(err.into()))?;
-                let client = HelyimClient::new(channel);
-                info!("create helyim tonic client success, addr: {ip}:{grpc_port}");
-                // WARN: addr is not the grpc addr
-                let client = (*clients).entry(FastStr::new(addr)).or_insert(client);
-                Ok(client)
-            }
+            info!("create helyim client success, addr: {ip}:{grpc_port}");
+
+            let _lock = GRPC_CLIENT_LOCK.lock();
+            // WARN: addr is not the grpc addr
+            let client = unsafe { (*clients).entry(FastStr::new(addr)).or_insert(client) };
+            Ok(client)
         }
     }
 }

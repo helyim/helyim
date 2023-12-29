@@ -25,7 +25,7 @@ pub struct VolumeLayout {
 }
 
 impl VolumeLayout {
-    fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
+    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> VolumeLayout {
         VolumeLayout {
             rp,
             ttl,
@@ -58,7 +58,6 @@ impl VolumeLayout {
                 }
             }
         }
-
         count
     }
 
@@ -122,9 +121,17 @@ impl VolumeLayout {
     }
 
     pub async fn register_volume(&self, v: &VolumeInfo, dn: DataNodeRef) {
-        let mut locations = self.locations.entry(v.id).or_default();
-        VolumeLayout::set_node(&mut locations, dn).await;
+        if !self.locations.contains_key(&v.id) {
+            self.locations.insert(v.id, vec![]);
+        }
 
+        // release write lock
+        {
+            let mut locations = self.locations.get_mut(&v.id).unwrap();
+            VolumeLayout::set_node(&mut locations, dn).await;
+        }
+
+        let locations = self.locations.get(&v.id).unwrap();
         for location in locations.iter() {
             let volume = location.get_volume(v.id);
             match volume {
@@ -230,23 +237,4 @@ impl VolumeLayout {
     }
 }
 
-#[derive(Clone)]
-pub struct VolumeLayoutRef(Arc<RwLock<VolumeLayout>>);
-
-impl VolumeLayoutRef {
-    pub fn new(rp: ReplicaPlacement, ttl: Option<Ttl>, volume_size_limit: u64) -> Self {
-        Self(Arc::new(RwLock::new(VolumeLayout::new(
-            rp,
-            ttl,
-            volume_size_limit,
-        ))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, VolumeLayout> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, VolumeLayout> {
-        self.0.write().await
-    }
-}
+pub type VolumeLayoutRef = Arc<VolumeLayout>;

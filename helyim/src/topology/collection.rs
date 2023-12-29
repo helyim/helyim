@@ -1,10 +1,15 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
+    topology::{
+        volume_layout::{VolumeLayout, VolumeLayoutRef},
+        DataNodeRef,
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -36,16 +41,19 @@ impl Collection {
 
         let volume_size = self.volume_size_limit;
 
-        let volume_layout = self
-            .volume_layouts
-            .entry(FastStr::from_string(key))
-            .or_insert_with(|| VolumeLayoutRef::new(rp, ttl, volume_size));
+        if !self.volume_layouts.contains_key(key.as_str()) {
+            let volume_layout = Arc::new(VolumeLayout::new(rp, ttl, volume_size));
+            self.volume_layouts
+                .insert(FastStr::new(key.as_str()), volume_layout);
+        }
+
+        let volume_layout = self.volume_layouts.get(key.as_str()).unwrap();
         volume_layout.value().clone()
     }
 
     pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
         for layout in self.volume_layouts.iter() {
-            let ret = layout.read().await.lookup(vid);
+            let ret = layout.lookup(vid);
             if ret.is_some() {
                 return ret;
             }
