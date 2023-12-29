@@ -314,7 +314,7 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact()?;
+                volume.compact2()?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }
