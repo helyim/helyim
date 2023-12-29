@@ -54,7 +54,7 @@ impl DirectoryServer {
         let topology = Arc::new(Topology::new(
             sequencer,
             volume_size_limit_mb * 1024 * 1024,
-            master_opts.pulse_seconds,
+            master_opts.pulse,
         ));
 
         rt_spawn(topology_vacuum_loop(

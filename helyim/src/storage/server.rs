@@ -65,31 +65,19 @@ pub struct VolumeServer {
 
 impl VolumeServer {
     pub async fn new(
-        public_url: &str,
-        folders: Vec<String>,
-        max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
         volume_opts: VolumeOptions,
         read_redirect: bool,
     ) -> Result<VolumeServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let store = Arc::new(
-            Store::new(
-                &volume_opts.ip,
-                volume_opts.port,
-                public_url,
-                folders,
-                max_counts,
-                needle_map_type,
-            )
-            .await?,
-        );
+        let options = Arc::new(volume_opts);
+        let store = Arc::new(Store::new(options.clone(), needle_map_type).await?);
 
-        let addr = format!("{}:{}", volume_opts.ip, grpc_port(volume_opts.port)).parse()?;
+        let addr = format!("{}:{}", options.ip, grpc_port(options.port)).parse()?;
 
         let storage = VolumeServer {
-            options: Arc::new(volume_opts),
+            options,
             needle_map_type,
             read_redirect,
             current_master: FastStr::empty(),
@@ -127,7 +115,7 @@ impl VolumeServer {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
-        let pulse_seconds = self.options.pulse_seconds;
+        let pulse = self.options.pulse;
 
         self.update_masters().await?;
 
@@ -135,14 +123,14 @@ impl VolumeServer {
             store,
             needle_map_type,
             read_redirect,
-            pulse_seconds,
+            pulse,
             looker: Arc::new(Looker::new()),
         };
 
         rt_spawn(Self::heartbeat(
             self.store.clone(),
             self.seed_master_nodes.clone(),
-            pulse_seconds,
+            pulse,
             self.shutdown.new_receiver(),
         ));
 
@@ -170,14 +158,14 @@ impl VolumeServer {
     async fn heartbeat(
         store: StoreRef,
         seed_masters: Vec<FastStr>,
-        pulse_seconds: u64,
+        pulse: u64,
         mut shutdown: async_broadcast::Receiver<()>,
     ) {
         let mut new_leader = FastStr::empty();
         loop {
             for master in seed_masters.iter() {
                 if !new_leader.is_empty() && &new_leader != master {
-                    sleep(Duration::from_secs(pulse_seconds)).await;
+                    sleep(Duration::from_secs(pulse)).await;
                     continue;
                 }
                 store.set_current_master(master.clone()).await;
@@ -185,7 +173,7 @@ impl VolumeServer {
                     ret = VolumeServer::do_heartbeat(
                         master,
                         store.clone(),
-                        pulse_seconds,
+                        pulse,
                         shutdown.clone(),
                     ) => {
                             match ret {
@@ -196,7 +184,7 @@ impl VolumeServer {
                                 }
                                 Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
                                     warn!("heartbeat to {master} error: {err}");
-                                    sleep(Duration::from_secs(pulse_seconds)).await;
+                                    sleep(Duration::from_secs(pulse)).await;
                                     new_leader = FastStr::empty();
                                     store.set_current_master(FastStr::empty()).await;
                                 }

@@ -9,8 +9,8 @@ use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
 async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let mut dir =
-        DirectoryServer::new(master_opts, 0.3, Sequencer::new(SequencerType::Memory)?).await?;
+    let sequencer = Sequencer::new(SequencerType::Memory)?;
+    let mut dir = DirectoryServer::new(master_opts, 0.3, sequencer).await?;
     dir.start().await?;
     shutdown_signal().await;
     dir.stop().await?;
@@ -18,37 +18,8 @@ async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::err
 }
 
 async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let public_url = volume_opts
-        .public_url
-        .clone()
-        .unwrap_or(format!("{}:{}", volume_opts.ip, volume_opts.port).into());
-    let paths: Vec<String> = volume_opts
-        .dir
-        .iter()
-        .map(|x| match x.rfind(':') {
-            Some(idx) => x[0..idx].to_string(),
-            None => x.to_string(),
-        })
-        .collect();
-
-    let max_volumes = volume_opts
-        .dir
-        .iter()
-        .map(|x| match x.rfind(':') {
-            Some(idx) => x[idx + 1..].parse::<i64>().unwrap(),
-            None => 7,
-        })
-        .collect();
-
-    let mut server = VolumeServer::new(
-        &public_url,
-        paths,
-        max_volumes,
-        NeedleMapType::NeedleMapInMemory,
-        volume_opts,
-        false,
-    )
-    .await?;
+    let mut server =
+        VolumeServer::new(NeedleMapType::NeedleMapInMemory, volume_opts, false).await?;
     server.start().await?;
     shutdown_signal().await;
     server.stop().await?;

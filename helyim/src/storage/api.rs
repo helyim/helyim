@@ -47,7 +47,7 @@ pub struct StorageContext {
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
-    pub pulse_seconds: u64,
+    pub pulse: u64,
     pub looker: Arc<Looker>,
 }
 

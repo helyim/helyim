@@ -28,8 +28,9 @@ pub struct MasterOptions {
     pub port: u16,
     #[arg(long, default_value("./"))]
     pub meta_path: FastStr,
+    /// pulse in second
     #[arg(long, default_value_t = 5)]
-    pub pulse_seconds: u64,
+    pub pulse: u64,
     #[arg(long, default_value_t = 30000)]
     pub volume_size_limit_mb: u64,
     /// default replication if not specified
@@ -42,8 +43,10 @@ pub struct MasterOptions {
 // TODO: if clap support prefix in flatten derive, the following fields will remove prefix `raft_`
 #[derive(Args, Debug, Clone)]
 pub struct RaftOptions {
+    /// local raft node id
     #[arg(long, default_value_t = 1)]
     pub node_id: NodeId,
+    /// raft peer in cluster, if not present, treat it as leader
     #[arg(long)]
     pub peer: Option<FastStr>,
 }
@@ -54,8 +57,9 @@ pub struct VolumeOptions {
     pub ip: FastStr,
     #[arg(long, default_value_t = 8080)]
     pub port: u16,
+    /// pulse in second
     #[arg(long, default_value_t = 5)]
-    pub pulse_seconds: u64,
+    pub pulse: u64,
     /// public access url
     #[arg(long)]
     pub public_url: Option<FastStr>,
@@ -73,7 +77,35 @@ pub struct VolumeOptions {
     pub master_server: FastStr,
     /// directories to store data files
     #[arg(long)]
-    pub dir: Vec<FastStr>,
+    pub folders: Vec<FastStr>,
+}
+
+impl VolumeOptions {
+    pub fn public_url(&self) -> FastStr {
+        self.public_url
+            .clone()
+            .unwrap_or(format!("{}:{}", self.ip, self.port).into())
+    }
+
+    pub fn paths(&self) -> Vec<String> {
+        self.folders
+            .iter()
+            .map(|x| match x.rfind(':') {
+                Some(idx) => x[0..idx].to_string(),
+                None => x.to_string(),
+            })
+            .collect()
+    }
+
+    pub fn max_volumes(&self) -> Vec<i64> {
+        self.folders
+            .iter()
+            .map(|x| match x.rfind(':') {
+                Some(idx) => x[idx + 1..].parse::<i64>().unwrap(),
+                None => 7,
+            })
+            .collect()
+    }
 }
 
 #[derive(Args, Debug, Clone)]

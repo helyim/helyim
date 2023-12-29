@@ -22,6 +22,7 @@ use crate::{
         volume::Volume,
         ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
+    util::args::VolumeOptions,
 };
 
 const MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES: u64 = 10;
@@ -49,15 +50,13 @@ pub struct Store {
 }
 
 impl Store {
-    pub async fn new(
-        ip: &str,
-        port: u16,
-        public_url: &str,
-        folders: Vec<String>,
-        max_counts: Vec<i64>,
-        needle_map_type: NeedleMapType,
-    ) -> Result<Store> {
+    pub async fn new(options: Arc<VolumeOptions>, needle_map_type: NeedleMapType) -> Result<Store> {
         let mut locations = vec![];
+
+        let folders = options.paths();
+        let max_counts = options.max_volumes();
+        assert_eq!(folders.len(), max_counts.len());
+
         for i in 0..folders.len() {
             let location = DiskLocation::new(&folders[i], max_counts[i]);
             location.load_existing_volumes(needle_map_type).await?;
@@ -66,9 +65,9 @@ impl Store {
         }
 
         Ok(Store {
-            ip: FastStr::new(ip),
-            port,
-            public_url: FastStr::new(public_url),
+            ip: options.ip.clone(),
+            port: options.port,
+            public_url: options.public_url(),
             locations,
             needle_map_type,
             data_center: FastStr::empty(),
