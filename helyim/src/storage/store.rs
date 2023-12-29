@@ -48,10 +48,6 @@ pub struct Store {
     pub current_master: RwLock<FastStr>,
 }
 
-unsafe impl Send for Store {}
-
-unsafe impl Sync for Store {}
-
 impl Store {
     pub async fn new(
         ip: &str,
@@ -360,6 +356,8 @@ impl Store {
     }
 }
 
+pub type StoreRef = Arc<Store>;
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -401,5 +399,3 @@ mod tests {
         }
     }
 }
-
-pub type StoreRef = Arc<Store>;
