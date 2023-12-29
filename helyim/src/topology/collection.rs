@@ -44,7 +44,7 @@ impl Collection {
             None => {
                 let volume_layout = Arc::new(VolumeLayout::new(rp, ttl, self.volume_size_limit));
                 self.volume_layouts
-                    .insert(FastStr::new(key.as_str()), volume_layout.clone());
+                    .insert(FastStr::new(key), volume_layout.clone());
                 volume_layout
             }
         }

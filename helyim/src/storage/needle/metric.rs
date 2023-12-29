@@ -28,7 +28,7 @@ impl Metric {
         self.max_file_key.load(Ordering::Relaxed)
     }
 
-    pub fn compare_max_file_key(&self, key: u64) {
+    pub fn maybe_max_file_key(&self, key: u64) {
         if key > self.max_file_key() {
             self.max_file_key.store(key, Ordering::Relaxed);
         }
@@ -45,8 +45,8 @@ impl Metric {
     }
 
     pub fn delete_file(&self, size: Size) {
-        self.deleted_count.fetch_sub(1, Ordering::Relaxed);
+        self.deleted_count.fetch_add(1, Ordering::Relaxed);
         self.deleted_bytes
-            .fetch_sub(size.actual_size(), Ordering::Relaxed);
+            .fetch_add(size.actual_size(), Ordering::Relaxed);
     }
 }
