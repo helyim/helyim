@@ -45,10 +45,10 @@ use crate::{
     },
     util::{
         args::VolumeOptions,
-        exit,
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
+        sys::exit,
     },
 };
 
@@ -106,7 +106,7 @@ impl VolumeServer {
         Ok(storage)
     }
 
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
         Ok(())
     }

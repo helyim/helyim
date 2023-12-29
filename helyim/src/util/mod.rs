@@ -14,8 +14,7 @@ pub mod macros;
 
 pub mod parser;
 
-mod sys;
-pub use sys::exit;
+pub mod sys;
 
 pub mod time;
 

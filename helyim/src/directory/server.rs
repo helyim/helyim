@@ -28,7 +28,9 @@ use crate::{
     sequence::Sequencer,
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyRef},
-    util::{args::MasterOptions, exit, get_or_default, grpc::grpc_port, http::default_handler},
+    util::{
+        args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler, sys::exit,
+    },
 };
 
 pub struct DirectoryServer {
@@ -93,7 +95,7 @@ impl DirectoryServer {
         Ok(master)
     }
 
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
         Ok(())
     }

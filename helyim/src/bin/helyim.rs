@@ -2,53 +2,33 @@ use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
     storage::{NeedleMapType, VolumeServer},
-    util::args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
+    util::{
+        args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
+        sys::shutdown_signal,
+    },
 };
-use tokio::signal;
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
 async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
     let sequencer = Sequencer::new(SequencerType::Memory)?;
-    let mut dir = DirectoryServer::new(master_opts, 0.3, sequencer).await?;
-    dir.start().await?;
+    let mut directory = DirectoryServer::new(master_opts, 0.3, sequencer).await?;
+
+    directory.start().await?;
     shutdown_signal().await;
-    dir.stop().await?;
+    directory.stop().await?;
     Ok(())
 }
 
 async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut server =
         VolumeServer::new(NeedleMapType::NeedleMapInMemory, volume_opts, false).await?;
+
     server.start().await?;
     shutdown_signal().await;
     server.stop().await?;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
 }
 
 fn log_init(

@@ -37,8 +37,7 @@ pub fn file_exists(filename: &str) -> Result<bool, std::io::Error> {
 mod tests {
     use std::{
         ffi::OsStr,
-        fs,
-        fs::{metadata, read, write},
+        fs::{self, metadata, read, write},
         io::{ErrorKind, Read, Write},
         path::Path,
     };
