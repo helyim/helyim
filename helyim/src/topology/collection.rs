@@ -1,11 +1,15 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
+use dashmap::DashMap;
 use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeId},
-    topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
+    topology::{
+        volume_layout::{VolumeLayout, VolumeLayoutRef},
+        DataNodeRef,
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -13,7 +17,7 @@ pub struct Collection {
     name: FastStr,
     volume_size_limit: u64,
     #[serde(skip)]
-    pub volume_layouts: HashMap<FastStr, VolumeLayoutRef>,
+    pub volume_layouts: DashMap<FastStr, VolumeLayoutRef>,
 }
 
 impl Collection {
@@ -21,30 +25,34 @@ impl Collection {
         Collection {
             name,
             volume_size_limit,
-            volume_layouts: HashMap::new(),
+            volume_layouts: DashMap::new(),
         }
     }
 
     pub fn get_or_create_volume_layout(
-        &mut self,
+        &self,
         rp: ReplicaPlacement,
         ttl: Option<Ttl>,
-    ) -> &mut VolumeLayoutRef {
+    ) -> VolumeLayoutRef {
         let key = match ttl {
             Some(ttl) => format!("{}{}", rp, ttl),
             None => rp.to_string(),
         };
 
-        let volume_size = self.volume_size_limit;
-
-        self.volume_layouts
-            .entry(FastStr::from_string(key))
-            .or_insert_with(|| VolumeLayoutRef::new(rp, ttl, volume_size))
+        match self.volume_layouts.get(key.as_str()) {
+            Some(vl) => vl.value().clone(),
+            None => {
+                let volume_layout = Arc::new(VolumeLayout::new(rp, ttl, self.volume_size_limit));
+                self.volume_layouts
+                    .insert(FastStr::new(key), volume_layout.clone());
+                volume_layout
+            }
+        }
     }
 
     pub async fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {
-        for layout in self.volume_layouts.values() {
-            let ret = layout.read().await.lookup(vid);
+        for layout in self.volume_layouts.iter() {
+            let ret = layout.lookup(vid);
             if ret.is_some() {
                 return ret;
             }

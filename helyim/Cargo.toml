@@ -29,7 +29,7 @@ bytes = { workspace = true, features = ["serde"] }
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
-dashmap.workspace = true
+dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true

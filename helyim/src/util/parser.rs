@@ -38,7 +38,7 @@ pub fn parse_host_port(addr: &str) -> Result<(String, u16), ParseIntError> {
     match addr.rfind(':') {
         Some(idx) => {
             let port = addr[idx + 1..].parse::<u16>()?;
-            Ok((addr[..idx].to_string(), port + 1))
+            Ok((addr[..idx].to_string(), port))
         }
         None => Ok((addr.to_string(), 80)),
     }

@@ -20,8 +20,6 @@ use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use faststr::FastStr;
 use futures::stream::once;
-use ginepro::LoadBalancedChannel;
-use helyim_proto::helyim_client::HelyimClient;
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
@@ -49,15 +47,14 @@ pub struct StorageContext {
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
-    pub pulse_seconds: u64,
-    pub client: HelyimClient<LoadBalancedChannel>,
+    pub pulse: u64,
     pub looker: Arc<Looker>,
 }
 
 pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in ctx.store.read().await.locations().iter() {
-        for (_, volume) in location.volumes.iter() {
+    for location in ctx.store.locations().iter() {
+        for volume in location.volumes.iter() {
             infos.push(volume.get_volume_info()?);
         }
     }
@@ -101,12 +98,7 @@ pub async fn delete_handler(
     let mut needle = Needle::new_with_fid(fid)?;
 
     let cookie = needle.cookie;
-    let _ = ctx
-        .store
-        .read()
-        .await
-        .read_volume_needle(vid, &mut needle)
-        .await?;
+    let _ = ctx.store.read_volume_needle(vid, &mut needle).await?;
     if cookie != needle.cookie {
         info!(
             "cookie not match from {:?} recv: {}, file is {}",
@@ -135,29 +127,23 @@ async fn replicate_delete(
     needle: &mut Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let local_url = format!(
-        "{}:{}",
-        ctx.store.read().await.ip,
-        ctx.store.read().await.port
-    );
-    let size = ctx
-        .store
-        .write()
-        .await
-        .delete_volume_needle(vid, needle)
-        .await?;
+    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
+    let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.read().await.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
 
     let params = vec![("type", "replicate")];
-    let mut volume_locations = ctx.looker.lookup(vec![vid], &mut ctx.client).await?;
+    let mut volume_locations = ctx
+        .looker
+        .lookup(vec![vid], &ctx.store.current_master.read().await)
+        .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         async_scoped::TokioScope::scope_and_block(|s| {
@@ -236,23 +222,14 @@ async fn replicate_write(
     needle: &mut Needle,
     is_replicate: bool,
 ) -> Result<u32> {
-    let local_url = format!(
-        "{}:{}",
-        ctx.store.read().await.ip,
-        ctx.store.read().await.port
-    );
-    let size = ctx
-        .store
-        .write()
-        .await
-        .write_volume_needle(vid, needle)
-        .await?;
+    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
+    let size = ctx.store.write_volume_needle(vid, needle).await?;
     // if the volume is replica, it will return needle directly.
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.read().await.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid).await? {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -261,7 +238,10 @@ async fn replicate_write(
     let params = vec![("type", "replicate")];
     let data = bincode::serialize(&needle)?;
 
-    let mut volume_locations = ctx.looker.lookup(vec![vid], &mut ctx.client).await?;
+    let mut volume_locations = ctx
+        .looker
+        .lookup(vec![vid], &ctx.store.current_master.read().await)
+        .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
         async_scoped::TokioScope::scope_and_block(|s| {
@@ -444,7 +424,7 @@ pub async fn get_or_head_handler(
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
 
     let mut response = Response::new(Body::empty());
-    if !ctx.store.read().await.has_volume(vid).await? {
+    if !ctx.store.has_volume(vid).await? {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume {} is not belongs to this server", vid);
@@ -455,12 +435,7 @@ pub async fn get_or_head_handler(
 
     let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
-    let _ = ctx
-        .store
-        .read()
-        .await
-        .read_volume_needle(vid, &mut needle)
-        .await?;
+    let _ = ctx.store.read_volume_needle(vid, &mut needle).await?;
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }

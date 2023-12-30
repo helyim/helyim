@@ -7,9 +7,7 @@ use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
-use ginepro::LoadBalancedChannel;
 use helyim_proto::{
-    helyim_client::HelyimClient,
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
@@ -41,21 +39,20 @@ use crate::{
             write_sorted_file_from_index, ShardId,
         },
         needle::NeedleMapType,
-        store::StoreRef,
+        store::{Store, StoreRef},
         version::Version,
         VolumeError, BUFFER_SIZE_LIMIT,
     },
     util::{
         args::VolumeOptions,
-        exit,
         file::file_exists,
+        grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
-        parser::parse_host_port,
+        sys::exit,
     },
 };
 
 pub struct VolumeServer {
-    host: FastStr,
     pub options: Arc<VolumeOptions>,
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
@@ -68,31 +65,19 @@ pub struct VolumeServer {
 
 impl VolumeServer {
     pub async fn new(
-        host: &str,
-        public_url: &str,
-        folders: Vec<String>,
-        max_counts: Vec<i64>,
         needle_map_type: NeedleMapType,
         volume_opts: VolumeOptions,
         read_redirect: bool,
     ) -> Result<VolumeServer> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let store = StoreRef::new(
-            &volume_opts.ip,
-            volume_opts.port,
-            public_url,
-            folders,
-            max_counts,
-            needle_map_type,
-        )
-        .await?;
+        let options = Arc::new(volume_opts);
+        let store = Arc::new(Store::new(options.clone(), needle_map_type).await?);
 
-        let addr = format!("{}:{}", host, volume_opts.port + 1).parse()?;
+        let addr = format!("{}:{}", options.ip, grpc_port(options.port)).parse()?;
 
         let storage = VolumeServer {
-            host: FastStr::new(host),
-            options: Arc::new(volume_opts),
+            options,
             needle_map_type,
             read_redirect,
             current_master: FastStr::empty(),
@@ -121,7 +106,7 @@ impl VolumeServer {
         Ok(storage)
     }
 
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(self) -> Result<()> {
         self.shutdown.broadcast(()).await?;
         Ok(())
     }
@@ -130,29 +115,27 @@ impl VolumeServer {
         let store = self.store.clone();
         let needle_map_type = self.needle_map_type;
         let read_redirect = self.read_redirect;
-        let pulse_seconds = self.options.pulse_seconds;
+        let pulse = self.options.pulse;
 
         self.update_masters().await?;
-        let client = create_helyim_client(&self.current_master).await?;
 
         let ctx = StorageContext {
             store,
             needle_map_type,
             read_redirect,
-            pulse_seconds,
-            client: client.clone(),
+            pulse,
             looker: Arc::new(Looker::new()),
         };
 
         rt_spawn(Self::heartbeat(
             self.store.clone(),
             self.seed_master_nodes.clone(),
-            pulse_seconds,
+            pulse,
             self.shutdown.new_receiver(),
         ));
 
         // http server
-        let addr = format!("{}:{}", self.host, self.options.port).parse()?;
+        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
 
         rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
@@ -171,36 +154,26 @@ impl VolumeServer {
     }
 }
 
-async fn create_helyim_client(
-    master: &str,
-) -> StdResult<HelyimClient<LoadBalancedChannel>, VolumeError> {
-    let channel = LoadBalancedChannel::builder(parse_host_port(master)?)
-        .channel()
-        .await
-        .map_err(|err| VolumeError::Box(err.into()))?;
-    Ok(HelyimClient::new(channel))
-}
-
 impl VolumeServer {
     async fn heartbeat(
         store: StoreRef,
         seed_masters: Vec<FastStr>,
-        pulse_seconds: u64,
+        pulse: u64,
         mut shutdown: async_broadcast::Receiver<()>,
     ) {
         let mut new_leader = FastStr::empty();
         loop {
             for master in seed_masters.iter() {
                 if !new_leader.is_empty() && &new_leader != master {
-                    sleep(Duration::from_secs(pulse_seconds)).await;
+                    sleep(Duration::from_secs(pulse)).await;
                     continue;
                 }
-                store.write().await.set_current_master(master.clone());
+                store.set_current_master(master.clone()).await;
                 tokio::select! {
                     ret = VolumeServer::do_heartbeat(
                         master,
                         store.clone(),
-                        pulse_seconds,
+                        pulse,
                         shutdown.clone(),
                     ) => {
                             match ret {
@@ -211,9 +184,9 @@ impl VolumeServer {
                                 }
                                 Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
                                     warn!("heartbeat to {master} error: {err}");
-                                    sleep(Duration::from_secs(pulse_seconds)).await;
+                                    sleep(Duration::from_secs(pulse)).await;
                                     new_leader = FastStr::empty();
-                                    store.write().await.set_current_master(FastStr::empty());
+                                    store.set_current_master(FastStr::empty()).await;
                                 }
                                 Err(err) => {
                                     error!("heartbeat but error occur: {err}");
@@ -243,7 +216,7 @@ impl VolumeServer {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match store_ref.write().await.collect_heartbeat().await {
+                        match store_ref.collect_heartbeat().await {
                             Ok(heartbeat) => yield heartbeat,
                             Err(err) => error!("collect heartbeat error: {err}")
                         }
@@ -256,7 +229,7 @@ impl VolumeServer {
             }
         };
 
-        let mut client = create_helyim_client(master).await?;
+        let client = helyim_client(master)?;
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();
@@ -267,7 +240,7 @@ impl VolumeServer {
                             if let Ok(response) = serde_json::to_string(&response) {
                                 debug!("heartbeat reply: {response}");
                             }
-                            let old_leader = store.read().await.current_master.clone();
+                            let old_leader = store.current_master.read().await.clone();
                             if !response.leader.is_empty() && response.leader != old_leader {
                                 info!(
                                     "leader changed, current leader is {}, old leader is \
@@ -275,13 +248,10 @@ impl VolumeServer {
                                     response.leader
                                 );
                                 let new_leader = FastStr::new(response.leader);
-                                store.write().await.set_current_master(new_leader.clone());
+                                store.set_current_master(new_leader.clone()).await;
                                 return Err(VolumeError::LeaderChanged(new_leader, old_leader));
                             }
-                            store
-                                .write()
-                                .await
-                                .set_volume_size_limit(response.volume_size_limit);
+                            store.set_volume_size_limit(response.volume_size_limit);
                         }
                         Err(err) => {
                             error!(
@@ -359,8 +329,6 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<AllocateVolumeResponse>, Status> {
         let request = request.into_inner();
         self.store
-            .write()
-            .await
             .add_volume(
                 request.volumes,
                 request.collection,
@@ -379,12 +347,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self
-            .store
-            .read()
-            .await
-            .check_compact_volume(request.volume_id)
-            .await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -395,8 +358,6 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} compact", request.volume_id);
         self.store
-            .read()
-            .await
             .compact_volume(request.volume_id, request.preallocate)
             .await?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
@@ -408,11 +369,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
-        self.store
-            .read()
-            .await
-            .commit_compact_volume(request.volume_id)
-            .await?;
+        self.store.commit_compact_volume(request.volume_id).await?;
         // TODO: check whether the volume is read only
         Ok(Response::new(VacuumVolumeCommitResponse {
             is_read_only: false,
@@ -425,11 +382,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} cleanup", request.volume_id);
-        self.store
-            .read()
-            .await
-            .commit_cleanup_volume(request.volume_id)
-            .await?;
+        self.store.commit_cleanup_volume(request.volume_id).await?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
@@ -438,13 +391,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
         let request = request.into_inner();
-        match self
-            .store
-            .read()
-            .await
-            .find_volume(request.volume_id)
-            .await?
-        {
+        match self.store.find_volume(request.volume_id).await? {
             Some(volume) => {
                 let base_filename = volume.filename();
                 let collection = volume.collection.clone();
@@ -477,7 +424,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
 
         let mut rebuilt_shard_ids = Vec::new();
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}{}", location.directory, base_filename);
@@ -507,7 +454,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let mut base_filename = ec_shard_base_filename(&request.collection, request.volume_id);
         let mut found = false;
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 found = true;
@@ -538,7 +485,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let idx_filename = format!("{}.idx", filename);
         let ec_prefix = format!("{}.ec", filename);
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             let read_dir = fs::read_dir(location.directory.to_string())?;
             for entry in read_dir {
                 match entry?.file_name().into_string() {
@@ -597,13 +544,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
         let request = request.into_inner();
 
-        if let Some(volume) = self
-            .store
-            .read()
-            .await
-            .find_ec_volume(request.volume_id)
-            .await
-        {
+        if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
             if let Some(shard) = volume.read().await.find_shard(request.shard_id as ShardId) {
                 if request.file_key != 0 {
                     let needle_value =
@@ -675,7 +616,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcBlobDeleteResponse>, Status> {
         let request = request.into_inner();
 
-        for location in self.store.read().await.locations().iter() {
+        for location in self.store.locations().iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
                     .read()
@@ -702,13 +643,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
         let request = request.into_inner();
 
-        match self
-            .store
-            .read()
-            .await
-            .find_ec_volume(request.volume_id)
-            .await
-        {
+        match self.store.find_ec_volume(request.volume_id).await {
             Some(volume) => {
                 if volume.read().await.collection() == request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));

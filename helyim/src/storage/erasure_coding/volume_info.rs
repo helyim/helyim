@@ -1,3 +1,8 @@
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
+
 use faststr::FastStr;
 use serde::{Deserialize, Serialize};
 
@@ -6,20 +11,28 @@ use crate::storage::{
     VolumeId,
 };
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
-pub struct ShardBits(u32);
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ShardBits(Arc<AtomicU32>);
 
 impl ShardBits {
+    fn new(value: u32) -> Self {
+        Self(Arc::new(AtomicU32::new(value)))
+    }
+
+    fn value(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
+    }
+
     pub fn add_shard_id(self, id: ShardId) -> Self {
-        Self(self.0 | (1 << id))
+        Self::new(self.value() | (1 << id))
     }
 
     pub fn remove_shard_id(self, id: ShardId) -> Self {
-        Self(self.0 & !(1 << id))
+        Self::new(self.value() & !(1 << id))
     }
 
     pub fn has_shard_id(&self, id: ShardId) -> bool {
-        self.0 & (1 << id) > 0
+        self.value() & (1 << id) > 0
     }
 
     pub fn shard_ids(&self) -> Vec<ShardId> {
@@ -33,29 +46,32 @@ impl ShardBits {
         shards
     }
 
-    pub fn shard_id_count(&mut self) -> u64 {
+    pub fn shard_id_count(&self) -> u64 {
         let mut count = 0;
         loop {
-            if self.0 == 0 {
+            let mut v = self.value();
+            if v == 0 {
                 return count;
             }
-            self.0 &= self.0 - 1;
+            v &= v - 1;
+            self.0.store(v, Ordering::Relaxed);
+
             count += 1;
         }
     }
 
-    pub fn minus(self, other: Self) -> Self {
-        Self(self.0 & !other.0)
+    pub fn minus(&self, other: &Self) -> Self {
+        Self::new(self.value() & !other.value())
     }
 
-    pub fn plus(self, other: Self) -> Self {
-        Self(self.0 | other.0)
+    pub fn plus(&self, other: &Self) -> Self {
+        Self::new(self.value() | other.value())
     }
 }
 
 impl From<u32> for ShardBits {
     fn from(value: u32) -> Self {
-        Self(value)
+        Self::new(value)
     }
 }
 
@@ -79,7 +95,7 @@ impl EcVolumeInfo {
         Self {
             volume_id: self.volume_id,
             collection: self.collection.clone(),
-            shard_bits: self.shard_bits.minus(other.shard_bits),
+            shard_bits: self.shard_bits.minus(&other.shard_bits),
         }
     }
 }

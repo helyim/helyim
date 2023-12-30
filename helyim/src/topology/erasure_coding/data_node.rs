@@ -3,16 +3,16 @@ use std::collections::HashMap;
 use crate::{storage::erasure_coding::EcVolumeInfo, topology::data_node::DataNode};
 
 impl DataNode {
-    pub fn get_ec_shards(&self) -> Vec<&EcVolumeInfo> {
+    pub fn get_ec_shards(&self) -> Vec<EcVolumeInfo> {
         let mut volumes = Vec::new();
-        for (_, ec_volume) in self.ec_shards.iter() {
-            volumes.push(ec_volume);
+        for ec_volume in self.ec_shards.iter() {
+            volumes.push(ec_volume.value().clone());
         }
         volumes
     }
 
     pub async fn update_ec_shards(
-        &mut self,
+        &self,
         actual_shards: &mut [EcVolumeInfo],
     ) -> (Vec<EcVolumeInfo>, Vec<EcVolumeInfo>) {
         // prepare the new ec shards map
@@ -27,15 +27,17 @@ impl DataNode {
 
         let mut new_shards = Vec::new();
         let mut deleted_shards = Vec::new();
-        for (vid, ec_shards) in self.ec_shards.iter_mut() {
+        for ec_shards in self.ec_shards.iter() {
+            let vid = ec_shards.key();
+            let ec_shards = ec_shards.value();
             match actual_ec_shard_map.get(vid) {
                 Some(actual_ec_shards) => {
-                    let mut a = actual_ec_shards.minus(ec_shards);
+                    let a = actual_ec_shards.minus(ec_shards);
                     if a.shard_bits.shard_id_count() > 0 {
                         new_shard_count += a.shard_bits.shard_id_count();
                         new_shards.push(a);
                     }
-                    let mut d = ec_shards.minus(actual_ec_shards);
+                    let d = ec_shards.minus(actual_ec_shards);
                     if d.shard_bits.shard_id_count() > 0 {
                         deleted_shard_count += d.shard_bits.shard_id_count();
                         deleted_shards.push(d);
@@ -56,7 +58,10 @@ impl DataNode {
         }
 
         if !new_shards.is_empty() || !deleted_shards.is_empty() {
-            self.ec_shards = actual_ec_shard_map;
+            self.ec_shards.clear();
+            for (key, value) in actual_ec_shard_map {
+                self.ec_shards.insert(key, value);
+            }
             self.adjust_ec_shard_count(new_shard_count as i64 - deleted_shard_count as i64)
                 .await;
         }
@@ -65,7 +70,7 @@ impl DataNode {
     }
 
     pub async fn delta_update_ec_shards(
-        &mut self,
+        &self,
         new_shards: &mut [EcVolumeInfo],
         deleted_shards: &mut [EcVolumeInfo],
     ) {
@@ -77,11 +82,11 @@ impl DataNode {
         }
     }
 
-    pub async fn add_or_update_ec_shards(&mut self, volume: &mut EcVolumeInfo) {
+    pub async fn add_or_update_ec_shards(&self, volume: &mut EcVolumeInfo) {
         let delta = match self.ec_shards.get_mut(&volume.volume_id) {
-            Some(ec_shard) => {
+            Some(mut ec_shard) => {
                 let old_count = ec_shard.shard_bits.shard_id_count();
-                ec_shard.shard_bits = ec_shard.shard_bits.plus(volume.shard_bits);
+                ec_shard.shard_bits = ec_shard.shard_bits.plus(&volume.shard_bits);
                 ec_shard.shard_bits.shard_id_count() - old_count
             }
             None => {
@@ -93,10 +98,10 @@ impl DataNode {
         self.adjust_ec_shard_count(delta as i64).await;
     }
 
-    pub async fn delete_ec_shard(&mut self, volume: &mut EcVolumeInfo) {
-        if let Some(ec_shard) = self.ec_shards.get_mut(&volume.volume_id) {
+    pub async fn delete_ec_shard(&self, volume: &mut EcVolumeInfo) {
+        if let Some(mut ec_shard) = self.ec_shards.get_mut(&volume.volume_id) {
             let old_count = ec_shard.shard_bits.shard_id_count();
-            ec_shard.shard_bits = ec_shard.shard_bits.minus(volume.shard_bits);
+            ec_shard.shard_bits = ec_shard.shard_bits.minus(&volume.shard_bits);
             let delta = ec_shard.shard_bits.shard_id_count() - old_count;
             if ec_shard.shard_bits.shard_id_count() == 0 {
                 self.ec_shards.remove(&volume.volume_id);

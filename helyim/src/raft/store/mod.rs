@@ -267,11 +267,7 @@ impl RaftStorage<TypeConfig> for Arc<Store> {
                 EntryPayload::Normal(ref req) => match req {
                     RaftRequest::MaxVolumeId { max_volume_id } => {
                         debug!("apply max volume id: {max_volume_id}");
-                        sm.topology()
-                            .read()
-                            .await
-                            .adjust_max_volume_id(*max_volume_id)
-                            .await;
+                        sm.topology().adjust_max_volume_id(*max_volume_id).await;
                         res.push(RaftResponse)
                     }
                 },

@@ -27,7 +27,7 @@ impl EcShardLocations {
     pub async fn add_shard(&mut self, shard_id: ShardId, data_node: DataNodeRef) -> bool {
         let data_nodes = &self.locations[shard_id as usize];
         for node in data_nodes {
-            if node.read().await.id() == data_node.read().await.id() {
+            if node.id() == data_node.id() {
                 return false;
             }
         }
@@ -39,7 +39,7 @@ impl EcShardLocations {
         let data_nodes = &self.locations[shard_id as usize];
         let mut index = -1;
         for (i, node) in data_nodes.iter().enumerate() {
-            if node.read().await.id() == data_node.read().await.id() {
+            if node.id() == data_node.id() {
                 index = i as i32;
                 break;
             }
@@ -67,8 +67,7 @@ impl Topology {
             );
             shards.push(shard);
         }
-        let (new_shards, deleted_shards) =
-            data_node.write().await.update_ec_shards(&mut shards).await;
+        let (new_shards, deleted_shards) = data_node.update_ec_shards(&mut shards).await;
         for shard in new_shards.iter() {
             self.register_ec_shards(shard, &data_node).await;
         }
@@ -104,8 +103,6 @@ impl Topology {
         }
 
         data_node
-            .write()
-            .await
             .delta_update_ec_shards(&mut new_shards, &mut deleted_shards)
             .await;
 
@@ -123,7 +120,7 @@ impl Topology {
         data_node: &DataNodeRef,
     ) {
         match self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
-            Some(locations) => {
+            Some(mut locations) => {
                 for shard_id in ec_shard_infos.shard_bits.shard_ids() {
                     let _ = locations.add_shard(shard_id, data_node.clone()).await;
                 }
@@ -143,7 +140,7 @@ impl Topology {
         ec_shard_infos: &EcVolumeInfo,
         data_node: &DataNodeRef,
     ) {
-        if let Some(locations) = self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
+        if let Some(mut locations) = self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
             for shard_id in ec_shard_infos.shard_bits.shard_ids() {
                 let _ = locations.delete_shard(shard_id, data_node).await;
             }

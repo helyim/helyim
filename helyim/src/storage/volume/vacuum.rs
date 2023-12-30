@@ -372,14 +372,13 @@ pub async fn batch_vacuum_volume_check(
     let mut need_vacuum = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCheckRequest { volume_id };
-        let response = data_node.write().await.vacuum_volume_check(request).await;
+        let response = data_node.vacuum_volume_check(request).await;
         match response {
             Ok(response) => {
                 if response.garbage_ratio > 0.0 {
                     info!(
                         "check volume {}:{volume_id} success. garbage ratio is {}",
-                        data_node.read().await.public_url,
-                        response.garbage_ratio
+                        data_node.public_url, response.garbage_ratio
                     );
                 }
                 need_vacuum = response.garbage_ratio > garbage_ratio;
@@ -387,7 +386,7 @@ pub async fn batch_vacuum_volume_check(
             Err(err) => {
                 error!(
                     "check volume {}:{volume_id} failed, {err}",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
                 need_vacuum = false;
             }
@@ -397,31 +396,31 @@ pub async fn batch_vacuum_volume_check(
 }
 
 pub async fn batch_vacuum_volume_compact(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
     preallocate: u64,
 ) -> bool {
-    volume_layout.write().await.remove_from_writable(volume_id);
+    volume_layout.remove_from_writable(volume_id).await;
     let mut compact_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCompactRequest {
             volume_id,
             preallocate,
         };
-        let response = data_node.write().await.vacuum_volume_compact(request).await;
+        let response = data_node.vacuum_volume_compact(request).await;
         match response {
             Ok(_) => {
                 info!(
                     "compact volume {}:{volume_id} success.",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
                 compact_success = true;
             }
             Err(err) => {
                 error!(
                     "compact volume {}:{volume_id} failed, {err}",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
                 compact_success = false;
             }
@@ -431,7 +430,7 @@ pub async fn batch_vacuum_volume_compact(
 }
 
 pub async fn batch_vacuum_volume_commit(
-    volume_layout: &mut VolumeLayoutRef,
+    volume_layout: &VolumeLayoutRef,
     volume_id: VolumeId,
     data_nodes: &[DataNodeRef],
 ) -> bool {
@@ -439,7 +438,7 @@ pub async fn batch_vacuum_volume_commit(
     let mut is_readonly = false;
     for data_node in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
-        let response = data_node.write().await.vacuum_volume_commit(request).await;
+        let response = data_node.vacuum_volume_commit(request).await;
         match response {
             Ok(response) => {
                 if response.is_read_only {
@@ -447,13 +446,13 @@ pub async fn batch_vacuum_volume_commit(
                 }
                 info!(
                     "commit volume {}:{volume_id} success.",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
             }
             Err(err) => {
                 error!(
                     "commit volume {}:{volume_id} failed, {err}",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
                 commit_success = false;
             }
@@ -462,8 +461,6 @@ pub async fn batch_vacuum_volume_commit(
     if commit_success {
         for data_node in data_nodes {
             volume_layout
-                .write()
-                .await
                 .set_volume_available(volume_id, data_node, is_readonly)
                 .await;
         }
@@ -477,12 +474,12 @@ async fn batch_vacuum_volume_cleanup(volume_id: VolumeId, data_nodes: &[DataNode
     let mut cleanup_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };
-        let response = data_node.write().await.vacuum_volume_cleanup(request).await;
+        let response = data_node.vacuum_volume_cleanup(request).await;
         match response {
             Ok(_) => {
                 info!(
                     "cleanup volume {}:{volume_id} success.",
-                    data_node.read().await.public_url
+                    data_node.public_url
                 );
                 cleanup_success = true;
             }

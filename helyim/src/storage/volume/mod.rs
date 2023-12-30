@@ -18,7 +18,6 @@ use axum::{
 };
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
-use parking_lot::Mutex;
 use rustix::fs::ftruncate;
 use serde_json::json;
 use tracing::{debug, error, info};
@@ -120,7 +119,6 @@ pub struct Volume {
     pub collection: FastStr,
 
     data_file: Option<File>,
-    data_file_mutex: Mutex<()>,
 
     needle_mapper: Option<Arc<NeedleMapper>>,
     needle_map_type: NeedleMapType,
@@ -169,7 +167,6 @@ impl Volume {
             collection,
             super_block: Arc::new(sb),
             data_file: None,
-            data_file_mutex: Mutex::new(()),
             needle_map_type,
             needle_mapper: None,
             readonly: Arc::new(AtomicBool::new(true)),
@@ -272,16 +269,13 @@ impl Volume {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
 
-        {
-            let _lock = self.data_file_mutex.lock();
-            if let Err(err) = needle.append(file, offset, version) {
-                error!(
-                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                    needle.id
-                );
-                ftruncate(file, offset)?;
-                return Err(err.into());
-            }
+        if let Err(err) = needle.append(file, offset, version) {
+            error!(
+                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                needle.id
+            );
+            ftruncate(file, offset)?;
+            return Err(err.into());
         }
 
         let nv = NeedleValue {
@@ -322,10 +316,9 @@ impl Volume {
         if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
             offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
         }
-        {
-            let _lock = self.data_file_mutex.lock();
-            needle.append(file, offset, version)?;
-        }
+
+        needle.append(file, offset, version)?;
+
         Ok(data_size)
     }
 
@@ -592,6 +585,8 @@ pub enum VolumeError {
     SerdeJson(#[from] serde_json::Error),
     #[error("Tonic status: {0}")]
     TonicStatus(#[from] tonic::Status),
+    #[error("Tonic transport error: {0}")]
+    TonicTransport(#[from] tonic::transport::Error),
     #[error("JoinHandle error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
     #[error("Reqwest error: {0}")]

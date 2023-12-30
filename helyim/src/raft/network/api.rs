@@ -32,8 +32,6 @@ pub async fn max_volume_id_handler(State(raft): State<RaftServer>) -> Json<u32> 
         .read()
         .await
         .topology()
-        .read()
-        .await
         .max_volume_id();
     Json(response)
 }

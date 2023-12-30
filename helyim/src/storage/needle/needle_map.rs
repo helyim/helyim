@@ -77,7 +77,7 @@ impl NeedleMapper {
     ) -> Result<Option<NeedleValue>, VolumeError> {
         debug!("needle map set key: {}, {}", key, index);
 
-        self.metric.compare_max_file_key(key);
+        self.metric.maybe_max_file_key(key);
         self.metric.add_file(index.size);
 
         let old = self.needle_value_map.set(key, index);

@@ -5,6 +5,8 @@ pub mod args;
 
 pub mod file;
 
+pub mod grpc;
+
 pub mod http;
 
 #[macro_use]
@@ -12,8 +14,7 @@ pub mod macros;
 
 pub mod parser;
 
-mod sys;
-pub use sys::exit;
+pub mod sys;
 
 pub mod time;
 

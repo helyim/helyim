@@ -8,7 +8,7 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::storage::{
     crc,
@@ -333,8 +333,8 @@ impl Needle {
         let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
-        if self.size != size {
-            return Err(NeedleError::NotFound(self.id));
+        if self.size != size && offset.actual_offset() < MAX_POSSIBLE_VOLUME_SIZE {
+            return Err(NeedleError::SizeNotMatch(self.size, size));
         }
 
         if version == VERSION2 {
@@ -450,6 +450,8 @@ pub enum NeedleError {
     NotFound(u64),
     #[error("Cookie not match, needle cookie is {0} but got {1}")]
     CookieNotMatch(u32, u32),
+    #[error("Size not match, needle size is {0} but got {1}")]
+    SizeNotMatch(Size, Size),
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(Version),
     #[error("Crc error, read: {0}, calculate: {1}, may be data on disk corrupted")]
