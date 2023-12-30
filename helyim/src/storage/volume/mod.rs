@@ -18,6 +18,7 @@ use axum::{
 };
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
+use parking_lot::{RwLock, RwLockReadGuard};
 use rustix::fs::ftruncate;
 use serde_json::json;
 use tracing::{debug, error, info};
@@ -46,7 +47,7 @@ pub mod vacuum;
 mod volume_info;
 pub use volume_info::VolumeInfo;
 
-use crate::storage::{needle::NeedleError, types::Offset};
+use crate::storage::{needle::NeedleError, types::Offset, NeedleId};
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -119,8 +120,9 @@ pub struct Volume {
     pub collection: FastStr,
 
     data_file: Option<File>,
+    data_file_lock: RwLock<()>,
 
-    needle_mapper: Option<Arc<NeedleMapper>>,
+    needle_mapper: Option<RwLock<NeedleMapper>>,
     needle_map_type: NeedleMapType,
     pub super_block: Arc<SuperBlock>,
 
@@ -167,6 +169,7 @@ impl Volume {
             collection,
             super_block: Arc::new(sb),
             data_file: None,
+            data_file_lock: RwLock::new(()),
             needle_map_type,
             needle_mapper: None,
             readonly: Arc::new(AtomicBool::new(true)),
@@ -181,8 +184,11 @@ impl Volume {
     }
 
     pub fn load(&mut self, create_if_missing: bool, load_index: bool) -> Result<(), VolumeError> {
-        if self.data_file.is_some() {
-            return Err(VolumeError::HasLoaded(self.id));
+        {
+            let _lock = self.data_file_lock.read();
+            if self.data_file.is_some() {
+                return Err(VolumeError::HasLoaded(self.id));
+            }
         }
 
         let name = self.data_filename();
@@ -223,7 +229,11 @@ impl Volume {
                 .mode(0o644)
                 .open(&name)?
         };
-        self.data_file = Some(file);
+
+        {
+            let _lock = self.data_file_lock.write();
+            self.data_file = Some(file);
+        }
 
         if has_super_block {
             self.read_super_block()?;
@@ -248,7 +258,7 @@ impl Volume {
             }
             let mut needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
             needle_mapper.load_index_file(index_file)?;
-            self.needle_mapper = Some(Arc::new(needle_mapper));
+            self.needle_mapper = Some(RwLock::new(needle_mapper));
             info!("load index file `{}` success", self.index_filename());
         }
 
@@ -262,27 +272,32 @@ impl Volume {
         }
 
         let version = self.version();
-        let file = self.data_file()?;
 
-        let mut offset = file.metadata()?.len();
-        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+        {
+            let _lock = self.data_file_lock.read();
+            let file = self.data_file()?;
+
+            let mut offset = file.metadata()?.len();
+            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+                offset =
+                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+            }
+
+            if let Err(err) = needle.append(file, offset, version) {
+                error!(
+                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                    needle.id
+                );
+                ftruncate(file, offset)?;
+                return Err(err.into());
+            }
+
+            let nv = NeedleValue {
+                offset: offset.into(),
+                size: needle.size,
+            };
+            self.set_index(needle.id, nv)?;
         }
-
-        if let Err(err) = needle.append(file, offset, version) {
-            error!(
-                "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                needle.id
-            );
-            ftruncate(file, offset)?;
-            return Err(err.into());
-        }
-
-        let nv = NeedleValue {
-            offset: offset.into(),
-            size: needle.size,
-        };
-        self.needle_mapper()?.set(needle.id, nv)?;
 
         if self.last_modified() < needle.last_modified {
             self.set_last_modified(needle.last_modified);
@@ -296,13 +311,13 @@ impl Volume {
             return Err(VolumeError::Readonly(self.id));
         }
 
-        let mut nv = match self.needle_mapper()?.get(needle.id) {
+        let mut nv = match self.get_index(needle.id)? {
             Some(nv) => nv,
             None => return Ok(0),
         };
         nv.offset = Offset(0);
 
-        self.needle_mapper()?.set(needle.id, nv)?;
+        self.set_index(needle.id, nv)?;
         // TODO: can be removed
         needle.set_is_delete();
 
@@ -310,28 +325,38 @@ impl Volume {
         needle.data.clear();
 
         let version = self.version();
-        let file = self.data_file()?;
 
-        let mut offset = file.metadata()?.len();
-        if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-            offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+        {
+            let _lock = self.data_file_lock.read();
+            let file = self.data_file()?;
+
+            let mut offset = file.metadata()?.len();
+            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+                offset =
+                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+            }
+
+            needle.append(file, offset, version)?;
         }
-
-        needle.append(file, offset, version)?;
 
         Ok(data_size)
     }
 
     pub fn read_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
-        match self.needle_mapper()?.get(needle.id) {
+        match self.get_index(needle.id)? {
             Some(nv) => {
                 if nv.offset == 0 || nv.size.is_deleted() {
                     return Err(NeedleError::Deleted(self.id, needle.id).into());
                 }
 
                 let version = self.version();
-                let data_file = self.data_file()?;
-                needle.read_data(data_file, nv.offset, nv.size, version)?;
+
+                {
+                    let _lock = self.data_file_lock.read();
+                    let data_file = self.data_file()?;
+                    needle.read_data(data_file, nv.offset, nv.size, version)?;
+                }
+
                 let data_size = needle.data_size();
                 if !needle.has_ttl() {
                     return Ok(data_size);
@@ -352,16 +377,6 @@ impl Volume {
             None => {
                 error!("needle {} is not found, volume: {}", needle.id, self.id);
                 Err(NeedleError::NotFound(needle.id).into())
-            }
-        }
-    }
-
-    pub fn needle_mapper(&self) -> Result<&NeedleMapper, VolumeError> {
-        match self.needle_mapper.as_ref() {
-            Some(nm) => Ok(nm),
-            None => {
-                error!("needle mapper is not load, volume: {}", self.id);
-                Err(VolumeError::NeedleMapperNotLoad(self.id))
             }
         }
     }
@@ -408,23 +423,8 @@ impl Volume {
         Ok(())
     }
 
-    pub fn deleted_bytes(&self) -> Result<u64, VolumeError> {
-        Ok(self.needle_mapper()?.deleted_bytes())
-    }
-
-    pub fn deleted_count(&self) -> Result<u64, VolumeError> {
-        Ok(self.needle_mapper()?.deleted_count())
-    }
-
-    pub fn max_file_key(&self) -> Result<u64, VolumeError> {
-        Ok(self.needle_mapper()?.max_file_key())
-    }
-
-    pub fn file_count(&self) -> Result<u64, VolumeError> {
-        Ok(self.needle_mapper()?.file_count())
-    }
-
     pub fn data_file_size(&self) -> Result<u64, VolumeError> {
+        let _lock = self.data_file_lock.read();
         let file = self.data_file()?;
         Ok(file.metadata()?.len())
     }
@@ -442,10 +442,6 @@ impl Volume {
 
     pub fn index_filename(&self) -> String {
         format!("{}.{IDX_FILE_SUFFIX}", self.filename())
-    }
-
-    pub fn content_size(&self) -> Result<u64, VolumeError> {
-        Ok(self.needle_mapper()?.content_size())
     }
 
     /// volume is expired if modified time + volume ttl < now
@@ -500,12 +496,16 @@ impl Volume {
 impl Volume {
     fn write_super_block(&self) -> Result<(), VolumeError> {
         let bytes = self.super_block.as_bytes();
-        let file = self.data_file()?;
-        if file.metadata()?.len() != 0 {
-            return Ok(());
-        }
 
-        file.write_all_at(&bytes, 0)?;
+        {
+            let _lock = self.data_file_lock.read();
+            let file = self.data_file()?;
+            if file.metadata()?.len() != 0 {
+                return Ok(());
+            }
+
+            file.write_all_at(&bytes, 0)?;
+        }
         debug!("write super block success");
         Ok(())
     }
@@ -513,11 +513,80 @@ impl Volume {
     fn read_super_block(&mut self) -> Result<(), VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
         {
+            let _lock = self.data_file_lock.read();
             let file = self.data_file()?;
             file.read_exact_at(&mut buf, 0)?;
         }
         self.super_block = Arc::new(SuperBlock::parse(buf)?);
         Ok(())
+    }
+}
+
+impl Volume {
+    fn set_needle_mapper(&mut self, needle_mapper: Option<NeedleMapper>) {
+        match self.needle_mapper.take() {
+            Some(nm) => {
+                let _lock = nm.write();
+                match needle_mapper {
+                    Some(nm) => self.needle_mapper = Some(RwLock::new(nm)),
+                    None => self.needle_mapper = None,
+                }
+            }
+            None => match needle_mapper {
+                Some(nm) => self.needle_mapper = Some(RwLock::new(nm)),
+                None => self.needle_mapper = None,
+            },
+        }
+    }
+
+    fn needle_mapper(&self) -> Result<RwLockReadGuard<NeedleMapper>, VolumeError> {
+        match self.needle_mapper.as_ref() {
+            Some(nm) => Ok(nm.read()),
+            None => {
+                error!("needle mapper is not load, volume: {}", self.id);
+                Err(VolumeError::NeedleMapperNotLoad(self.id))
+            }
+        }
+    }
+
+    pub fn set_index(
+        &self,
+        key: NeedleId,
+        index: NeedleValue,
+    ) -> Result<Option<NeedleValue>, VolumeError> {
+        self.needle_mapper()?.set(key, index)
+    }
+
+    pub fn get_index(&self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
+        Ok(self.needle_mapper()?.get(key))
+    }
+
+    pub fn delete_index(&self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
+        self.needle_mapper()?.delete(key)
+    }
+
+    pub fn deleted_bytes(&self) -> Result<u64, VolumeError> {
+        Ok(self.needle_mapper()?.deleted_bytes())
+    }
+
+    pub fn deleted_count(&self) -> Result<u64, VolumeError> {
+        Ok(self.needle_mapper()?.deleted_count())
+    }
+
+    pub fn max_file_key(&self) -> Result<u64, VolumeError> {
+        Ok(self.needle_mapper()?.max_file_key())
+    }
+
+    pub fn file_count(&self) -> Result<u64, VolumeError> {
+        Ok(self.needle_mapper()?.file_count())
+    }
+
+    pub fn content_size(&self) -> Result<u64, VolumeError> {
+        Ok(self.needle_mapper()?.content_size())
+    }
+
+    pub fn index_file_size(&self) -> Result<u64, VolumeError> {
+        self.needle_mapper()?.index_file_size()
     }
 }
 
@@ -681,12 +750,17 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
 
-    let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
+    let (mut needle, mut rest) = {
+        let _lock = volume.data_file_lock.read();
+        read_needle_header(volume.data_file()?, version, offset)?
+    };
 
     loop {
+        let _lock = volume.data_file_lock.read();
+        let data_file = volume.data_file()?;
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
-                volume.data_file()?,
+                data_file,
                 offset + NEEDLE_HEADER_SIZE as u64,
                 rest,
                 version,
@@ -698,7 +772,7 @@ where
         visit_needle(&mut needle, offset)?;
         offset += (NEEDLE_HEADER_SIZE + rest) as u64;
 
-        match read_needle_header(volume.data_file()?, version, offset) {
+        match read_needle_header(data_file, version, offset) {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;

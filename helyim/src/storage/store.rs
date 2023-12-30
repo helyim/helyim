@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use dashmap::mapref::one::Ref;
+use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::{
@@ -114,6 +114,16 @@ impl Store {
     pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<Ref<VolumeId, Volume>>> {
         for location in self.locations.iter() {
             let volume = location.get_volume(vid);
+            if volume.is_some() {
+                return Ok(volume);
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn find_volume_mut(&self, vid: VolumeId) -> Result<Option<RefMut<VolumeId, Volume>>> {
+        for location in self.locations.iter() {
+            let volume = location.get_volume_mut(vid);
             if volume.is_some() {
                 return Ok(volume);
             }
@@ -326,8 +336,8 @@ impl Store {
     }
 
     pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid).await? {
-            Some(volume) => {
+        match self.find_volume_mut(vid).await? {
+            Some(mut volume) => {
                 // TODO: check disk status
                 volume.commit_compact()?;
                 info!("volume {vid} committing compaction success.");

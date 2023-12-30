@@ -41,7 +41,7 @@ impl Volume {
 
     pub fn compact(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
+        self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_and_generate_index_file(
@@ -54,7 +54,7 @@ impl Volume {
 
     pub fn compact2(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
+        self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_based_on_index_file(
@@ -65,7 +65,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&self) -> Result<(), VolumeError> {
+    pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
@@ -92,12 +92,12 @@ impl Volume {
             }
         }
 
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).data_file = None;
-            (*this).needle_mapper = None;
-            (*this).load(false, true)
+        {
+            let _lock = self.data_file_lock.write();
+            self.data_file = None;
         }
+        self.set_needle_mapper(None);
+        self.load(false, true)
     }
 
     pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {
@@ -186,6 +186,8 @@ impl Volume {
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+
+                    let _lock = self.data_file_lock.read();
                     offset = self.data_file()?.seek(SeekFrom::Start(offset))?;
                 }
 
@@ -255,7 +257,7 @@ impl Volume {
                 {
                     return Ok(());
                 }
-                if let Some(nv) = self.needle_mapper()?.get(needle.id) {
+                if let Some(nv) = self.get_index(needle.id)? {
                     if nv.offset.actual_offset() == offset && nv.size > 0 {
                         let nv = NeedleValue {
                             offset: new_offset.into(),
@@ -312,9 +314,8 @@ impl Volume {
                 }
 
                 let nv = match self
-                    .needle_mapper()
+                    .get_index(key)
                     .map_err(|err| NeedleError::Box(err.into()))?
-                    .get(key)
                 {
                     Some(nv) => nv,
                     None => return Ok(()),
@@ -323,13 +324,16 @@ impl Volume {
                 let mut needle = Needle::default();
                 let version = self.version();
 
-                needle.read_data(
-                    self.data_file()
-                        .map_err(|err| NeedleError::Box(err.into()))?,
-                    offset,
-                    size,
-                    version,
-                )?;
+                {
+                    let _lock = self.data_file_lock.read();
+                    needle.read_data(
+                        self.data_file()
+                            .map_err(|err| NeedleError::Box(err.into()))?,
+                        offset,
+                        size,
+                        version,
+                    )?;
+                }
 
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
