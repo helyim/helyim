@@ -527,15 +527,15 @@ impl Volume {
         match self.needle_mapper.take() {
             Some(nm) => {
                 let _lock = nm.write();
-                match needle_mapper {
-                    Some(nm) => self.needle_mapper = Some(RwLock::new(nm)),
-                    None => self.needle_mapper = None,
+                if let Some(nm) = needle_mapper {
+                    self.needle_mapper = Some(RwLock::new(nm));
                 }
             }
-            None => match needle_mapper {
-                Some(nm) => self.needle_mapper = Some(RwLock::new(nm)),
-                None => self.needle_mapper = None,
-            },
+            None => {
+                if let Some(nm) = needle_mapper {
+                    self.needle_mapper = Some(RwLock::new(nm));
+                }
+            }
         }
     }
 
