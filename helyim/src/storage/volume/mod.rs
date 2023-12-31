@@ -743,8 +743,8 @@ where
 
     let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
 
+    let data_file = volume.data_file()?;
     loop {
-        let data_file = volume.data_file()?;
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
                 data_file,
