@@ -731,9 +731,9 @@ pub fn scan_volume_file<VSB, VN>(
     mut visit_super_block: VSB,
     mut visit_needle: VN,
 ) -> Result<(), VolumeError>
-    where
-        VSB: FnMut(&Arc<SuperBlock>) -> Result<(), VolumeError>,
-        VN: FnMut(&mut Needle, u64) -> Result<(), VolumeError>,
+where
+    VSB: FnMut(&Arc<SuperBlock>) -> Result<(), VolumeError>,
+    VN: FnMut(&mut Needle, u64) -> Result<(), VolumeError>,
 {
     let volume = load_volume_without_index(dirname, collection, id, needle_map_type)?;
     visit_super_block(&volume.super_block)?;
@@ -806,7 +806,7 @@ pub mod tests {
             Ttl::default(),
             0,
         )
-            .unwrap();
+        .unwrap();
 
         for i in 0..1000 {
             let fid = FileId::new(volume.id, i, random::<u32>());
@@ -847,6 +847,6 @@ pub mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
     }
 }
