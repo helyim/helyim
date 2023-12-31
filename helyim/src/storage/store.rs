@@ -259,20 +259,20 @@ impl Store {
             max_volume_count += location.max_volume_count;
             for volume in location.volumes.iter() {
                 let vid = volume.key();
-                let volume_max_file_key = volume.max_file_key()?;
+                let volume_max_file_key = volume.max_file_key();
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.expired(self.volume_size_limit())? {
+                if !volume.expired(self.volume_size_limit()) {
                     let super_block = volume.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: volume.data_file_size().unwrap_or(0),
                         collection: volume.collection.to_string(),
-                        file_count: volume.file_count()?,
-                        delete_count: volume.deleted_count()?,
-                        deleted_bytes: volume.deleted_bytes()?,
+                        file_count: volume.file_count(),
+                        delete_count: volume.deleted_count(),
+                        deleted_bytes: volume.deleted_bytes(),
                         read_only: volume.readonly(),
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.version() as u32,
@@ -307,7 +307,7 @@ impl Store {
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                let garbage_level = volume.garbage_level()?;
+                let garbage_level = volume.garbage_level();
                 if garbage_level > 0.0 {
                     info!("volume {vid} garbage level: {garbage_level}");
                 }

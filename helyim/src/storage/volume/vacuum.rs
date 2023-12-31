@@ -32,11 +32,11 @@ use crate::{
 };
 
 impl Volume {
-    pub fn garbage_level(&self) -> Result<f64, VolumeError> {
-        if self.content_size()? == 0 {
-            return Ok(0.0);
+    pub fn garbage_level(&self) -> f64 {
+        if self.content_size() == 0 {
+            return 0.0;
         }
-        Ok(self.deleted_bytes()? as f64 / self.content_size()? as f64)
+        self.deleted_bytes() as f64 / self.content_size() as f64
     }
 
     pub fn compact(&self) -> Result<(), VolumeError> {
@@ -71,32 +71,34 @@ impl Volume {
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
         let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
         let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
-        info!("starting to commit compaction, filename: {compact_data_filename}");
-        match self.makeup_diff(
-            &compact_data_filename,
-            &compact_index_filename,
-            &data_filename,
-            &index_filename,
-        ) {
-            Ok(()) => {
-                fs::rename(&compact_data_filename, data_filename)?;
-                fs::rename(compact_index_filename, index_filename)?;
-                info!(
-                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
-                );
-            }
-            Err(err) => {
-                error!("makeup diff in commit compaction failed, {err}");
-                fs::remove_file(compact_data_filename)?;
-                fs::remove_file(compact_index_filename)?;
-            }
-        }
 
         {
             let _lock = self.data_file_lock.write();
+            info!("starting to commit compaction, filename: {compact_data_filename}");
+            match self.makeup_diff(
+                &compact_data_filename,
+                &compact_index_filename,
+                &data_filename,
+                &index_filename,
+            ) {
+                Ok(()) => {
+                    fs::rename(&compact_data_filename, data_filename)?;
+                    fs::rename(compact_index_filename, index_filename)?;
+                    info!(
+                        "makeup diff in commit compaction success, filename: \
+                         {compact_data_filename}"
+                    );
+                }
+                Err(err) => {
+                    error!("makeup diff in commit compaction failed, {err}");
+                    fs::remove_file(compact_data_filename)?;
+                    fs::remove_file(compact_index_filename)?;
+                }
+            }
+
             self.data_file = None;
+            self.needle_mapper = None;
         }
-        self.set_needle_mapper(None);
         self.load(false, true)
     }
 
@@ -187,7 +189,8 @@ impl Volume {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
 
-                    let _lock = self.data_file_lock.read();
+                    // There is no requirement to add a read lock since there is already a write
+                    // lock in place.
                     offset = self.data_file()?.seek(SeekFrom::Start(offset))?;
                 }
 
