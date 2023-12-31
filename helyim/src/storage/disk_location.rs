@@ -1,6 +1,9 @@
 use std::{fs, path::Path};
 
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::{
+    mapref::one::{Ref, RefMut},
+    DashMap,
+};
 use faststr::FastStr;
 use futures::future::join_all;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
@@ -88,6 +91,10 @@ impl DiskLocation {
 
     pub fn get_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, Volume>> {
         self.volumes.get(&vid)
+    }
+
+    pub fn get_volume_mut(&self, vid: VolumeId) -> Option<RefMut<VolumeId, Volume>> {
+        self.volumes.get_mut(&vid)
     }
 
     pub async fn delete_volume(&self, vid: VolumeId) -> Result<(), VolumeError> {

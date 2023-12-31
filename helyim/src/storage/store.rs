@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use dashmap::mapref::one::Ref;
+use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::{
@@ -114,6 +114,16 @@ impl Store {
     pub async fn find_volume(&self, vid: VolumeId) -> Result<Option<Ref<VolumeId, Volume>>> {
         for location in self.locations.iter() {
             let volume = location.get_volume(vid);
+            if volume.is_some() {
+                return Ok(volume);
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn find_volume_mut(&self, vid: VolumeId) -> Result<Option<RefMut<VolumeId, Volume>>> {
+        for location in self.locations.iter() {
+            let volume = location.get_volume_mut(vid);
             if volume.is_some() {
                 return Ok(volume);
             }
@@ -249,20 +259,20 @@ impl Store {
             max_volume_count += location.max_volume_count;
             for volume in location.volumes.iter() {
                 let vid = volume.key();
-                let volume_max_file_key = volume.max_file_key()?;
+                let volume_max_file_key = volume.max_file_key();
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.expired(self.volume_size_limit())? {
+                if !volume.expired(self.volume_size_limit()) {
                     let super_block = volume.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: volume.data_file_size().unwrap_or(0),
                         collection: volume.collection.to_string(),
-                        file_count: volume.file_count()?,
-                        delete_count: volume.deleted_count()?,
-                        deleted_bytes: volume.deleted_bytes()?,
+                        file_count: volume.file_count(),
+                        delete_count: volume.deleted_count(),
+                        deleted_bytes: volume.deleted_bytes(),
                         read_only: volume.readonly(),
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.version() as u32,
@@ -297,7 +307,7 @@ impl Store {
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                let garbage_level = volume.garbage_level()?;
+                let garbage_level = volume.garbage_level();
                 if garbage_level > 0.0 {
                     info!("volume {vid} garbage level: {garbage_level}");
                 }
@@ -326,8 +336,8 @@ impl Store {
     }
 
     pub async fn commit_compact_volume(&self, vid: VolumeId) -> Result<()> {
-        match self.find_volume(vid).await? {
-            Some(volume) => {
+        match self.find_volume_mut(vid).await? {
+            Some(mut volume) => {
                 // TODO: check disk status
                 volume.commit_compact()?;
                 info!("volume {vid} committing compaction success.");

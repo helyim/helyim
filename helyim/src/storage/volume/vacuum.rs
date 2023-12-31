@@ -32,16 +32,16 @@ use crate::{
 };
 
 impl Volume {
-    pub fn garbage_level(&self) -> Result<f64, VolumeError> {
-        if self.content_size()? == 0 {
-            return Ok(0.0);
+    pub fn garbage_level(&self) -> f64 {
+        if self.content_size() == 0 {
+            return 0.0;
         }
-        Ok(self.deleted_bytes()? as f64 / self.content_size()? as f64)
+        self.deleted_bytes() as f64 / self.content_size() as f64
     }
 
     pub fn compact(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
+        self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_and_generate_index_file(
@@ -54,7 +54,7 @@ impl Volume {
 
     pub fn compact2(&self) -> Result<(), VolumeError> {
         let filename = self.filename();
-        self.set_last_compact_index_offset(self.needle_mapper()?.index_file_size()?);
+        self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
         self.set_readonly(true);
         self.copy_data_based_on_index_file(
@@ -65,39 +65,41 @@ impl Volume {
         Ok(())
     }
 
-    pub fn commit_compact(&self) -> Result<(), VolumeError> {
+    pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
         let filename = self.filename();
         let compact_data_filename = format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename);
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
         let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
         let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
-        info!("starting to commit compaction, filename: {compact_data_filename}");
-        match self.makeup_diff(
-            &compact_data_filename,
-            &compact_index_filename,
-            &data_filename,
-            &index_filename,
-        ) {
-            Ok(()) => {
-                fs::rename(&compact_data_filename, data_filename)?;
-                fs::rename(compact_index_filename, index_filename)?;
-                info!(
-                    "makeup diff in commit compaction success, filename: {compact_data_filename}"
-                );
-            }
-            Err(err) => {
-                error!("makeup diff in commit compaction failed, {err}");
-                fs::remove_file(compact_data_filename)?;
-                fs::remove_file(compact_index_filename)?;
-            }
-        }
 
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).data_file = None;
-            (*this).needle_mapper = None;
-            (*this).load(false, true)
+        {
+            let _lock = self.data_file_lock.write();
+            info!("starting to commit compaction, filename: {compact_data_filename}");
+            match self.makeup_diff(
+                &compact_data_filename,
+                &compact_index_filename,
+                &data_filename,
+                &index_filename,
+            ) {
+                Ok(()) => {
+                    fs::rename(&compact_data_filename, data_filename)?;
+                    fs::rename(compact_index_filename, index_filename)?;
+                    info!(
+                        "makeup diff in commit compaction success, filename: \
+                         {compact_data_filename}"
+                    );
+                }
+                Err(err) => {
+                    error!("makeup diff in commit compaction failed, {err}");
+                    fs::remove_file(compact_data_filename)?;
+                    fs::remove_file(compact_index_filename)?;
+                }
+            }
+
+            self.data_file = None;
+            self.needle_mapper = None;
         }
+        self.load(false, true)
     }
 
     pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {
@@ -186,6 +188,9 @@ impl Volume {
                 if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
                     offset =
                         offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+
+                    // There is no requirement to add a read lock since there is already a write
+                    // lock in place.
                     offset = self.data_file()?.seek(SeekFrom::Start(offset))?;
                 }
 
@@ -255,7 +260,7 @@ impl Volume {
                 {
                     return Ok(());
                 }
-                if let Some(nv) = self.needle_mapper()?.get(needle.id) {
+                if let Some(nv) = self.get_index(needle.id)? {
                     if nv.offset.actual_offset() == offset && nv.size > 0 {
                         let nv = NeedleValue {
                             offset: new_offset.into(),
@@ -312,9 +317,8 @@ impl Volume {
                 }
 
                 let nv = match self
-                    .needle_mapper()
+                    .get_index(key)
                     .map_err(|err| NeedleError::Box(err.into()))?
-                    .get(key)
                 {
                     Some(nv) => nv,
                     None => return Ok(()),
@@ -323,13 +327,16 @@ impl Volume {
                 let mut needle = Needle::default();
                 let version = self.version();
 
-                needle.read_data(
-                    self.data_file()
-                        .map_err(|err| NeedleError::Box(err.into()))?,
-                    offset,
-                    size,
-                    version,
-                )?;
+                {
+                    let _lock = self.data_file_lock.read();
+                    needle.read_data(
+                        self.data_file()
+                            .map_err(|err| NeedleError::Box(err.into()))?,
+                        offset,
+                        size,
+                        version,
+                    )?;
+                }
 
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
