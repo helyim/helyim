@@ -327,16 +327,13 @@ impl Volume {
                 let mut needle = Needle::default();
                 let version = self.version();
 
-                {
-                    let _lock = self.data_file_lock.read();
-                    needle.read_data(
-                        self.data_file()
-                            .map_err(|err| NeedleError::Box(err.into()))?,
-                        offset,
-                        size,
-                        version,
-                    )?;
-                }
+                needle.read_data(
+                    self.data_file()
+                        .map_err(|err| NeedleError::Box(err.into()))?,
+                    offset,
+                    size,
+                    version,
+                )?;
 
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
