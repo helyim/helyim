@@ -33,10 +33,7 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
     }
     let version = volume.version();
 
-    {
-        let _lock = volume.data_file_lock.read();
-        verify_needle_integrity(volume.data_file()?, version, key, offset, size)
-    }
+    verify_needle_integrity(volume.data_file()?, version, key, offset, size)
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {

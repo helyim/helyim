@@ -741,13 +741,9 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
 
-    let (mut needle, mut rest) = {
-        let _lock = volume.data_file_lock.read();
-        read_needle_header(volume.data_file()?, version, offset)?
-    };
+    let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
 
     loop {
-        let _lock = volume.data_file_lock.read();
         let data_file = volume.data_file()?;
         if read_needle_body {
             if let Err(err) = needle.read_needle_body(
