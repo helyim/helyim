@@ -1,5 +1,6 @@
 #[cfg(not(all(target_os = "linux", feature = "iouring")))]
 use std::os::unix::fs::FileExt;
+use std::{fs::Metadata, io::Result, path::Path};
 
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 use tokio_uring::buf::IoBuf;
@@ -10,21 +11,14 @@ pub struct File {
 
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     inner: tokio_uring::fs::File,
+
+    #[cfg(all(target_os = "linux", feature = "iouring"))]
+    name: std::path::PathBuf,
 }
 
 impl File {
-    pub fn new(file: std::fs::File) -> Self {
-        cfg_if::cfg_if! {
-            if #[cfg(all(target_os = "linux", feature = "iouring"))] {
-                Self {
-                    inner: tokio_uring::fs::File::from_std(file)
-                }
-            } else {
-                Self {
-                    inner: file
-                }
-            }
-        }
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        OpenOptions::new().read(true).open(path.as_ref())
     }
 
     #[allow(unused_mut)]
@@ -166,7 +160,17 @@ impl File {
         }
     }
 
-    pub async fn close(self) -> std::io::Result<()> {
+    pub fn metadata(&self) -> Result<Metadata> {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_os = "linux", feature = "iouring"))] {
+                self.name.metadata()
+            } else {
+                self.inner.metadata()
+            }
+        }
+    }
+
+    pub async fn close(self) -> Result<()> {
         cfg_if::cfg_if! {
             if #[cfg(all(target_os = "linux", feature = "iouring"))] {
                 self.inner.close().await
@@ -177,21 +181,83 @@ impl File {
     }
 }
 
-pub type BufResult<T, B> = (std::io::Result<T>, B);
+#[derive(Clone, Debug)]
+pub struct OpenOptions(std::fs::OpenOptions);
+
+impl OpenOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(std::fs::OpenOptions::new())
+    }
+
+    pub fn read(&mut self, read: bool) -> &mut Self {
+        self.0.read(read);
+        self
+    }
+
+    pub fn write(&mut self, write: bool) -> &mut Self {
+        self.0.write(write);
+        self
+    }
+
+    pub fn append(&mut self, append: bool) -> &mut Self {
+        self.0.append(append);
+        self
+    }
+
+    pub fn truncate(&mut self, truncate: bool) -> &mut Self {
+        self.0.truncate(truncate);
+        self
+    }
+
+    pub fn create(&mut self, create: bool) -> &mut Self {
+        self.0.create(create);
+        self
+    }
+
+    pub fn create_new(&mut self, create_new: bool) -> &mut Self {
+        self.0.create_new(create_new);
+        self
+    }
+
+    pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
+        let file = self.0.open(path.as_ref())?;
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_os = "linux", feature = "iouring"))] {
+                Ok(File {
+                    inner: tokio_uring::fs::File::from_std(file),
+                    name: path.as_ref().to_path_buf()
+                })
+            } else {
+                Ok(File {
+                    inner: file,
+                })
+            }
+        }
+    }
+}
+
+pub type BufResult<T, B> = (Result<T>, B);
 
 #[cfg(test)]
 mod tests {
     use std::io::Write;
-    use tempfile::tempfile;
-    use crate::File;
+
+    use crate::{File, OpenOptions};
 
     #[tokio::test]
     #[cfg(not(all(target_os = "linux", feature = "iouring")))]
     pub async fn test_read_exact_at() {
-        let mut std_file = tempfile().unwrap();
+        let mut std_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open("/tmp/test_read_exact_at.txt")
+            .unwrap();
         std_file.write_all(b"hello worldhello world").unwrap();
 
-        let file = File::new(std_file);
+        let file = File::open("/tmp/test_read_exact_at.txt").unwrap();
         let buf = vec![0; 11];
         let (_, buf) = file.read_exact_at(buf, 0).await;
 
@@ -202,10 +268,16 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     pub fn test_read_exact_at_uring() {
-        let mut std_file = tempfile().unwrap();
+        let mut std_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open("/tmp/test_read_exact_at_uring.txt")
+            .unwrap();
         std_file.write_all(b"hello worldhello world").unwrap();
 
-        let file = File::new(std_file);
+        let file = File::open("/tmp/test_read_exact_at_uring.txt").unwrap();
 
         tokio_uring::start(async {
             let buf = vec![0; 11];
@@ -219,10 +291,13 @@ mod tests {
     #[tokio::test]
     #[cfg(not(all(target_os = "linux", feature = "iouring")))]
     pub async fn test_write_exact_at() {
-        let mut std_file = tempfile().unwrap();
-        std_file.write_all(b"hello worldhello world").unwrap();
-
-        let file = File::new(std_file);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open("/tmp/test_write_exact_at.txt")
+            .unwrap();
 
         let buf = b"hello world".to_vec();
         let (_, buf) = file.write_all_at(buf, 0).await;
@@ -239,8 +314,13 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     pub fn test_write_exact_at_uring() {
-        let std_file = tempfile().unwrap();
-        let file = File::new(std_file);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open("/tmp/test_write_exact_at.txt")
+            .unwrap();
 
         tokio_uring::start(async {
             let buf = b"hello world".to_vec();
