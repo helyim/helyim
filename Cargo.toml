@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "helyim",
     "benchmark",
+    "helyim",
+    "helyim-fs",
     "proto",
 ]
 
@@ -24,6 +25,7 @@ axum-extra = "0.7"
 axum-macros = "0.3"
 bincode = "1"
 bytes = "1"
+cfg-if = "1"
 chrono = "0.4"
 clap = "4"
 crc32fast = "1"
