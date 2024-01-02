@@ -237,6 +237,12 @@ impl OpenOptions {
     }
 }
 
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub type BufResult<T, B> = (Result<T>, B);
 
 #[cfg(test)]
