@@ -68,7 +68,8 @@ impl DiskLocation {
                             ReplicaPlacement::default(),
                             Ttl::default(),
                             0,
-                        )?;
+                        )
+                        .await?;
 
                         Ok((vid, volume))
                     });
@@ -99,7 +100,7 @@ impl DiskLocation {
 
     pub async fn delete_volume(&self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some((vid, v)) = self.volumes.remove(&vid) {
-            v.destroy()?;
+            v.destroy().await?;
             info!(
                 "remove volume {vid} success, where disk location is {}",
                 self.directory

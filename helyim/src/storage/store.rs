@@ -133,14 +133,14 @@ impl Store {
 
     pub async fn delete_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.delete_needle(needle)?),
+            Some(volume) => Ok(volume.delete_needle(needle).await?),
             None => Ok(0),
         }
     }
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
         match self.find_volume(vid).await? {
-            Some(volume) => Ok(volume.read_needle(needle)?),
+            Some(volume) => Ok(volume.read_needle(needle).await?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -152,7 +152,7 @@ impl Store {
                     return Err(VolumeError::Readonly(vid).into());
                 }
 
-                Ok(volume.write_needle(needle)?)
+                Ok(volume.write_needle(needle).await?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }
@@ -216,7 +216,8 @@ impl Store {
             replica_placement,
             ttl,
             preallocate,
-        )?;
+        )
+        .await?;
         location.add_volume(vid, volume);
 
         Ok(())
@@ -259,20 +260,20 @@ impl Store {
             max_volume_count += location.max_volume_count;
             for volume in location.volumes.iter() {
                 let vid = volume.key();
-                let volume_max_file_key = volume.max_file_key();
+                let volume_max_file_key = volume.max_file_key().await;
                 if volume_max_file_key > max_file_key {
                     max_file_key = volume_max_file_key;
                 }
 
-                if !volume.expired(self.volume_size_limit()) {
+                if !volume.expired(self.volume_size_limit()).await {
                     let super_block = volume.super_block.clone();
                     let msg = VolumeInformationMessage {
                         id: *vid,
-                        size: volume.data_file_size().unwrap_or(0),
+                        size: volume.data_file_size().await.unwrap_or(0),
                         collection: volume.collection.to_string(),
-                        file_count: volume.file_count(),
-                        delete_count: volume.deleted_count(),
-                        deleted_bytes: volume.deleted_bytes(),
+                        file_count: volume.file_count().await,
+                        delete_count: volume.deleted_count().await,
+                        deleted_bytes: volume.deleted_bytes().await,
                         read_only: volume.readonly(),
                         replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
                         version: volume.version() as u32,
@@ -307,7 +308,7 @@ impl Store {
     pub async fn check_compact_volume(&self, vid: VolumeId) -> Result<f64> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                let garbage_level = volume.garbage_level();
+                let garbage_level = volume.garbage_level().await;
                 if garbage_level > 0.0 {
                     info!("volume {vid} garbage level: {garbage_level}");
                 }
@@ -324,7 +325,7 @@ impl Store {
         match self.find_volume(vid).await? {
             Some(volume) => {
                 // TODO: check disk status
-                volume.compact2()?;
+                volume.compact2().await?;
                 info!("volume {vid} compacting success.");
                 Ok(())
             }
@@ -339,7 +340,7 @@ impl Store {
         match self.find_volume_mut(vid).await? {
             Some(mut volume) => {
                 // TODO: check disk status
-                volume.commit_compact()?;
+                volume.commit_compact().await?;
                 info!("volume {vid} committing compaction success.");
                 Ok(())
             }
@@ -353,7 +354,7 @@ impl Store {
     pub async fn commit_cleanup_volume(&self, vid: VolumeId) -> Result<()> {
         match self.find_volume(vid).await? {
             Some(volume) => {
-                volume.cleanup_compact()?;
+                volume.cleanup_compact().await?;
                 info!("volume {vid} committing cleanup success.");
                 Ok(())
             }

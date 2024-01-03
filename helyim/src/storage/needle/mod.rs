@@ -1,12 +1,9 @@
 #![allow(dead_code)]
 
-use std::{
-    fmt::{Display, Formatter},
-    fs::File,
-    os::unix::fs::FileExt,
-};
+use std::fmt::{Display, Formatter};
 
 use bytes::{Buf, BufMut, Bytes};
+use helyim_fs::File;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -146,13 +143,18 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> Result<Bytes, NeedleError> {
+pub async fn read_needle_blob(
+    file: &File,
+    offset: Offset,
+    size: Size,
+) -> Result<Vec<u8>, NeedleError> {
     let size = size.actual_size();
-    let mut buf = vec![0; size as usize];
+    let buf = vec![0; size as usize];
 
     let offset = offset.actual_offset();
-    file.read_exact_at(&mut buf, offset)?;
-    Ok(Bytes::from(buf))
+    let (read, buf) = file.read_exact_at(buf, offset).await;
+    read?;
+    Ok(buf)
 }
 
 impl Needle {
@@ -193,7 +195,7 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_needle_body(
+    pub async fn read_needle_body(
         &mut self,
         data_file: &File,
         offset: u64,
@@ -205,8 +207,9 @@ impl Needle {
         }
         match version {
             VERSION2 => {
-                let mut buf = vec![0u8; body_len as usize];
-                data_file.read_exact_at(&mut buf, offset)?;
+                let buf = vec![0u8; body_len as usize];
+                let (read, buf) = data_file.read_exact_at(buf, offset).await;
+                read?;
                 self.read_needle_data(Bytes::from(buf));
                 self.checksum = crc::checksum(&self.data);
             }
@@ -260,9 +263,9 @@ impl Needle {
         }
     }
 
-    pub fn append<W: FileExt>(
+    pub async fn append(
         &mut self,
-        w: &W,
+        w: &File,
         offset: u64,
         version: Version,
     ) -> Result<(), NeedleError> {
@@ -318,19 +321,22 @@ impl Needle {
 
         let padding = self.size.padding_len();
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all_at(&buf, offset)?;
+
+        let (write, buf) = w.write_all_at(buf, offset).await;
+        write?;
 
         Ok(())
     }
 
-    pub fn read_data(
+    pub async fn read_data(
         &mut self,
         file: &File,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> Result<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
+        let bytes = read_needle_blob(file, offset, size).await?;
+        let bytes = Bytes::from(bytes);
         self.parse_needle_header(&bytes);
 
         if self.size != size && offset.actual_offset() < MAX_POSSIBLE_VOLUME_SIZE {
@@ -481,7 +487,7 @@ fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie), NeedleError> {
     Ok((key, cookie))
 }
 
-pub fn read_needle_header(
+pub async fn read_needle_header(
     file: &File,
     version: Version,
     offset: u64,
@@ -490,8 +496,9 @@ pub fn read_needle_header(
     let mut body_len = 0;
 
     if version == VERSION2 {
-        let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
-        file.read_exact_at(&mut buf, offset)?;
+        let buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
+        let (read, buf) = file.read_exact_at(buf, offset).await;
+        read?;
         needle.parse_needle_header(&buf);
         let padding = needle.size.padding_len();
         body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;

@@ -1,12 +1,11 @@
 use std::{
-    fs::File,
     io::{BufReader, Read},
-    os::unix::fs::FileExt,
     result::Result,
     sync::Arc,
 };
 
 use bytes::{Buf, BufMut};
+use helyim_fs::File;
 use tracing::{debug, error};
 
 use crate::storage::{
@@ -52,25 +51,34 @@ impl NeedleMapper {
         }
     }
 
-    pub fn load_index_file(&mut self, mut index_file: File) -> Result<(), VolumeError> {
-        walk_index_file(
-            &mut index_file,
-            |key, offset, size| -> Result<(), NeedleError> {
-                if offset == 0 || size.is_deleted() {
-                    self.delete(key)
-                        .map_err(|err| NeedleError::Box(err.into()))?;
-                } else {
-                    self.set(key, NeedleValue { offset, size })
-                        .map_err(|err| NeedleError::Box(err.into()))?;
-                }
-                Ok(())
-            },
-        )?;
+    pub async fn load_index_file(&mut self, index_file: File) -> Result<(), VolumeError> {
+        let std_file = index_file.to_std()?;
+
+        // walk index file
+        let len = std_file.metadata()?.len();
+        let mut reader = BufReader::new(std_file);
+        let mut buf: Vec<u8> = vec![0; 16];
+
+        // if there is a not complete entry, will err
+        for _ in 0..(len + 15) / 16 {
+            reader.read_exact(&mut buf)?;
+
+            let (key, offset, size) = read_index_entry(&buf);
+            if offset == 0 || size.is_deleted() {
+                self.delete(key)
+                    .await
+                    .map_err(|err| NeedleError::Box(err.into()))?;
+            } else {
+                self.set(key, NeedleValue { offset, size })
+                    .await
+                    .map_err(|err| NeedleError::Box(err.into()))?;
+            }
+        }
         self.index_file = Some(index_file);
         Ok(())
     }
 
-    pub fn set(
+    pub async fn set(
         &self,
         key: NeedleId,
         index: NeedleValue,
@@ -85,17 +93,17 @@ impl NeedleMapper {
             self.metric.delete_file(n.size);
         }
 
-        self.append_to_index_file(key, index)?;
+        self.append_to_index_file(key, index).await?;
 
         Ok(old)
     }
 
-    pub fn delete(&self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
+    pub async fn delete(&self, key: NeedleId) -> Result<Option<NeedleValue>, VolumeError> {
         let deleted = self.needle_value_map.delete(key);
 
         if let Some(index) = deleted {
             self.metric.delete_file(index.size);
-            self.append_to_index_file(key, index)?;
+            self.append_to_index_file(key, index).await?;
             debug!("needle map delete key: {} -> {}", key, index);
         }
 
@@ -134,7 +142,7 @@ impl NeedleMapper {
         Ok(size)
     }
 
-    pub fn append_to_index_file(
+    pub async fn append_to_index_file(
         &self,
         key: NeedleId,
         value: NeedleValue,
@@ -146,7 +154,8 @@ impl NeedleMapper {
             buf.put_i32(value.size.0);
 
             let offset = file.metadata()?.len();
-            if let Err(err) = file.write_all_at(&buf, offset) {
+            let (write, _) = file.write_all_at(buf, offset).await;
+            if let Err(err) = write {
                 error!(
                     "failed to write index file, volume {}, error: {err}",
                     self.volume_id
@@ -168,7 +177,7 @@ pub fn read_index_entry(mut buf: &[u8]) -> (NeedleId, Offset, Size) {
 }
 
 // walks through index file, call fn(key, offset, size), stop with error returned by fn
-pub fn walk_index_file<T>(f: &mut File, mut walk: T) -> Result<(), VolumeError>
+pub fn walk_index_file<T>(f: &mut std::fs::File, mut walk: T) -> Result<(), VolumeError>
 where
     T: FnMut(NeedleId, Offset, Size) -> Result<(), NeedleError>,
 {
