@@ -1,6 +1,6 @@
 #[cfg(not(all(target_os = "linux", feature = "iouring")))]
 use std::os::unix::fs::FileExt;
-use std::{fs::Metadata, io::Result, path::Path};
+use std::{fs::Metadata, io::Result, os::unix::fs::OpenOptionsExt, path::Path};
 
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 use tokio_uring::buf::IoBuf;
@@ -19,6 +19,17 @@ pub struct File {
 impl File {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         OpenOptions::new().read(true).open(path.as_ref())
+    }
+
+    pub fn to_std(&self) -> Result<std::fs::File> {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_os = "linux", feature = "iouring"))] {
+                let file = unsafe { std::fs::File::from_raw_fd(self.inner.as_raw_fd()) };
+                Ok(file)
+            } else {
+                self.inner.try_clone()
+            }
+        }
     }
 
     #[allow(unused_mut)]
@@ -217,6 +228,11 @@ impl OpenOptions {
 
     pub fn create_new(&mut self, create_new: bool) -> &mut Self {
         self.0.create_new(create_new);
+        self
+    }
+
+    pub fn mode(&mut self, mode: u32) -> &mut Self {
+        self.0.mode(mode);
         self
     }
 

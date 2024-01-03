@@ -55,7 +55,7 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in ctx.store.locations().iter() {
         for volume in location.volumes.iter() {
-            infos.push(volume.get_volume_info());
+            infos.push(volume.get_volume_info().await);
         }
     }
 
@@ -182,6 +182,7 @@ pub struct PostExtractor {
     body: Bytes,
 }
 
+#[axum_macros::debug_handler]
 pub async fn post_handler(
     State(mut ctx): State<StorageContext>,
     extractor: PostExtractor,

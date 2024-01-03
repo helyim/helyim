@@ -6,6 +6,7 @@ use std::{
 };
 
 use bytes::Buf;
+use helyim_fs::OpenOptions;
 
 use crate::{
     errors::Result,
@@ -48,8 +49,8 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
     )
 }
 
-pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
-    let version = read_ec_volume_version(base_filename)?;
+pub async fn find_data_filesize(base_filename: &str) -> Result<u64> {
+    let version = read_ec_volume_version(base_filename).await?;
     let mut data_filesize = 0;
     iterate_ecx_file(
         base_filename,
@@ -67,14 +68,15 @@ pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
     Ok(data_filesize)
 }
 
-fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
-    let mut data_file = fs::OpenOptions::new()
+async fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
+    let data_file = OpenOptions::new()
         .read(true)
         .mode(0o644)
         .open(format!("{}.ec00", base_filename))?;
-    let mut super_block = [0u8; SUPER_BLOCK_SIZE];
-    data_file.read_exact(&mut super_block)?;
-    let super_block = SuperBlock::parse(super_block)?;
+    let buf = vec![0u8; SUPER_BLOCK_SIZE];
+    let (read, buf) = data_file.read_exact_at(buf, 0).await;
+    read?;
+    let super_block = SuperBlock::parse(buf)?;
     Ok(super_block.version)
 }
 

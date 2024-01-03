@@ -649,7 +649,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
                     return Err(Status::invalid_argument("unexpected collection"));
                 }
                 let base_filename = volume.read().await.filename();
-                let data_filesize = find_data_filesize(&base_filename)?;
+                let data_filesize = find_data_filesize(&base_filename).await?;
                 write_data_file(&base_filename, data_filesize)?;
                 write_index_file_from_ec_index(&base_filename)?;
 
