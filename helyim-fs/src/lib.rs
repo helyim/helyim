@@ -24,6 +24,9 @@ impl File {
     pub fn to_std(&self) -> Result<std::fs::File> {
         cfg_if::cfg_if! {
             if #[cfg(all(target_os = "linux", feature = "iouring"))] {
+                use std::os::fd::FromRawFd;
+                use std::os::fd::AsRawFd;
+
                 let file = unsafe { std::fs::File::from_raw_fd(self.inner.as_raw_fd()) };
                 Ok(file)
             } else {
