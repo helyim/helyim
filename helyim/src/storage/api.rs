@@ -89,7 +89,7 @@ pub struct StorageQuery {
 }
 
 pub async fn delete_handler(
-    State(mut ctx): State<StorageContext>,
+    State(ctx): State<StorageContext>,
     extractor: DeleteExtractor,
 ) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
@@ -108,7 +108,7 @@ pub async fn delete_handler(
     }
 
     let size = replicate_delete(
-        &mut ctx,
+        &ctx,
         extractor.uri.path(),
         vid,
         &mut needle,
@@ -121,7 +121,7 @@ pub async fn delete_handler(
 }
 
 async fn replicate_delete(
-    ctx: &mut StorageContext,
+    ctx: &StorageContext,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
@@ -184,7 +184,7 @@ pub struct PostExtractor {
 
 #[axum_macros::debug_handler]
 pub async fn post_handler(
-    State(mut ctx): State<StorageContext>,
+    State(ctx): State<StorageContext>,
     extractor: PostExtractor,
 ) -> Result<Json<Upload>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
@@ -197,7 +197,7 @@ pub async fn post_handler(
     };
 
     let size = replicate_write(
-        &mut ctx,
+        &ctx,
         extractor.uri.path(),
         vid,
         &mut needle,
@@ -217,7 +217,7 @@ pub async fn post_handler(
 }
 
 async fn replicate_write(
-    ctx: &mut StorageContext,
+    ctx: &StorageContext,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
