@@ -19,8 +19,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     directory::api::{
-        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-        DirectoryContext,
+        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, DirectoryState,
     },
     errors::Result,
     raft::{create_raft_router, RaftServer},
@@ -109,7 +108,7 @@ impl DirectoryServer {
         self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
-        let ctx = DirectoryContext {
+        let ctx = DirectoryState {
             topology: self.topology.clone(),
             volume_grow: self.volume_grow.clone(),
             options: self.options.clone(),
@@ -133,7 +132,7 @@ impl DirectoryServer {
 }
 
 async fn start_directory_server(
-    ctx: DirectoryContext,
+    ctx: DirectoryState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
     raft_router: Router,

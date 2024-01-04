@@ -4,27 +4,24 @@ use std::{
 };
 
 use axum::{
-    extract::{Query, State},
-    headers::{HeaderName, HeaderValue, Host},
+    extract::State,
+    headers::{HeaderName, HeaderValue},
     http::{
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
             IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
         },
-        HeaderMap, Response, StatusCode, Uri,
+        Response, StatusCode,
     },
-    Json, TypedHeader,
+    Json,
 };
-use axum_macros::FromRequest;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use faststr::FastStr;
 use futures::stream::once;
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{error, info};
 
@@ -39,11 +36,18 @@ use crate::{
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
-    util::{http::HTTP_DATE_FORMAT, parser::parse_url_path, time::now},
+    util::{
+        http::{
+            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
+            HTTP_DATE_FORMAT,
+        },
+        parser::parse_url_path,
+        time::now,
+    },
 };
 
 #[derive(Clone)]
-pub struct StorageContext {
+pub struct StorageState {
     pub store: StoreRef,
     pub needle_map_type: NeedleMapType,
     pub read_redirect: bool,
@@ -51,7 +55,7 @@ pub struct StorageContext {
     pub looker: Arc<Looker>,
 }
 
-pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Value>> {
+pub async fn status_handler(State(ctx): State<StorageState>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
     for location in ctx.store.locations().iter() {
         for volume in location.volumes.iter() {
@@ -67,29 +71,8 @@ pub async fn status_handler(State(ctx): State<StorageContext>) -> Result<Json<Va
     Ok(Json(stat))
 }
 
-#[derive(Debug, FromRequest)]
-pub struct DeleteExtractor {
-    // only the last field can implement `FromRequest`
-    // other fields must only implement `FromRequestParts`
-    uri: Uri,
-    #[from_request(via(TypedHeader))]
-    host: Host,
-    #[from_request(via(Query))]
-    query: StorageQuery,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StorageQuery {
-    r#type: Option<FastStr>,
-    // is chunked file
-    cm: Option<bool>,
-    ttl: Option<FastStr>,
-    // last modified
-    ts: Option<u64>,
-}
-
 pub async fn delete_handler(
-    State(mut ctx): State<StorageContext>,
+    State(mut ctx): State<StorageState>,
     extractor: DeleteExtractor,
 ) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
@@ -121,7 +104,7 @@ pub async fn delete_handler(
 }
 
 async fn replicate_delete(
-    ctx: &mut StorageContext,
+    ctx: &mut StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
@@ -171,19 +154,8 @@ async fn replicate_delete(
     Ok(size)
 }
 
-#[derive(Debug, FromRequest)]
-pub struct PostExtractor {
-    // only the last field can implement `FromRequest`
-    // other fields must only implement `FromRequestParts`
-    uri: Uri,
-    headers: HeaderMap,
-    #[from_request(via(Query))]
-    query: StorageQuery,
-    body: Bytes,
-}
-
 pub async fn post_handler(
-    State(mut ctx): State<StorageContext>,
+    State(mut ctx): State<StorageState>,
     extractor: PostExtractor,
 ) -> Result<Json<Upload>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
@@ -216,7 +188,7 @@ pub async fn post_handler(
 }
 
 async fn replicate_write(
-    ctx: &mut StorageContext,
+    ctx: &mut StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
@@ -411,14 +383,8 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     Ok(resp)
 }
 
-#[derive(Debug, FromRequest)]
-pub struct GetOrHeadExtractor {
-    uri: Uri,
-    headers: HeaderMap,
-}
-
 pub async fn get_or_head_handler(
-    State(ctx): State<StorageContext>,
+    State(ctx): State<StorageState>,
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>> {
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;

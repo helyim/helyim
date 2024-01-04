@@ -1,37 +1,29 @@
-use std::{result::Result as StdResult, sync::Arc};
+use std::{result::Result, sync::Arc};
 
 use axum::{extract::State, Json};
 use faststr::FastStr;
 
 use crate::{
-    errors::Result,
     operation::{
         lookup::{Location, Lookup, LookupRequest},
         AssignRequest, Assignment, ClusterStatus,
     },
     storage::VolumeError,
     topology::{volume_grow::VolumeGrowth, Topology, TopologyRef},
-    util::{args::MasterOptions, http::FormOrJson},
+    util::{args::MasterOptions, http::extractor::FormOrJson},
 };
 
 #[derive(Clone)]
-pub struct DirectoryContext {
+pub struct DirectoryState {
     pub topology: TopologyRef,
     pub volume_grow: Arc<VolumeGrowth>,
     pub options: Arc<MasterOptions>,
 }
 
 pub async fn assign_handler(
-    State(ctx): State<DirectoryContext>,
+    State(ctx): State<DirectoryState>,
     FormOrJson(request): FormOrJson<AssignRequest>,
-) -> StdResult<Json<Assignment>, VolumeError> {
-    // TODO: support proxyToLeader
-    if !ctx.topology.is_leader().await {
-        return Err(VolumeError::String(
-            "directory server is not the cluster leader.".to_string(),
-        ));
-    }
-
+) -> Result<Json<Assignment>, VolumeError> {
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
@@ -58,9 +50,9 @@ pub async fn assign_handler(
 }
 
 pub async fn lookup_handler(
-    State(ctx): State<DirectoryContext>,
+    State(ctx): State<DirectoryState>,
     FormOrJson(request): FormOrJson<LookupRequest>,
-) -> StdResult<Json<Lookup>, VolumeError> {
+) -> Result<Json<Lookup>, VolumeError> {
     if request.volume_id.is_empty() {
         return Err(VolumeError::String("volume_id can't be empty".to_string()));
     }
@@ -96,12 +88,12 @@ pub async fn lookup_handler(
     }
 }
 
-pub async fn dir_status_handler(State(ctx): State<DirectoryContext>) -> Result<Json<Topology>> {
+pub async fn dir_status_handler(State(ctx): State<DirectoryState>) -> Json<Topology> {
     let topology = ctx.topology.topology();
-    Ok(Json(topology))
+    Json(topology)
 }
 
-pub async fn cluster_status_handler(State(ctx): State<DirectoryContext>) -> Json<ClusterStatus> {
+pub async fn cluster_status_handler(State(ctx): State<DirectoryState>) -> Json<ClusterStatus> {
     let is_leader = ctx.topology.is_leader().await;
     let leader = ctx
         .topology

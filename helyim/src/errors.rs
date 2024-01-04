@@ -15,6 +15,7 @@ use tracing::error;
 use crate::{
     raft::types::RaftError,
     storage::{NeedleError, VolumeError},
+    topology::TopologyError,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -25,6 +26,8 @@ pub enum Error {
     Needle(#[from] NeedleError),
     #[error("Raft error: {0}")]
     Raft(#[from] RaftError),
+    #[error("Topology error: {0}")]
+    Topology(#[from] TopologyError),
 
     /// other errors
     #[error("Io error: {0}")]

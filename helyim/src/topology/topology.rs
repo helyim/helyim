@@ -6,9 +6,18 @@ use std::{
     time::Duration,
 };
 
+use axum::{
+    http::{
+        header::{InvalidHeaderName, InvalidHeaderValue},
+        StatusCode,
+    },
+    response::{IntoResponse, Response},
+    Json,
+};
 use dashmap::DashMap;
 use faststr::FastStr;
 use serde::Serialize;
+use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -330,8 +339,31 @@ impl DerefMut for Topology {
 
 #[derive(thiserror::Error, Debug)]
 pub enum TopologyError {
-    #[error("Other error: {0}")]
+    #[error("{0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
+
+    #[error("This raft cluster has no leader")]
+    NoLeader,
+
+    #[error("Hyper error: {0}")]
+    Hyper(#[from] hyper::Error),
+    #[error("Invalid header value: {0}")]
+    InvalidHeaderValue(#[from] InvalidHeaderValue),
+    #[error("Invalid header name: {0}")]
+    InvalidHeaderName(#[from] InvalidHeaderName),
+    #[error("Invalid uri: {0}")]
+    InvalidUrl(#[from] hyper::http::uri::InvalidUri),
+}
+
+impl IntoResponse for TopologyError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
+    }
 }
 
 pub async fn topology_vacuum_loop(
