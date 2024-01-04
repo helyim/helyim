@@ -11,7 +11,7 @@ use crate::{
     topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, TopologyRef},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct VolumeGrowth;
 
 impl VolumeGrowth {

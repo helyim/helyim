@@ -36,7 +36,7 @@ pub struct DirectoryServer {
     pub options: Arc<MasterOptions>,
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
-    pub volume_grow: Arc<VolumeGrowth>,
+    pub volume_grow: VolumeGrowth,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -68,7 +68,7 @@ impl DirectoryServer {
         let master = DirectoryServer {
             options: master_opts,
             garbage_threshold,
-            volume_grow: Arc::new(VolumeGrowth),
+            volume_grow: VolumeGrowth,
             topology: topology.clone(),
             shutdown,
         };
@@ -110,7 +110,7 @@ impl DirectoryServer {
         // http server
         let ctx = DirectoryState {
             topology: self.topology.clone(),
-            volume_grow: self.volume_grow.clone(),
+            volume_grow: self.volume_grow,
             options: self.options.clone(),
         };
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;

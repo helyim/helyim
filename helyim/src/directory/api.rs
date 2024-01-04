@@ -16,7 +16,7 @@ use crate::{
 #[derive(Clone)]
 pub struct DirectoryState {
     pub topology: TopologyRef,
-    pub volume_grow: Arc<VolumeGrowth>,
+    pub volume_grow: VolumeGrowth,
     pub options: Arc<MasterOptions>,
 }
 
