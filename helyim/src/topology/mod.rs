@@ -10,7 +10,7 @@ mod node;
 mod rack;
 
 mod topology;
-pub use topology::{topology_vacuum_loop, Topology, TopologyRef};
+pub use topology::{topology_vacuum_loop, Topology, TopologyError, TopologyRef};
 
 pub mod volume_grow;
 

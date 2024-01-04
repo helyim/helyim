@@ -32,7 +32,7 @@ use crate::{
     proto::save_volume_info,
     rt_spawn,
     storage::{
-        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageContext},
+        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageState},
         erasure_coding::{
             ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
             write_data_file, write_ec_files, write_index_file_from_ec_index,
@@ -119,7 +119,7 @@ impl VolumeServer {
 
         self.update_masters().await?;
 
-        let ctx = StorageContext {
+        let ctx = StorageState {
             store,
             needle_map_type,
             read_redirect,
@@ -273,7 +273,7 @@ impl VolumeServer {
 }
 
 async fn start_volume_server(
-    ctx: StorageContext,
+    ctx: StorageState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
 ) {

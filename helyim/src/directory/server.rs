@@ -19,8 +19,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     directory::api::{
-        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-        DirectoryContext,
+        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, DirectoryState,
     },
     errors::Result,
     raft::{create_raft_router, RaftServer},
@@ -37,7 +36,7 @@ pub struct DirectoryServer {
     pub options: Arc<MasterOptions>,
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
-    pub volume_grow: Arc<VolumeGrowth>,
+    pub volume_grow: VolumeGrowth,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -69,7 +68,7 @@ impl DirectoryServer {
         let master = DirectoryServer {
             options: master_opts,
             garbage_threshold,
-            volume_grow: Arc::new(VolumeGrowth),
+            volume_grow: VolumeGrowth,
             topology: topology.clone(),
             shutdown,
         };
@@ -109,9 +108,9 @@ impl DirectoryServer {
         self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
-        let ctx = DirectoryContext {
+        let ctx = DirectoryState {
             topology: self.topology.clone(),
-            volume_grow: self.volume_grow.clone(),
+            volume_grow: self.volume_grow,
             options: self.options.clone(),
         };
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
@@ -133,7 +132,7 @@ impl DirectoryServer {
 }
 
 async fn start_directory_server(
-    ctx: DirectoryContext,
+    ctx: DirectoryState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
     raft_router: Router,
