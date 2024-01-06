@@ -93,7 +93,7 @@ impl Topology {
             Some(data_node) => data_node.value().clone(),
             None => {
                 let data_center = Arc::new(DataCenter::new(name.clone()));
-                self.data_centers.insert(name, data_center.clone());
+                self.link_data_center(&data_center);
                 data_center
             }
         }
@@ -278,47 +278,55 @@ impl Topology {
 }
 
 impl Topology {
-    pub async fn volume_count(&self) -> u64 {
+    fn link_data_center(&self, data_center: &Arc<DataCenter>) {
+        self.adjust_max_volume_count(data_center.max_volume_count());
+        self.adjust_max_volume_id(data_center.max_volume_id());
+        self.adjust_volume_count(data_center.volume_count());
+        self.adjust_ec_shard_count(data_center.ec_shard_count());
+        self.adjust_active_volume_count(data_center.active_volume_count());
+    }
+
+    pub fn volume_count(&self) -> i64 {
         let mut count = 0;
         for dc in self.data_centers.iter() {
-            count += dc.volume_count().await;
+            count += dc.volume_count();
         }
         count
     }
 
-    pub async fn max_volume_count(&self) -> u64 {
+    pub fn max_volume_count(&self) -> i64 {
         let mut max_volumes = 0;
         for dc in self.data_centers.iter() {
-            max_volumes += dc.max_volume_count().await;
+            max_volumes += dc.max_volume_count();
         }
         max_volumes
     }
 
-    pub async fn free_volumes(&self) -> u64 {
+    pub fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for dc in self.data_centers.iter() {
-            free_volumes += dc.free_volumes().await;
+            free_volumes += dc.free_volumes();
         }
         free_volumes
     }
 
-    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
+    pub fn adjust_volume_count(&self, volume_count_delta: i64) {
         self._adjust_volume_count(volume_count_delta);
     }
 
-    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+    pub fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self._adjust_active_volume_count(active_volume_count_delta);
     }
 
-    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+    pub fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self._adjust_ec_shard_count(ec_shard_count_delta);
     }
 
-    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+    pub fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
         self._adjust_max_volume_count(max_volume_count_delta);
     }
 
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
+    pub fn adjust_max_volume_id(&self, vid: VolumeId) {
         self._adjust_max_volume_id(vid);
     }
 }

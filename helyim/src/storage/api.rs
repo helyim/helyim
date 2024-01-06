@@ -72,7 +72,7 @@ pub async fn status_handler(State(ctx): State<StorageState>) -> Result<Json<Valu
 }
 
 pub async fn delete_handler(
-    State(mut ctx): State<StorageState>,
+    State(ctx): State<StorageState>,
     extractor: DeleteExtractor,
 ) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
@@ -90,21 +90,14 @@ pub async fn delete_handler(
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
-    let size = replicate_delete(
-        &mut ctx,
-        extractor.uri.path(),
-        vid,
-        &mut needle,
-        is_replicate,
-    )
-    .await?;
+    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
     let size = json!({ "size": size });
 
     Ok(Json(size))
 }
 
 async fn replicate_delete(
-    ctx: &mut StorageState,
+    ctx: &StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
@@ -155,7 +148,7 @@ async fn replicate_delete(
 }
 
 pub async fn post_handler(
-    State(mut ctx): State<StorageState>,
+    State(ctx): State<StorageState>,
     extractor: PostExtractor,
 ) -> Result<Json<Upload>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
@@ -167,14 +160,7 @@ pub async fn post_handler(
         new_needle_from_request(&extractor).await?
     };
 
-    let size = replicate_write(
-        &mut ctx,
-        extractor.uri.path(),
-        vid,
-        &mut needle,
-        is_replicate,
-    )
-    .await?;
+    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
     let mut upload = Upload {
         size,
         ..Default::default()
@@ -188,7 +174,7 @@ pub async fn post_handler(
 }
 
 async fn replicate_write(
-    ctx: &mut StorageState,
+    ctx: &StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,

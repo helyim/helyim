@@ -43,11 +43,12 @@ impl DataCenter {
         *self.topology.write().await = topology;
     }
 
-    pub fn get_or_create_rack(&self, id: FastStr) -> RackRef {
+    pub async fn get_or_create_rack(&self, id: FastStr) -> RackRef {
         match self.racks.get(&id) {
             Some(rack) => rack.value().clone(),
             None => {
                 let rack = Arc::new(Rack::new(id.clone()));
+                self.link_rack(&rack).await;
                 self.racks.insert(id, rack.clone());
                 rack
             }
@@ -58,13 +59,13 @@ impl DataCenter {
         // randomly select one
         let mut free_volumes = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.free_volumes().await;
+            free_volumes += rack.free_volumes();
         }
 
         let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for rack in self.racks.iter() {
-            free_volumes -= rack.free_volumes().await;
+            free_volumes -= rack.free_volumes();
             if free_volumes == idx {
                 return rack.reserve_one_volume().await;
             }
@@ -78,26 +79,35 @@ impl DataCenter {
 }
 
 impl DataCenter {
-    pub async fn volume_count(&self) -> u64 {
+    pub async fn link_rack(&self, rack: &Arc<Rack>) {
+        self.adjust_max_volume_count(rack.max_volume_count()).await;
+        self.adjust_max_volume_id(rack.max_volume_id()).await;
+        self.adjust_volume_count(rack.volume_count()).await;
+        self.adjust_ec_shard_count(rack.ec_shard_count()).await;
+        self.adjust_active_volume_count(rack.active_volume_count())
+            .await;
+    }
+
+    pub fn volume_count(&self) -> i64 {
         let mut count = 0;
         for rack in self.racks.iter() {
-            count += rack.volume_count().await;
+            count += rack.volume_count();
         }
         count
     }
 
-    pub async fn max_volume_count(&self) -> u64 {
+    pub fn max_volume_count(&self) -> i64 {
         let mut max_volumes = 0;
         for rack in self.racks.iter() {
-            max_volumes += rack.max_volume_count().await;
+            max_volumes += rack.max_volume_count();
         }
         max_volumes
     }
 
-    pub async fn free_volumes(&self) -> u64 {
+    pub fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.free_volumes().await;
+            free_volumes += rack.free_volumes();
         }
         free_volumes
     }
@@ -106,7 +116,7 @@ impl DataCenter {
         self._adjust_volume_count(volume_count_delta);
 
         if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_volume_count(volume_count_delta).await;
+            topo.adjust_volume_count(volume_count_delta);
         }
     }
 
@@ -114,8 +124,7 @@ impl DataCenter {
         self._adjust_active_volume_count(active_volume_count_delta);
 
         if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_active_volume_count(active_volume_count_delta)
-                .await;
+            topo.adjust_active_volume_count(active_volume_count_delta);
         }
     }
 
@@ -123,7 +132,7 @@ impl DataCenter {
         self._adjust_ec_shard_count(ec_shard_count_delta);
 
         if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_ec_shard_count(ec_shard_count_delta).await;
+            topo.adjust_ec_shard_count(ec_shard_count_delta);
         }
     }
 
@@ -131,7 +140,7 @@ impl DataCenter {
         self._adjust_max_volume_count(max_volume_count_delta);
 
         if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_max_volume_count(max_volume_count_delta).await;
+            topo.adjust_max_volume_count(max_volume_count_delta);
         }
     }
 
@@ -139,7 +148,7 @@ impl DataCenter {
         self._adjust_max_volume_id(vid);
 
         if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_max_volume_id(self.max_volume_id()).await;
+            topo.adjust_max_volume_id(self.max_volume_id());
         }
     }
 }
