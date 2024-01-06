@@ -48,8 +48,7 @@ impl DataCenter {
             Some(rack) => rack.value().clone(),
             None => {
                 let rack = Arc::new(Rack::new(id.clone()));
-                self.link_rack(&rack).await;
-                self.racks.insert(id, rack.clone());
+                self.link_rack(rack.clone()).await;
                 rack
             }
         }
@@ -79,13 +78,17 @@ impl DataCenter {
 }
 
 impl DataCenter {
-    pub async fn link_rack(&self, rack: &Arc<Rack>) {
-        self.adjust_max_volume_count(rack.max_volume_count()).await;
-        self.adjust_max_volume_id(rack.max_volume_id()).await;
-        self.adjust_volume_count(rack.volume_count()).await;
-        self.adjust_ec_shard_count(rack.ec_shard_count()).await;
-        self.adjust_active_volume_count(rack.active_volume_count())
-            .await;
+    pub async fn link_rack(&self, rack: Arc<Rack>) {
+        if !self.racks.contains_key(rack.id()) {
+            self.adjust_max_volume_count(rack.max_volume_count()).await;
+            self.adjust_max_volume_id(rack.max_volume_id()).await;
+            self.adjust_volume_count(rack.volume_count()).await;
+            self.adjust_ec_shard_count(rack.ec_shard_count()).await;
+            self.adjust_active_volume_count(rack.active_volume_count())
+                .await;
+
+            self.racks.insert(rack.id.clone(), rack);
+        }
     }
 
     pub fn volume_count(&self) -> i64 {

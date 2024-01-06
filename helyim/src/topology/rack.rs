@@ -55,8 +55,7 @@ impl Rack {
                 let data_node = Arc::new(
                     DataNode::new(id.clone(), ip, port, public_url, max_volume_count).await?,
                 );
-                self.link_data_node(&data_node).await;
-                self.data_nodes.insert(id, data_node.clone());
+                self.link_data_node(data_node.clone()).await;
                 Ok(data_node)
             }
         }
@@ -93,14 +92,18 @@ impl Rack {
 }
 
 impl Rack {
-    pub async fn link_data_node(&self, data_node: &Arc<DataNode>) {
-        self.adjust_max_volume_count(data_node.max_volume_count())
-            .await;
-        self.adjust_max_volume_id(data_node.max_volume_id()).await;
-        self.adjust_volume_count(data_node.volume_count()).await;
-        self.adjust_ec_shard_count(data_node.ec_shard_count()).await;
-        self.adjust_active_volume_count(data_node.active_volume_count())
-            .await;
+    pub async fn link_data_node(&self, data_node: Arc<DataNode>) {
+        if !self.data_nodes.contains_key(data_node.id()) {
+            self.adjust_max_volume_count(data_node.max_volume_count())
+                .await;
+            self.adjust_max_volume_id(data_node.max_volume_id()).await;
+            self.adjust_volume_count(data_node.volume_count()).await;
+            self.adjust_ec_shard_count(data_node.ec_shard_count()).await;
+            self.adjust_active_volume_count(data_node.active_volume_count())
+                .await;
+
+            self.data_nodes.insert(data_node.id.clone(), data_node);
+        }
     }
 
     pub fn volume_count(&self) -> i64 {

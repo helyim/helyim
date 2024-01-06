@@ -93,7 +93,7 @@ impl Topology {
             Some(data_node) => data_node.value().clone(),
             None => {
                 let data_center = Arc::new(DataCenter::new(name.clone()));
-                self.link_data_center(&data_center);
+                self.link_data_center(data_center.clone());
                 data_center
             }
         }
@@ -278,12 +278,17 @@ impl Topology {
 }
 
 impl Topology {
-    fn link_data_center(&self, data_center: &Arc<DataCenter>) {
-        self.adjust_max_volume_count(data_center.max_volume_count());
-        self.adjust_max_volume_id(data_center.max_volume_id());
-        self.adjust_volume_count(data_center.volume_count());
-        self.adjust_ec_shard_count(data_center.ec_shard_count());
-        self.adjust_active_volume_count(data_center.active_volume_count());
+    fn link_data_center(&self, data_center: Arc<DataCenter>) {
+        if !self.data_centers.contains_key(data_center.id()) {
+            self.adjust_max_volume_count(data_center.max_volume_count());
+            self.adjust_max_volume_id(data_center.max_volume_id());
+            self.adjust_volume_count(data_center.volume_count());
+            self.adjust_ec_shard_count(data_center.ec_shard_count());
+            self.adjust_active_volume_count(data_center.active_volume_count());
+
+            self.data_centers
+                .insert(data_center.id.clone(), data_center);
+        }
     }
 
     pub fn volume_count(&self) -> i64 {
