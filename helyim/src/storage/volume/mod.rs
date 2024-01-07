@@ -320,7 +320,7 @@ impl Volume {
             let version = self.version();
             let file = self.data_file()?;
 
-            let offset = append_needle_at(&file)?;
+            let offset = append_needle_at(file)?;
             needle.append(file, offset, version)?;
 
             self.delete_index(needle.id)?;
