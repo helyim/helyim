@@ -10,7 +10,7 @@ use bytes::{Buf, BufMut};
 use crate::{
     storage::{
         needle::{
-            NEEDLE_HEADER_SIZE, NEEDLE_ID_SIZE, NEEDLE_MAP_ENTRY_SIZE, OFFSET_SIZE, SIZE_SIZE,
+            NEEDLE_ENTRY_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_ID_SIZE, OFFSET_SIZE, SIZE_SIZE,
             TOMBSTONE_FILE_SIZE,
         },
         read_index_entry, NeedleError, NeedleId, NeedleValue,
@@ -59,11 +59,11 @@ fn search_needle_from_sorted_index(
     needle_id: NeedleId,
     process_needle: Option<ProcessNeedleFn>,
 ) -> Result<NeedleValue, NeedleError> {
-    let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE as usize];
-    let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_MAP_ENTRY_SIZE as u64);
+    let mut buf = [0u8; NEEDLE_ENTRY_SIZE as usize];
+    let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_ENTRY_SIZE as u64);
     while low < high {
         let middle = (low + high) / 2;
-        ecx_file.read_at(&mut buf, middle * NEEDLE_MAP_ENTRY_SIZE as u64)?;
+        ecx_file.read_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
         let (key, offset, size) = read_index_entry(&buf);
         if key == needle_id {
             if let Some(mut process_needle) = process_needle {

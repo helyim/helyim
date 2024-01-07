@@ -21,6 +21,7 @@ use crate::{
             NEEDLE_PADDING_SIZE,
         },
         volume::{
+            append_needle_at,
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
             COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
@@ -223,9 +224,9 @@ impl Volume {
         compact_index_filename: String,
     ) -> Result<(), VolumeError> {
         let compact_data_file = fs::OpenOptions::new()
+            .read(true)
             .write(true)
             .create(true)
-            .truncate(true)
             .mode(0o644)
             .open(compact_data_filename)?;
         let compact_index_file = fs::OpenOptions::new()
@@ -240,7 +241,7 @@ impl Volume {
 
         let mut new_offset = SUPER_BLOCK_SIZE as u64;
         let now = now().as_millis() as u64;
-        let version = self.version();
+        let mut version = self.version();
 
         let dst = compact_data_file.try_clone()?;
         scan_volume_file(
@@ -250,6 +251,7 @@ impl Volume {
             self.needle_map_type,
             true,
             |super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> {
+                version = super_block.version;
                 super_block.add_compact_revision(1);
                 compact_data_file.write_all_at(&super_block.as_bytes(), 0)?;
                 Ok(())
@@ -267,7 +269,9 @@ impl Volume {
                             size: needle.size,
                         };
                         compact_nm.set(needle.id, nv)?;
-                        needle.append(&dst, offset, version)?;
+
+                        let offset = append_needle_at(&dst)?;
+                        needle.append(&dst, offset, self.version())?;
                         new_offset += needle.disk_size();
                     }
                 }

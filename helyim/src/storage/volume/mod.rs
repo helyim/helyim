@@ -27,7 +27,7 @@ use crate::{
     storage::{
         needle::{
             read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue,
-            NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE,
+            NEEDLE_PADDING_SIZE,
         },
         ttl::Ttl,
         version::{Version, CURRENT_VERSION},
@@ -49,7 +49,11 @@ mod volume_info;
 
 pub use volume_info::VolumeInfo;
 
-use crate::storage::{needle::NeedleError, types::Offset, NeedleId};
+use crate::storage::{
+    needle::{NeedleError, NEEDLE_ENTRY_SIZE},
+    types::Offset,
+    NeedleId,
+};
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -276,12 +280,7 @@ impl Volume {
             let _lock = self.data_file_lock.write();
             let file = self.data_file()?;
 
-            let mut offset = file.metadata()?.len();
-            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-                offset =
-                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            }
-
+            let offset = append_needle_at(file)?;
             if let Err(err) = needle.append(file, offset, version) {
                 error!(
                     "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
@@ -321,12 +320,7 @@ impl Volume {
             let version = self.version();
             let file = self.data_file()?;
 
-            let mut offset = file.metadata()?.len();
-            if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-                offset =
-                    offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-            }
-
+            let offset = append_needle_at(&file)?;
             needle.append(file, offset, version)?;
 
             self.delete_index(needle.id)?;
@@ -722,6 +716,14 @@ fn load_volume_without_index(
     Ok(volume)
 }
 
+fn append_needle_at(file: &File) -> std::io::Result<u64> {
+    let mut offset = file.metadata()?.len();
+    if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
+        offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+    }
+    Ok(offset)
+}
+
 pub fn scan_volume_file<VSB, VN>(
     dirname: FastStr,
     collection: FastStr,
@@ -746,28 +748,42 @@ where
     let data_file = volume.data_file()?;
     loop {
         if read_needle_body {
-            if let Err(err) = needle.read_needle_body(
-                data_file,
-                offset + NEEDLE_HEADER_SIZE as u64,
-                rest,
-                version,
-            ) {
+            if let Err(err) =
+                needle.read_needle_body(data_file, offset + NEEDLE_ENTRY_SIZE as u64, rest, version)
+            {
                 error!("cannot read needle body when scanning volume file, {err}");
             }
         }
 
-        visit_needle(&mut needle, offset)?;
-        offset += (NEEDLE_HEADER_SIZE + rest) as u64;
+        match visit_needle(&mut needle, offset) {
+            Err(VolumeError::Needle(NeedleError::Io(err))) => {
+                if err.kind() == ErrorKind::UnexpectedEof {
+                    return Ok(());
+                }
+            }
+            Err(err) => {
+                error!("visit needle error: {err}");
+            }
+            Ok(_) => {}
+        }
 
+        offset += (NEEDLE_ENTRY_SIZE + rest) as u64;
+
+        info!("new entry offset: {offset}");
         match read_needle_header(data_file, version, offset) {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;
+                info!(
+                    "new entry needle size: {}, body length: {rest}",
+                    needle.size
+                );
             }
             Err(NeedleError::Io(err)) => {
                 if err.kind() == ErrorKind::UnexpectedEof {
                     return Ok(());
                 }
+                return Err(VolumeError::Needle(NeedleError::Io(err)));
             }
             Err(err) => {
                 return Err(VolumeError::Needle(err));
