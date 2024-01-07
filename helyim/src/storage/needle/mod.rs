@@ -33,7 +33,7 @@ pub const NEEDLE_ID_SIZE: u32 = 8;
 pub const OFFSET_SIZE: u32 = 4;
 pub const SIZE_SIZE: u32 = 4;
 pub const TIMESTAMP_SIZE: u32 = 8;
-pub const NEEDLE_MAP_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
+pub const NEEDLE_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
 pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
 pub const NEEDLE_INDEX_SIZE: u32 = 16;
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
@@ -431,6 +431,11 @@ impl Needle {
     pub fn data_size(&self) -> u32 {
         self.data.len() as u32
     }
+
+    pub fn body_len(&self) -> u32 {
+        let padding = self.size.padding_len();
+        self.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -490,11 +495,10 @@ pub fn read_needle_header(
     let mut body_len = 0;
 
     if version == VERSION2 {
-        let mut buf = vec![0u8; NEEDLE_HEADER_SIZE as usize];
+        let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
         file.read_exact_at(&mut buf, offset)?;
         needle.parse_needle_header(&buf);
-        let padding = needle.size.padding_len();
-        body_len = needle.size.0 as u32 + NEEDLE_CHECKSUM_SIZE + padding;
+        body_len = needle.body_len();
     }
 
     Ok((needle, body_len))

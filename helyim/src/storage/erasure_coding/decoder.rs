@@ -14,7 +14,7 @@ use crate::{
             to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE,
         },
-        needle::{NEEDLE_ID_SIZE, NEEDLE_MAP_ENTRY_SIZE},
+        needle::{NEEDLE_ENTRY_SIZE, NEEDLE_ID_SIZE},
         read_index_entry,
         types::{Offset, Size},
         version::Version,
@@ -86,7 +86,7 @@ where
         .read(true)
         .mode(0o644)
         .open(format!("{}.ecx", base_filename))?;
-    let mut buf = vec![0u8; NEEDLE_MAP_ENTRY_SIZE as usize];
+    let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
 
     loop {
         if let Err(err) = ecx_file.read_exact(&mut buf) {
