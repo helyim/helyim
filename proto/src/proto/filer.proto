@@ -89,20 +89,16 @@ message Entry {
 }
 
 message FileChunk {
-  // to be deprecated
-  string file_id = 1;
+  FileId fid = 1;
   int64 offset = 2;
   uint64 size = 3;
   int64 modified_ts_ns = 4;
   string e_tag = 5;
-  // to be deprecated
-  string source_file_id = 6;
-  FileId fid = 7;
-  FileId source_fid = 8;
-  bytes cipher_key = 9;
-  bool is_compressed = 10;
+  FileId source_fid = 6;
+  bytes cipher_key = 7;
+  bool is_compressed = 8;
   // content is a list of FileChunks
-  bool is_chunk_manifest = 11;
+  bool is_chunk_manifest = 9;
 }
 
 message FileId {
