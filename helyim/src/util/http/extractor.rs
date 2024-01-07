@@ -150,7 +150,7 @@ async fn proxy_to_leader(
                     let mut response = HYPER_CLIENT.request(req).await?;
                     response.headers_mut().insert(
                         HeaderName::from_str("HTTP_X_FORWARDED_FOR")?,
-                        HeaderValue::from_str(addr.as_str())?,
+                        HeaderValue::from_str(&addr)?,
                     );
                     Ok(response)
                 }

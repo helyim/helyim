@@ -164,7 +164,7 @@ async fn find_main_data_center(
         if racks_len < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_center.free_volumes() < rp.diff_rack_count as i64 + rp.same_rack_count as i64 + 1 {
+        if data_center.free_volumes() < (rp.diff_rack_count + rp.same_rack_count) as i64 + 1 {
             continue;
         }
         let mut possible_racks_count = 0;
