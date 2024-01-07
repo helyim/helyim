@@ -298,7 +298,7 @@ async fn handle_heartbeat(
     let data_center = topology.get_or_create_data_center(data_center).await;
     data_center.set_topology(Arc::downgrade(topology)).await;
 
-    let rack = data_center.get_or_create_rack(rack);
+    let rack = data_center.get_or_create_rack(rack).await;
     rack.set_data_center(Arc::downgrade(&data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
@@ -308,7 +308,7 @@ async fn handle_heartbeat(
             FastStr::new(ip),
             heartbeat.port as u16,
             FastStr::new(heartbeat.public_url),
-            heartbeat.max_volume_count as u64,
+            heartbeat.max_volume_count as i64,
         )
         .await?;
     node.set_rack(Arc::downgrade(&rack)).await;

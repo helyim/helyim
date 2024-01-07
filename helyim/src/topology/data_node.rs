@@ -49,7 +49,7 @@ impl DataNode {
         ip: FastStr,
         port: u16,
         public_url: FastStr,
-        max_volume_count: u64,
+        max_volume_count: i64,
     ) -> Result<DataNode> {
         let node = Node::new(id);
         node.set_max_volume_count(max_volume_count);
@@ -190,15 +190,15 @@ impl DataNode {
 }
 
 impl DataNode {
-    pub fn free_volumes(&self) -> u64 {
+    pub fn free_volumes(&self) -> i64 {
         self.max_volume_count() - self.volume_count()
     }
 
-    pub fn volume_count(&self) -> u64 {
+    pub fn volume_count(&self) -> i64 {
         self._volume_count()
     }
 
-    pub fn max_volume_count(&self) -> u64 {
+    pub fn max_volume_count(&self) -> i64 {
         self._max_volume_count()
     }
 

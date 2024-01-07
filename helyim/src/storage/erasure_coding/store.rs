@@ -222,7 +222,7 @@ impl Store {
     async fn read_one_ec_shard_interval(
         &self,
         needle_id: NeedleId,
-        ec_volume: &mut EcVolume,
+        ec_volume: &EcVolume,
         interval: Interval,
     ) -> Result<(Vec<u8>, bool), EcVolumeError> {
         let actual_offset = interval.offset(

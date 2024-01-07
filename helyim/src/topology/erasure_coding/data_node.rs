@@ -82,7 +82,7 @@ impl DataNode {
         }
     }
 
-    pub async fn add_or_update_ec_shards(&self, volume: &mut EcVolumeInfo) {
+    pub async fn add_or_update_ec_shards(&self, volume: &EcVolumeInfo) {
         let delta = match self.ec_shards.get_mut(&volume.volume_id) {
             Some(mut ec_shard) => {
                 let old_count = ec_shard.shard_bits.shard_id_count();
@@ -98,7 +98,7 @@ impl DataNode {
         self.adjust_ec_shard_count(delta as i64).await;
     }
 
-    pub async fn delete_ec_shard(&self, volume: &mut EcVolumeInfo) {
+    pub async fn delete_ec_shard(&self, volume: &EcVolumeInfo) {
         if let Some(mut ec_shard) = self.ec_shards.get_mut(&volume.volume_id) {
             let old_count = ec_shard.shard_bits.shard_id_count();
             ec_shard.shard_bits = ec_shard.shard_bits.minus(&volume.shard_bits);

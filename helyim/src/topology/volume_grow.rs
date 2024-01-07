@@ -164,9 +164,7 @@ async fn find_main_data_center(
         if racks_len < rp.diff_rack_count as usize + 1 {
             continue;
         }
-        if data_center.free_volumes().await
-            < rp.diff_rack_count as u64 + rp.same_rack_count as u64 + 1
-        {
+        if data_center.free_volumes() < (rp.diff_rack_count + rp.same_rack_count) as i64 + 1 {
             continue;
         }
         let mut possible_racks_count = 0;
@@ -226,7 +224,7 @@ async fn find_main_rack(
         if !option.rack.is_empty() && option.rack != rack.id {
             continue;
         }
-        if rack.free_volumes().await < rp.same_rack_count as u64 + 1 {
+        if rack.free_volumes() < rp.same_rack_count as i64 + 1 {
             continue;
         }
         let data_nodes_len = rack.data_nodes.len();

@@ -47,7 +47,7 @@ impl Rack {
         ip: FastStr,
         port: u16,
         public_url: FastStr,
-        max_volume_count: u64,
+        max_volume_count: i64,
     ) -> Result<DataNodeRef> {
         match self.data_nodes.get(&id) {
             Some(data_node) => Ok(data_node.value().clone()),
@@ -55,8 +55,7 @@ impl Rack {
                 let data_node = Arc::new(
                     DataNode::new(id.clone(), ip, port, public_url, max_volume_count).await?,
                 );
-
-                self.data_nodes.insert(id, data_node.clone());
+                self.link_data_node(data_node.clone()).await;
                 Ok(data_node)
             }
         }
@@ -93,7 +92,21 @@ impl Rack {
 }
 
 impl Rack {
-    pub async fn volume_count(&self) -> u64 {
+    pub async fn link_data_node(&self, data_node: Arc<DataNode>) {
+        if !self.data_nodes.contains_key(data_node.id()) {
+            self.adjust_max_volume_count(data_node.max_volume_count())
+                .await;
+            self.adjust_max_volume_id(data_node.max_volume_id()).await;
+            self.adjust_volume_count(data_node.volume_count()).await;
+            self.adjust_ec_shard_count(data_node.ec_shard_count()).await;
+            self.adjust_active_volume_count(data_node.active_volume_count())
+                .await;
+
+            self.data_nodes.insert(data_node.id.clone(), data_node);
+        }
+    }
+
+    pub fn volume_count(&self) -> i64 {
         let mut count = 0;
         for data_node in self.data_nodes.iter() {
             count += data_node.volume_count();
@@ -101,7 +114,7 @@ impl Rack {
         count
     }
 
-    pub async fn max_volume_count(&self) -> u64 {
+    pub fn max_volume_count(&self) -> i64 {
         let mut max_volumes = 0;
         for data_node in self.data_nodes.iter() {
             max_volumes += data_node.max_volume_count();
@@ -109,7 +122,7 @@ impl Rack {
         max_volumes
     }
 
-    pub async fn free_volumes(&self) -> u64 {
+    pub fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for data_node in self.data_nodes.iter() {
             free_volumes += data_node.free_volumes();
