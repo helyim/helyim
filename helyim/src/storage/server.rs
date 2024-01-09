@@ -48,6 +48,7 @@ use crate::{
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
+        parser::parse_host_port,
         sys::exit,
     },
 };
@@ -233,7 +234,11 @@ impl VolumeServer {
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();
-                info!("heartbeat client starting up success, will heartbeat to {master}");
+
+                let (_ip, port) = parse_host_port(master)?;
+                let grpc_port = grpc_port(port);
+                info!("heartbeat client starting up success, will heartbeat to {grpc_port}");
+
                 while let Some(response) = stream.next().await {
                     match response {
                         Ok(response) => {

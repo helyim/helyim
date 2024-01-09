@@ -158,9 +158,9 @@ impl Store {
         }
     }
 
-    pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
+    pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
         let mut delete = false;
-        for location in self.locations.iter_mut() {
+        for location in self.locations.iter() {
             location.delete_volume(vid).await?;
             delete = true;
         }
