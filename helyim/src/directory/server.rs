@@ -199,12 +199,13 @@ impl Helyim for DirectoryGrpcServer {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
         tokio::spawn(async move {
-            let mut cur_heartbeat: Option<HeartbeatRequest> = None;
+            let mut volume_server_info = addr.ip().to_string();
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(heartbeat) => {
                         debug!("receive {:?}", heartbeat);
-                        cur_heartbeat = Some(heartbeat.clone());
+                        volume_server_info = format!("ip: {}, port: {}, public_url: {}", heartbeat.ip, heartbeat.port, heartbeat.public_url);
+                        // cur_heartbeat = Some(heartbeat.clone());
                         match handle_heartbeat(heartbeat, &topology, volume_size_limit, addr).await
                         {
                             Ok(resp) => {
@@ -218,7 +219,7 @@ impl Helyim for DirectoryGrpcServer {
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
                             error!("heartbeat response dropped: {}", e);
-                            error!("Volume Server is disconnected, {:?}", cur_heartbeat);
+                            error!("Volume Server is disconnected, {}", volume_server_info);
                             return;
                         }
                     }
