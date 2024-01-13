@@ -6,6 +6,7 @@ package helyim;
 
 service Helyim {
   rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse) {}
+  rpc KeepConnected(stream ClientListenRequest) returns (stream VolumeLocation) {}
   rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {}
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {}
 }
@@ -38,6 +39,17 @@ message HeartbeatResponse {
   uint64 volume_size_limit = 1;
   string secret_key = 2;
   string leader = 3;
+}
+
+message ClientListenRequest {
+  string name = 1;
+}
+
+message VolumeLocation {
+  string url = 1;
+  string public_url = 2;
+  repeated uint32 new_volume_ids = 3;
+  repeated uint32 deleted_volume_ids = 4;
 }
 
 message VolumeInformationMessage {

@@ -34,7 +34,7 @@ service VolumeServer {
   rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
   }
 
-
+  rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {}
 }
 
 message AllocateVolumeRequest {
@@ -167,4 +167,19 @@ message VolumeEcShardsToVolumeRequest {
   string collection = 2;
 }
 message VolumeEcShardsToVolumeResponse {
+}
+
+message BatchDeleteRequest {
+  repeated string file_ids = 1;
+}
+
+message BatchDeleteResponse {
+  repeated DeleteResult results = 1;
+}
+message DeleteResult {
+  string file_id = 1;
+  int32 status = 2;
+  string error = 3;
+  uint32 size = 4;
+  uint32 version = 5;
 }

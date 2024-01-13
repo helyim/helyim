@@ -7,18 +7,18 @@ use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
-use helyim_proto::{
+use helyim_proto::volume::{
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
-    AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
-    VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
-    VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
-    VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
-    VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
-    VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
-    VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
-    VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
-    VolumeEcShardsUnmountResponse, VolumeInfo,
+    AllocateVolumeRequest, AllocateVolumeResponse, BatchDeleteRequest, BatchDeleteResponse,
+    VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
+    VacuumVolumeCleanupResponse, VacuumVolumeCommitRequest, VacuumVolumeCommitResponse,
+    VacuumVolumeCompactRequest, VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest,
+    VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest, VolumeEcShardReadResponse,
+    VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest,
+    VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse,
+    VolumeEcShardsMountRequest, VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest,
+    VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse,
+    VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse, VolumeInfo,
 };
 use tokio::time::sleep;
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
@@ -175,7 +175,6 @@ impl VolumeServer {
                         master,
                         store.clone(),
                         pulse,
-                        shutdown.clone(),
                     ) => {
                             match ret {
                                 Err(VolumeError::LeaderChanged(new, old)) => {
@@ -208,24 +207,15 @@ impl VolumeServer {
         master: &FastStr,
         store: StoreRef,
         pulse: u64,
-        mut shutdown_rx: async_broadcast::Receiver<()>,
     ) -> StdResult<(), VolumeError> {
         let mut interval = tokio::time::interval(Duration::from_secs(pulse));
-
         let store_ref = store.clone();
         let request_stream = stream! {
             loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        match store_ref.collect_heartbeat().await {
-                            Ok(heartbeat) => yield heartbeat,
-                            Err(err) => error!("collect heartbeat error: {err}")
-                        }
-                    }
-                    // to avoid server side got `channel closed` error
-                    _ = shutdown_rx.recv() => {
-                        break;
-                    }
+                interval.tick().await;
+                match store_ref.collect_heartbeat().await {
+                    Ok(heartbeat) => yield heartbeat,
+                    Err(err) => error!("collect heartbeat error: {err}")
                 }
             }
         };
@@ -665,5 +655,12 @@ impl HelyimVolumeServer for StorageGrpcServer {
                 request.volume_id
             ))),
         }
+    }
+
+    async fn batch_delete(
+        &self,
+        request: Request<BatchDeleteRequest>,
+    ) -> StdResult<Response<BatchDeleteResponse>, Status> {
+        todo!()
     }
 }

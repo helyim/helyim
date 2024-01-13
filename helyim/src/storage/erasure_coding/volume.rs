@@ -10,7 +10,7 @@ use std::{
 use bytes::{Buf, BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{VolumeEcShardInformationMessage, VolumeInfo};
+use helyim_proto::{volume::VolumeInfo, VolumeEcShardInformationMessage};
 use parking_lot::Mutex;
 use tokio::sync::RwLock;
 

@@ -8,7 +8,7 @@ use std::{
 
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
-use helyim_proto::{VolumeEcShardInformationMessage, VolumeEcShardReadRequest};
+use helyim_proto::{volume::VolumeEcShardReadRequest, VolumeEcShardInformationMessage};
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};
 

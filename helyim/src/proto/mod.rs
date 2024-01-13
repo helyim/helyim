@@ -1,6 +1,6 @@
 use std::fs::{read, write};
 
-use helyim_proto::VolumeInfo;
+use helyim_proto::volume::VolumeInfo;
 use tracing::error;
 
 use crate::{anyhow, storage::VolumeError, util::file::check_file};

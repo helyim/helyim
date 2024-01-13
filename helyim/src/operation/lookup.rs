@@ -20,7 +20,7 @@ pub struct LookupRequest {
 #[serde(rename_all = "camelCase")]
 pub struct Location {
     pub url: String,
-    pub public_url: FastStr,
+    pub public_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +29,24 @@ pub struct Lookup {
     pub volume_id: String,
     pub locations: Vec<Location>,
     pub error: FastStr,
+}
+
+impl Lookup {
+    pub fn ok(vid: String, locations: Vec<Location>) -> Self {
+        Self {
+            volume_id: vid,
+            locations,
+            error: FastStr::empty(),
+        }
+    }
+
+    pub fn error(error: FastStr) -> Self {
+        Self {
+            volume_id: String::default(),
+            locations: vec![],
+            error,
+        }
+    }
 }
 
 pub struct Looker {

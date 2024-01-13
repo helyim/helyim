@@ -9,8 +9,8 @@ use futures::{Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     lookup_volume_response::VolumeLocation,
-    HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
-    LookupVolumeRequest, LookupVolumeResponse,
+    ClientListenRequest, HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest,
+    LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
@@ -225,6 +225,15 @@ impl Helyim for DirectoryGrpcServer {
 
         let out_stream = UnboundedReceiverStream::new(rx);
         Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
+    }
+
+    type KeepConnectedStream =
+        Pin<Box<dyn Stream<Item = StdResult<helyim_proto::VolumeLocation, Status>> + Send>>;
+    async fn keep_connected(
+        &self,
+        request: Request<Streaming<ClientListenRequest>>,
+    ) -> StdResult<Response<Self::KeepConnectedStream>, Status> {
+        todo!()
     }
 
     async fn lookup_volume(

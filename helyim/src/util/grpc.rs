@@ -3,7 +3,7 @@ use std::{collections::HashMap, ops::Deref};
 use faststr::FastStr;
 use futures::executor::block_on;
 use ginepro::LoadBalancedChannel;
-use helyim_proto::{helyim_client::HelyimClient, volume_server_client::VolumeServerClient};
+use helyim_proto::{helyim_client::HelyimClient, volume::volume_server_client::VolumeServerClient};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tracing::info;

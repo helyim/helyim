@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use helyim_proto::{
+use helyim_proto::volume::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
 };
