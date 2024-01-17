@@ -18,13 +18,15 @@ use crate::{
     util::file::file_name,
 };
 
+mod redis;
+
 pub mod deletion;
 pub mod entry;
 pub mod file_chunks;
 
 pub trait FilerStore: Send + Sync {
     fn name(&self) -> &str;
-    fn initialize(&self) -> Result<(), FilerError>;
+    fn initialize(&mut self) -> Result<(), FilerError>;
     fn insert_entry(&self, entry: &Entry) -> Result<(), FilerError>;
     fn update_entry(&self, entry: &Entry) -> Result<(), FilerError>;
     fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError>;
@@ -34,7 +36,7 @@ pub trait FilerStore: Send + Sync {
         dir_path: &str,
         start_filename: &str,
         include_start_file: bool,
-        limit: u32,
+        limit: usize,
     ) -> Result<Vec<Entry>, FilerError>;
 
     fn begin_transaction(&self) -> Result<(), FilerError>;
@@ -117,7 +119,7 @@ impl Filer {
         path: &str,
         start_filename: &str,
         inclusive: bool,
-        limit: u32,
+        limit: usize,
     ) -> Result<Vec<Entry>, FilerError> {
         let mut path = path;
         if path.starts_with('/') && path.len() > 1 {
@@ -213,6 +215,8 @@ pub type FilerRef = Arc<Filer>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum FilerError {
+    #[error("init FilerStore failed: {0}")]
+    InitErr(FastStr),
     #[error("Master client error: {0}")]
     MasterClient(#[from] ClientError),
     #[error("Existing {0} is a directory")]
@@ -223,4 +227,8 @@ pub enum FilerError {
     StoreNotInitialized,
     #[error("Try send error: {0}")]
     TrySend(#[from] TrySendError<Option<FileId>>),
+    #[error("serialization error")]
+    SerializationErr,
+    #[error("file store err: {0}")]
+    FileStoreErr(FastStr),
 }

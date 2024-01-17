@@ -110,12 +110,12 @@ message FileId {
 message FuseAttributes {
   uint64 file_size = 1;
   // unix time in seconds
-  int64 mtime = 2;
+  uint64 mtime = 2;
   uint32 file_mode = 3;
   uint32 uid = 4;
   uint32 gid = 5;
   // unix time in seconds
-  int64 crtime = 6;
+  uint64 crtime = 6;
   string mime = 7;
   int32 ttl_sec = 10;
   // for hdfs
@@ -126,6 +126,8 @@ message FuseAttributes {
   bytes md5 = 14;
   uint32 rdev = 16;
   uint64 inode = 17;
+  string replication = 18;
+  string collection = 19;
 }
 
 message CreateEntryRequest {

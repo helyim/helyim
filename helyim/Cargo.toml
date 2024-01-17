@@ -45,7 +45,9 @@ nom.workspace = true
 openraft = { workspace = true, features = ["serde"] }
 once_cell.workspace = true
 parking_lot.workspace = true
+prost.workspace = true
 rand.workspace = true
+redis = { version = "0.24.0", features = ["tokio-comp"] }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 regex.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }

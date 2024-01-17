@@ -40,6 +40,26 @@ pub fn file_name(path: &str) -> String {
         .unwrap()
 }
 
+pub fn dir_and_name(path: &str) -> (String, String) {
+    let path = Path::new(path);
+    let dir = path.parent().map_or("/".to_string(), |path| {
+        path.as_os_str().to_string_lossy().to_string()
+    });
+    let file_name = path
+        .file_name()
+        .map_or("".to_string(), |name| name.to_string_lossy().to_string());
+
+    (dir, file_name)
+}
+
+pub fn new_full_path(dir: &str, filename: &str) -> String {
+    let path = Path::new(dir);
+    path.join(filename)
+        .as_os_str()
+        .to_string_lossy()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
