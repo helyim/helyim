@@ -3,6 +3,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use async_trait::async_trait;
+use async_recursion::async_recursion;
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
@@ -18,20 +20,24 @@ use crate::{
     util::file::file_name,
 };
 
+use self::redis::redis_store::RedisStore;
+
 mod redis;
 
 pub mod deletion;
 pub mod entry;
 pub mod file_chunks;
+pub mod server;
 
+#[async_trait]
 pub trait FilerStore: Send + Sync {
     fn name(&self) -> &str;
     fn initialize(&mut self) -> Result<(), FilerError>;
-    fn insert_entry(&self, entry: &Entry) -> Result<(), FilerError>;
-    fn update_entry(&self, entry: &Entry) -> Result<(), FilerError>;
-    fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError>;
-    fn delete_entry(&self, path: &str) -> Result<(), FilerError>;
-    fn list_directory_entries(
+    async fn insert_entry(&self, entry: &Entry) -> Result<(), FilerError>;
+    async fn update_entry(&self, entry: &Entry) -> Result<(), FilerError>;
+    async fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError>;
+    async fn delete_entry(&self, path: &str) -> Result<(), FilerError>;
+    async fn list_directory_entries(
         &self,
         dir_path: &str,
         start_filename: &str,
@@ -44,6 +50,7 @@ pub trait FilerStore: Send + Sync {
     fn rollback_transaction(&self) -> Result<(), FilerError>;
 }
 
+#[derive(Default, Debug)]
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
@@ -72,6 +79,14 @@ impl Filer {
         filer
     }
 
+    pub fn initialize(&mut self) -> Result<(), FilerError> {
+        let mut store = RedisStore::new("");
+        store.initialize()?;
+
+        self.store = Some(Box::new(store));
+        Ok(())
+    }
+
     pub fn current_master(&self) -> &str {
         self.master_client.current_master()
     }
@@ -87,7 +102,7 @@ impl Filer {
         Ok(self.master_client.try_all_masters().await?)
     }
 
-    pub fn update_entry(&self, old_entry: Option<&Entry>, entry: &Entry) -> Result<(), FilerError> {
+    pub async fn update_entry(&self, old_entry: Option<&Entry>, entry: &Entry) -> Result<(), FilerError> {
         if let Some(old_entry) = old_entry {
             if old_entry.is_directory() && !entry.is_directory() {
                 error!("existing {0} is a directory", entry.path());
@@ -99,10 +114,10 @@ impl Filer {
             }
         }
 
-        self.filer_store()?.update_entry(entry)
+        self.filer_store()?.update_entry(entry).await
     }
 
-    pub fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError> {
+    pub async fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError> {
         let time = SystemTime::now();
         if path == "/" {
             return Ok(Some(Entry {
@@ -111,10 +126,10 @@ impl Filer {
                 chunks: vec![],
             }));
         }
-        self.filer_store()?.find_entry(path)
+        self.filer_store()?.find_entry(path).await
     }
 
-    pub fn list_directory_entries(
+    pub async fn list_directory_entries(
         &self,
         path: &str,
         start_filename: &str,
@@ -126,16 +141,17 @@ impl Filer {
             path = &path[..path.len() - 1];
         }
         self.filer_store()?
-            .list_directory_entries(path, start_filename, inclusive, limit)
+            .list_directory_entries(path, start_filename, inclusive, limit).await
     }
 
-    pub fn delete_entry_meta_and_data(
+    #[async_recursion]
+    pub async fn delete_entry_meta_and_data(
         &self,
         path: &str,
         is_recursive: bool,
         should_delete_chunks: bool,
     ) -> Result<(), FilerError> {
-        if let Some(entry) = self.find_entry(path)? {
+        if let Some(entry) = self.find_entry(path).await? {
             if entry.is_directory() {
                 let mut limit = 1;
                 if is_recursive {
@@ -146,7 +162,7 @@ impl Filer {
 
                 while limit > 0 {
                     let entries =
-                        self.list_directory_entries(path, &last_filename, include_last_file, 1024)?;
+                        self.list_directory_entries(path, &last_filename, include_last_file, 1024).await?;
                     if entries.is_empty() {
                         break;
                     }
@@ -158,7 +174,7 @@ impl Filer {
                                 entry.path(),
                                 is_recursive,
                                 should_delete_chunks,
-                            )?;
+                            ).await?;
                             limit -= 1;
                             if limit <= 0 {
                                 break;
@@ -182,7 +198,7 @@ impl Filer {
                 return Ok(());
             }
 
-            return self.filer_store()?.delete_entry(path);
+            return self.filer_store()?.delete_entry(path).await;
         }
 
         Ok(())

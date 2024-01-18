@@ -16,6 +16,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 async-broadcast = "0.6"
+async-recursion = "1.0.5"
 async-scoped = "0.8"
 async-stream = "0.3"
 async-trait = "0.1"

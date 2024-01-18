@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref, DerefMut},
-    time::SystemTime,
+    time::SystemTime, collections::HashMap,
 };
 
 use bytes::Bytes;
@@ -130,7 +130,7 @@ impl DerefMut for Entry {
     }
 }
 
-fn entry_attribute_to_pb(entry: &Entry) -> FuseAttributes {
+pub fn entry_attribute_to_pb(entry: &Entry) -> FuseAttributes {
     FuseAttributes {
         mtime: get_time(entry.attr.mtime)
             .expect("SystemTime before UNIX EPOCH")
@@ -149,7 +149,7 @@ fn entry_attribute_to_pb(entry: &Entry) -> FuseAttributes {
     }
 }
 
-fn pb_to_entry_attribute(attr: FuseAttributes) -> Attr {
+pub fn pb_to_entry_attribute(attr: FuseAttributes) -> Attr {
     Attr {
         mtime: get_system_time(attr.mtime),
         mode: attr.file_mode,
@@ -160,6 +160,21 @@ fn pb_to_entry_attribute(attr: FuseAttributes) -> Attr {
         ttl: attr.ttl_sec,
         collection: attr.collection.into(),
         replication: attr.replication.into(),
+    }
+}
+
+pub fn entry_to_pb(entry: &Entry) -> PbEntry {
+    PbEntry {
+        name: entry.path().into(),
+        is_directory: entry.is_directory(),
+        chunks: entry.chunks,
+        attributes: Some(entry_attribute_to_pb(&entry)),
+        extended: HashMap::default(),
+        hard_link_id: Vec::new(),
+        hard_link_counter: 0,
+        content: Vec::new(),
+        remote_entry: None,
+        quota: 0,
     }
 }
 

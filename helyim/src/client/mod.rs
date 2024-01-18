@@ -16,6 +16,7 @@ use crate::{
     util::grpc::helyim_client,
 };
 
+#[derive(Clone)]
 pub struct MasterClient {
     name: FastStr,
     current_master: FastStr,

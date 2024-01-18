@@ -12,7 +12,7 @@ pub struct Location {
     pub public_url: FastStr,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LocationMap {
     locations: Arc<DashMap<VolumeId, Vec<Location>>>,
 }

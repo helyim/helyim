@@ -3,7 +3,7 @@ use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
     storage::{NeedleMapType, VolumeServer},
     util::{
-        args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
+        args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions, FilerOptions},
         sys::shutdown_signal,
     },
 };
@@ -29,6 +29,10 @@ async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::err
     server.stop().await?;
 
     Ok(())
+}
+
+async fn start_filer(filer_opt: FilerOptions) -> Result<(), Box<dyn std::error::Error>> {
+    todo!()
 }
 
 fn log_init(
@@ -92,6 +96,12 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
 
             info!("starting volume....");
             start_volume(volume).await
+        }
+        Command::Filer(filer) => {
+            log_init(level, &log_opts, "filer")?;
+
+            info!("starting filer server....");
+            start_filer(filer).await
         }
     }
 }
