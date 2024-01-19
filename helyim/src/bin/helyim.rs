@@ -1,11 +1,9 @@
 use clap::Parser;
 use helyim::{
-    directory::{DirectoryServer, Sequencer, SequencerType},
-    storage::{NeedleMapType, VolumeServer},
-    util::{
+    directory::{DirectoryServer, Sequencer, SequencerType}, filer::FilerSever, storage::{NeedleMapType, VolumeServer}, util::{
         args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions, FilerOptions},
         sys::shutdown_signal,
-    },
+    }
 };
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
@@ -32,7 +30,13 @@ async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::err
 }
 
 async fn start_filer(filer_opt: FilerOptions) -> Result<(), Box<dyn std::error::Error>> {
-    todo!()
+    let mut server = FilerSever::new(filer_opt).await?;
+    
+    server.start().await?;
+    shutdown_signal().await;
+    server.stop().await?;
+    
+    Ok(())
 }
 
 fn log_init(

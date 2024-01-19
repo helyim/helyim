@@ -53,7 +53,7 @@ message LookupDirectoryEntryRequest {
 }
 
 message LookupDirectoryEntryResponse {
-  repeated Entry entries = 1;
+  Entry entry = 1;
 }
 
 message ListEntriesRequest {

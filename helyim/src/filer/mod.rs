@@ -29,6 +29,8 @@ pub mod entry;
 pub mod file_chunks;
 pub mod server;
 
+pub use server::FilerSever;
+
 #[async_trait]
 pub trait FilerStore: Send + Sync {
     fn name(&self) -> &str;
@@ -50,7 +52,6 @@ pub trait FilerStore: Send + Sync {
     fn rollback_transaction(&self) -> Result<(), FilerError>;
 }
 
-#[derive(Default, Debug)]
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
@@ -126,7 +127,8 @@ impl Filer {
                 chunks: vec![],
             }));
         }
-        self.filer_store()?.find_entry(path).await
+        let result = self.filer_store()?.find_entry(path);
+        result.await
     }
 
     pub async fn list_directory_entries(
@@ -140,11 +142,12 @@ impl Filer {
         if path.starts_with('/') && path.len() > 1 {
             path = &path[..path.len() - 1];
         }
-        self.filer_store()?
-            .list_directory_entries(path, start_filename, inclusive, limit).await
+        let result = self.filer_store()?
+            .list_directory_entries(path, start_filename, inclusive, limit);
+        result.await
     }
 
-    #[async_recursion]
+    #[async_recursion(?Send)]
     pub async fn delete_entry_meta_and_data(
         &self,
         path: &str,

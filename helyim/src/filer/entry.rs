@@ -167,7 +167,7 @@ pub fn entry_to_pb(entry: &Entry) -> PbEntry {
     PbEntry {
         name: entry.path().into(),
         is_directory: entry.is_directory(),
-        chunks: entry.chunks,
+        chunks: entry.chunks.clone(),
         attributes: Some(entry_attribute_to_pb(&entry)),
         extended: HashMap::default(),
         hard_link_id: Vec::new(),

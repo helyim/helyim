@@ -12,12 +12,14 @@ use helyim_proto::filer::{
     LookupVolumeRequest, LookupVolumeResponse, CollectionListRequest, CollectionListResponse, DeleteCollectionRequest,
     DeleteCollectionResponse, PingRequest, PingResponse, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, Entry,
 };
-use tonic::{Request, Response, Status};
 use tokio_stream::Stream;
+use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tracing::info;
 
 use crate::{
     errors::Result,
-    util::{args::FilerOptions, grpc::grpc_port},
+    rt_spawn,
+    util::{args::FilerOptions, grpc::grpc_port, file::new_full_path},
 };
 
 use super::{Filer, FilerRef, entry::{entry_attribute_to_pb, entry_to_pb}};
@@ -55,6 +57,10 @@ impl FilerSever {
         self.shutdown.broadcast(()).await?;
         Ok(())
     }
+
+    pub async fn start(&mut self) -> Result<()> {
+        todo!()
+    }
 }
 
 #[derive(Clone)]
@@ -72,22 +78,17 @@ impl HelyimFiler for FilerGrpcServer {
         Status,
     > {
         let request: LookupDirectoryEntryRequest = request.into_inner();
-        let entries = self.filer.list_directory_entries(
-            &request.directory,
-            &request.name,
-            true,
-            100
-        ).await.map_err(|err| {
+        let entry = self.filer.find_entry(&new_full_path(
+            request.directory.as_str(), request.name.as_str(),
+        )).await.map_err(|err| {
             Status::internal(err.to_string())
         })?;
 
-        let mut re_entries: Vec<Entry> = Vec::new();
+        if let Some(entry) = entry {
+            return Ok(Response::new(LookupDirectoryEntryResponse {entry: Some(entry_to_pb(&entry))}));
+        }
 
-        entries.into_iter().for_each(|entry| {
-            re_entries.push(entry_to_pb(&entry));
-        });
-
-        Ok(Response::new(LookupDirectoryEntryResponse {entries: re_entries}))
+        Ok(Response::new(LookupDirectoryEntryResponse {entry: None}))
     }
     /// Server streaming response type for the ListEntries method.
     type ListEntriesStream = 
@@ -100,6 +101,23 @@ impl HelyimFiler for FilerGrpcServer {
         Response<Self::ListEntriesStream>,
         Status,
     > {
+        // let request: LookupDirectoryEntryRequest = request.into_inner();
+        // let entries = self.filer.list_directory_entries(
+        //     &request.directory,
+        //     &request.name,
+        //     true,
+        //     100
+        // ).await.map_err(|err| {
+        //     Status::internal(err.to_string())
+        // })?;
+
+        // let mut re_entries: Vec<Entry> = Vec::new();
+
+        // entries.into_iter().for_each(|entry| {
+        //     re_entries.push(entry_to_pb(&entry));
+        // });
+
+        // Ok(Response::new(LookupDirectoryEntryResponse {entries: re_entries}))
         todo!()
     }
     async fn create_entry(

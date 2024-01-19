@@ -5,10 +5,10 @@
 #![deny(unused_qualifications)]
 
 pub mod client;
+pub mod filer;
 pub mod directory;
 
 pub mod errors;
-mod filer;
 mod images;
 mod operation;
 mod proto;
