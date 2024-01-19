@@ -24,7 +24,7 @@ mod needle_map;
 pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
 
 mod needle_value_map;
-pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
+pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;

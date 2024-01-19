@@ -21,7 +21,7 @@ impl DiskLocation {
 
     pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
         if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
-            volume.read().await.destroy()?;
+            volume.read().await.destroy().await?;
         }
         Ok(())
     }
@@ -32,7 +32,7 @@ impl DiskLocation {
         shard_id: ShardId,
     ) -> Option<Arc<EcVolumeShard>> {
         if let Some(ec_volume) = self.ec_volumes.get(&vid) {
-            return ec_volume.read().await.find_shard(shard_id);
+            return ec_volume.read().await.find_shard(shard_id).await;
         }
         None
     }
@@ -52,15 +52,15 @@ impl DiskLocation {
                 self.ec_volumes.entry(vid).or_insert(volume)
             }
         };
-        volume.write().await.add_shard(shard);
+        volume.write().await.add_shard(shard).await;
         Ok(())
     }
 
     pub async fn unload_ec_shard(&self, vid: VolumeId, shard_id: ShardId) -> bool {
         match self.ec_volumes.get(&vid) {
             Some(volume) => {
-                if volume.write().await.delete_shard(shard_id).is_some()
-                    && volume.read().await.shards_len() == 0
+                if volume.write().await.delete_shard(shard_id).await.is_some()
+                    && volume.read().await.shards_len().await == 0
                 {
                     self.ec_volumes.remove(&vid);
                 }

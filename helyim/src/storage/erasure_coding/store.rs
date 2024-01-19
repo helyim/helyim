@@ -8,7 +8,7 @@ use std::{
 
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
-use helyim_proto::{VolumeEcShardInformationMessage, VolumeEcShardReadRequest};
+use helyim_proto::{volume::VolumeEcShardReadRequest, VolumeEcShardInformationMessage};
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};
 
@@ -233,7 +233,7 @@ impl Store {
 
         let mut data = vec![0u8; interval.size as usize];
 
-        match ec_volume.find_shard(shard_id) {
+        match ec_volume.find_shard(shard_id).await {
             Some(shard) => {
                 shard.ecd_file.read_at(&mut data, actual_offset)?;
                 Ok((data, false))

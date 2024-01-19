@@ -7,7 +7,7 @@ use std::{
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{
+use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,

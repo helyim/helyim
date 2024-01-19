@@ -62,6 +62,7 @@ pub fn locate_data(
 
         interval.size = block_remaining;
         intervals.push(interval);
+
         size -= block_remaining;
         block_index += 1;
         if is_large_block && block_index == large_block_rows * DATA_SHARDS_COUNT as u64 {

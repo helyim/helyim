@@ -1,5 +1,6 @@
 use std::{fs, os::unix::fs::OpenOptionsExt};
 
+use indexmap::IndexMap;
 use leapfrog::LeapMap;
 
 use crate::storage::{
@@ -30,9 +31,34 @@ impl MemoryNeedleValueMap {
             map: LeapMap::new(),
         }
     }
+}
 
+impl NeedleValueMap for MemoryNeedleValueMap {
+    fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
+        self.map.insert(key, value)
+    }
+
+    fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
+        self.map.remove(&key)
+    }
+
+    fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+        match self.map.get(&key) {
+            Some(mut value) => value.value(),
+            None => None,
+        }
+    }
+}
+
+pub struct SortedIndexMap {
+    pub(crate) map: IndexMap<NeedleId, NeedleValue>,
+}
+
+impl SortedIndexMap {
     pub fn load_from_index(index_filename: &str) -> Result<Self, VolumeError> {
-        let nm = Self::new();
+        let mut nm = Self {
+            map: IndexMap::new(),
+        };
         let mut index_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
@@ -52,19 +78,16 @@ impl MemoryNeedleValueMap {
     }
 }
 
-impl NeedleValueMap for MemoryNeedleValueMap {
-    fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
+impl SortedIndexMap {
+    fn set(&mut self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
         self.map.insert(key, value)
     }
 
-    fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
+    fn delete(&mut self, key: NeedleId) -> Option<NeedleValue> {
         self.map.remove(&key)
     }
 
-    fn get(&self, key: NeedleId) -> Option<NeedleValue> {
-        match self.map.get(&key) {
-            Some(mut value) => value.value(),
-            None => None,
-        }
+    fn get(&mut self, key: NeedleId) -> Option<NeedleValue> {
+        self.map.get(&key).copied()
     }
 }

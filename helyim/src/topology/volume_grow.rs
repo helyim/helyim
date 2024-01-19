@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::AllocateVolumeRequest;
+use helyim_proto::volume::AllocateVolumeRequest;
 use rand::Rng;
 use tracing::debug;
 

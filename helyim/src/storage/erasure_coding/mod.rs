@@ -63,7 +63,7 @@ fn search_needle_from_sorted_index(
     let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_ENTRY_SIZE as u64);
     while low < high {
         let middle = (low + high) / 2;
-        ecx_file.read_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
+        ecx_file.read_exact_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
         let (key, offset, size) = read_index_entry(&buf);
         if key == needle_id {
             if let Some(mut process_needle) = process_needle {

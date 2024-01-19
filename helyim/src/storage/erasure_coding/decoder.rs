@@ -3,6 +3,7 @@ use std::{
     fs,
     io::{copy, ErrorKind, Read, Write},
     os::unix::fs::OpenOptionsExt,
+    result::Result as StdResult,
 };
 
 use bytes::Buf;
@@ -18,7 +19,7 @@ use crate::{
         read_index_entry,
         types::{Offset, Size},
         version::Version,
-        volume::{SuperBlock, DATA_FILE_SUFFIX, SUPER_BLOCK_SIZE},
+        volume::{SuperBlock, SUPER_BLOCK_SIZE},
         NeedleId, NeedleValue,
     },
     util::file::file_exists,
@@ -40,7 +41,7 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
 
     iterate_ecj_file(
         base_filename,
-        Some(|needle_id| -> Result<()> {
+        Some(|needle_id| -> StdResult<(), std::io::Error> {
             let buf = NeedleValue::deleted().as_bytes(needle_id);
             idx_file.write_all(&buf)?;
             Ok(())
@@ -53,16 +54,18 @@ pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
     let mut data_filesize = 0;
     iterate_ecx_file(
         base_filename,
-        Some(|needle_id, offset: Offset, size: Size| -> Result<()> {
-            if size.is_deleted() {
-                return Ok(());
-            }
-            let entry_stop_offset = offset.actual_offset() + size.actual_size();
-            if data_filesize < entry_stop_offset {
-                data_filesize = entry_stop_offset;
-            }
-            Ok(())
-        }),
+        Some(
+            |needle_id, offset: Offset, size: Size| -> StdResult<(), std::io::Error> {
+                if size.is_deleted() {
+                    return Ok(());
+                }
+                let entry_stop_offset = offset.actual_offset() + size.actual_size();
+                if data_filesize < entry_stop_offset {
+                    data_filesize = entry_stop_offset;
+                }
+                Ok(())
+            },
+        ),
     )?;
     Ok(data_filesize)
 }
@@ -80,7 +83,7 @@ fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
 
 fn iterate_ecx_file<F>(base_filename: &str, mut process_needle: Option<F>) -> Result<()>
 where
-    F: FnMut(NeedleId, Offset, Size) -> Result<()>,
+    F: FnMut(NeedleId, Offset, Size) -> StdResult<(), std::io::Error>,
 {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)
@@ -97,14 +100,19 @@ where
         }
         let (key, offset, size) = read_index_entry(&buf);
         if let Some(process_needle) = process_needle.as_mut() {
-            process_needle(key, offset, size)?;
+            if let Err(err) = process_needle(key, offset, size) {
+                return match err.kind() {
+                    ErrorKind::UnexpectedEof => Ok(()),
+                    _ => Err(err.into()),
+                };
+            }
         }
     }
 }
 
 fn iterate_ecj_file<F>(base_filename: &str, mut process_needle: Option<F>) -> Result<()>
 where
-    F: FnMut(NeedleId) -> Result<()>,
+    F: FnMut(NeedleId) -> StdResult<(), std::io::Error>,
 {
     let ecj_filename = format!("{}.ecj", base_filename);
     if !file_exists(&ecj_filename)? {
@@ -125,7 +133,12 @@ where
         }
         if let Some(process_needle) = process_needle.as_mut() {
             let needle_id = (&buf[..]).get_u64();
-            process_needle(needle_id)?;
+            if let Err(err) = process_needle(needle_id) {
+                return match err.kind() {
+                    ErrorKind::UnexpectedEof => Ok(()),
+                    _ => Err(err.into()),
+                };
+            }
         }
     }
 }
@@ -137,7 +150,7 @@ pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()
         .create(true)
         .truncate(true)
         .mode(0o644)
-        .open(format!("{}.{}", base_filename, DATA_FILE_SUFFIX))?;
+        .open(format!("{}.dat", base_filename))?;
 
     let data_shards_count = DATA_SHARDS_COUNT as usize;
     let mut input_files = Vec::with_capacity(data_shards_count);
@@ -157,7 +170,6 @@ pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()
             data_file.write_all(&large_block)?;
             data_filesize -= ERASURE_CODING_LARGE_BLOCK_SIZE;
         }
-        assert!(data_filesize < DATA_SHARDS_COUNT as u64 * ERASURE_CODING_LARGE_BLOCK_SIZE);
     }
 
     while data_filesize > 0 {

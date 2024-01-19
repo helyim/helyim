@@ -1,7 +1,7 @@
 use std::{
     fs,
     fs::File,
-    io::Write,
+    io::{ErrorKind, Write},
     os::unix::fs::{FileExt, OpenOptionsExt},
 };
 
@@ -14,26 +14,25 @@ use crate::{
             to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
-        volume::DATA_FILE_SUFFIX,
-        MemoryNeedleValueMap,
+        needle::SortedIndexMap,
     },
     util::file::file_exists,
 };
 
 /// generates .ecx file from existing .idx file all keys are sorted in ascending order
 pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
-    let nm = MemoryNeedleValueMap::load_from_index(&format!("{}.idx", base_filename))?;
+    let mut nm = SortedIndexMap::load_from_index(&format!("{}.idx", base_filename))?;
     let mut ecx_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
-    for mut entry in nm.map.iter() {
-        if let Some((key, value)) = entry.key_value() {
-            let buf = value.as_bytes(key);
-            ecx_file.write_all(&buf)?;
-        }
+
+    nm.map.sort_by(|k1, _, k2, _| k1.cmp(k2));
+    for (key, value) in nm.map.iter() {
+        let buf = value.as_bytes(*key);
+        ecx_file.write_all(&buf)?;
     }
     Ok(())
 }
@@ -60,7 +59,7 @@ fn generate_ec_files(
     let data_file = fs::OpenOptions::new()
         .read(true)
         .mode(0o0)
-        .open(format!("{}.{}", base_filename, DATA_FILE_SUFFIX))?;
+        .open(format!("{}.dat", base_filename))?;
     let remaining = data_file.metadata()?.len();
     encode_data_file(
         remaining,
@@ -120,11 +119,14 @@ fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, EcSha
         } else {
             options.write(true).create(true).truncate(true);
         }
+        options.mode(0o644);
+
         let file = options.open(fname)?;
         files.push(file);
     }
     Ok(files)
 }
+
 fn encode_data(
     data_file: &File,
     reed_solomon: &ReedSolomon<Field>,
@@ -162,13 +164,18 @@ fn encode_data_one_batch(
     outputs: &mut [File],
 ) -> Result<(), EcShardError> {
     for (i, buf) in bufs.iter_mut().enumerate().take(DATA_SHARDS_COUNT as usize) {
-        let n = data_file.read_at(buf, start_offset + block_size + i as u64)?;
-        if n < buf.len() {
-            for (t, byte) in buf.iter_mut().enumerate().rev() {
-                if t < n {
-                    break;
+        match data_file.read_at(buf, start_offset + block_size + i as u64) {
+            Ok(n) => {
+                if n < buf.len() {
+                    for byte in buf.iter_mut().rev().take(n) {
+                        *byte = 0u8;
+                    }
                 }
-                *byte = 0u8;
+            }
+            Err(err) => {
+                if err.kind() != ErrorKind::UnexpectedEof {
+                    return Err(EcShardError::Io(err));
+                }
             }
         }
     }
@@ -223,7 +230,7 @@ fn encode_data_file(
             &mut bufs,
             &mut outputs,
         )?;
-        processed_size += large_block_size * DATA_SHARDS_COUNT as u64;
+        processed_size += small_block_size * DATA_SHARDS_COUNT as u64;
         remaining -= small_block_size * DATA_SHARDS_COUNT as u64;
     }
 
@@ -241,6 +248,9 @@ fn rebuild_ec_files_inner(
     for (i, buf) in bufs.iter_mut().enumerate() {
         if shard_has_data[i] {
             *buf = Some(vec![0u8; ERASURE_CODING_SMALL_BLOCK_SIZE as usize]);
+            assert!(inputs[i].is_some());
+        } else {
+            assert!(outputs[i].is_some());
         }
     }
     let mut start_offset = 0u64;
@@ -248,8 +258,8 @@ fn rebuild_ec_files_inner(
 
     loop {
         for i in 0..TOTAL_SHARDS_COUNT as usize {
-            if shard_has_data[i] {
-                if let Some(ref mut buf) = bufs[i] {
+            match bufs[i].as_mut() {
+                Some(buf) => {
                     if let Some(ref input) = inputs[i] {
                         let n = input.read_at(buf, start_offset)?;
                         if n == 0 {
@@ -266,14 +276,14 @@ fn rebuild_ec_files_inner(
                         }
                     }
                 }
-            } else {
-                bufs[i] = None;
+                None => bufs[i] = None,
             }
         }
 
         reed_solomon.reconstruct(&mut bufs)?;
         for i in 0..TOTAL_SHARDS_COUNT as usize {
             if !shard_has_data[i] {
+                // filled by `reconstruct`
                 if let Some(ref buf) = bufs[i] {
                     if let Some(ref output) = outputs[i] {
                         let n = output.write_at(&buf[..input_buffer_data_size], start_offset)?;

@@ -7,7 +7,7 @@ use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
-use helyim_proto::{
+use helyim_proto::volume::{
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
@@ -545,7 +545,12 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
 
         if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
-            if let Some(shard) = volume.read().await.find_shard(request.shard_id as ShardId) {
+            if let Some(shard) = volume
+                .read()
+                .await
+                .find_shard(request.shard_id as ShardId)
+                .await
+            {
                 if request.file_key != 0 {
                     let needle_value =
                         volume.read().await.find_needle_from_ecx(request.file_key)?;
@@ -621,7 +626,8 @@ impl HelyimVolumeServer for StorageGrpcServer {
                 let (needle_value, intervals) = volume
                     .read()
                     .await
-                    .locate_ec_shard_needle(request.file_key, request.version as Version)?;
+                    .locate_ec_shard_needle(request.file_key, request.version as Version)
+                    .await?;
                 if needle_value.size.is_deleted() {
                     return Ok(Response::new(VolumeEcBlobDeleteResponse::default()));
                 }
