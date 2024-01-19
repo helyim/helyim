@@ -6,7 +6,7 @@ use regex::Regex;
 
 use crate::storage::{
     disk_location::DiskLocation,
-    erasure_coding::{EcVolumeError, EcVolumeRef, EcVolumeShard, ShardId},
+    erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeRef, EcVolumeShard, ShardId},
     VolumeError, VolumeId,
 };
 
@@ -21,7 +21,7 @@ impl DiskLocation {
 
     pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
         if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
-            volume.read().await.destroy().await?;
+            volume.destroy().await?;
         }
         Ok(())
     }
@@ -32,7 +32,7 @@ impl DiskLocation {
         shard_id: ShardId,
     ) -> Option<Arc<EcVolumeShard>> {
         if let Some(ec_volume) = self.ec_volumes.get(&vid) {
-            return ec_volume.read().await.find_shard(shard_id).await;
+            return ec_volume.find_shard(shard_id).await;
         }
         None
     }
@@ -48,20 +48,18 @@ impl DiskLocation {
         let volume = match self.ec_volumes.get_mut(&vid) {
             Some(volume) => volume,
             None => {
-                let volume = EcVolumeRef::new(self.directory.clone(), collection, vid)?;
-                self.ec_volumes.entry(vid).or_insert(volume)
+                let volume = EcVolume::new(self.directory.clone(), collection, vid)?;
+                self.ec_volumes.entry(vid).or_insert(Arc::new(volume))
             }
         };
-        volume.write().await.add_shard(shard).await;
+        volume.add_shard(shard).await;
         Ok(())
     }
 
     pub async fn unload_ec_shard(&self, vid: VolumeId, shard_id: ShardId) -> bool {
         match self.ec_volumes.get(&vid) {
             Some(volume) => {
-                if volume.write().await.delete_shard(shard_id).await.is_some()
-                    && volume.read().await.shards_len().await == 0
-                {
+                if volume.delete_shard(shard_id).await.is_some() && volume.shards_len().await == 0 {
                     self.ec_volumes.remove(&vid);
                 }
                 true

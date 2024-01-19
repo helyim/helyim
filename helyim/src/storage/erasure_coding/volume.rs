@@ -256,25 +256,4 @@ pub fn add_shard_id(ec_index_bits: u32, shard_id: ShardId) -> u32 {
     ec_index_bits | 1 << shard_id
 }
 
-#[derive(Clone)]
-pub struct EcVolumeRef(Arc<RwLock<EcVolume>>);
-
-impl EcVolumeRef {
-    pub fn new(
-        dir: FastStr,
-        collection: FastStr,
-        vid: VolumeId,
-    ) -> Result<EcVolumeRef, EcVolumeError> {
-        Ok(Self(Arc::new(RwLock::new(EcVolume::new(
-            dir, collection, vid,
-        )?))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, EcVolume> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, EcVolume> {
-        self.0.write().await
-    }
-}
+pub type EcVolumeRef = Arc<EcVolume>;

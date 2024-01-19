@@ -545,15 +545,9 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
 
         if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
-            if let Some(shard) = volume
-                .read()
-                .await
-                .find_shard(request.shard_id as ShardId)
-                .await
-            {
+            if let Some(shard) = volume.find_shard(request.shard_id as ShardId).await {
                 if request.file_key != 0 {
-                    let needle_value =
-                        volume.read().await.find_needle_from_ecx(request.file_key)?;
+                    let needle_value = volume.find_needle_from_ecx(request.file_key)?;
                     if needle_value.size.is_deleted() {
                         let response = VolumeEcShardReadResponse {
                             is_deleted: true,
@@ -624,18 +618,13 @@ impl HelyimVolumeServer for StorageGrpcServer {
         for location in self.store.locations().iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
-                    .read()
-                    .await
                     .locate_ec_shard_needle(request.file_key, request.version as Version)
                     .await?;
                 if needle_value.size.is_deleted() {
                     return Ok(Response::new(VolumeEcBlobDeleteResponse::default()));
                 }
 
-                volume
-                    .write()
-                    .await
-                    .delete_needle_from_ecx(request.file_key)?;
+                volume.delete_needle_from_ecx(request.file_key)?;
                 break;
             }
         }
@@ -651,10 +640,10 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
         match self.store.find_ec_volume(request.volume_id).await {
             Some(volume) => {
-                if volume.read().await.collection() == request.collection {
+                if volume.collection() == request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));
                 }
-                let base_filename = volume.read().await.filename();
+                let base_filename = volume.filename();
                 let data_filesize = find_data_filesize(&base_filename)?;
                 write_data_file(&base_filename, data_filesize)?;
                 write_index_file_from_ec_index(&base_filename)?;
