@@ -101,7 +101,7 @@ impl VolumeGrowth {
     ) -> Result<(), VolumeError> {
         for dn in nodes {
             dn.allocate_volume(AllocateVolumeRequest {
-                volumes: vec![vid],
+                volume_id: vid,
                 collection: option.collection.to_string(),
                 replication: option.replica_placement.to_string(),
                 ttl: option.ttl.to_string(),

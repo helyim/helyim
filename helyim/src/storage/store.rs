@@ -159,17 +159,29 @@ impl Store {
     }
 
     pub async fn delete_volume(&mut self, vid: VolumeId) -> Result<()> {
-        let mut delete = false;
-        for location in self.locations.iter_mut() {
-            location.delete_volume(vid).await?;
-            delete = true;
+        let volume = self.find_volume(vid).await?;
+        if volume.is_none() {
+            return Ok(());
         }
-        if delete {
-            // TODO: update master
-            Ok(())
-        } else {
-            Err(VolumeError::NotFound(vid).into())
+        let volume = volume.unwrap();
+
+        for location in self.locations.iter() {
+            if location.delete_volume(vid).await.is_ok() {
+                let message = VolumeShortInformationMessage {
+                    id: *volume.key(),
+                    collection: volume.collection.to_string(),
+                    replica_placement: Into::<u8>::into(volume.super_block.replica_placement)
+                        as u32,
+                    version: volume.version() as u32,
+                    ttl: volume.super_block.ttl.to_u32(),
+                };
+                if let Some(deleted_volume_tx) = self.deleted_volumes_tx.as_ref() {
+                    deleted_volume_tx.unbounded_send(message)?;
+                }
+                return Ok(());
+            }
         }
+        Err(VolumeError::NotFound(vid).into())
     }
 
     async fn find_free_location(&self) -> Result<Option<&DiskLocation>> {
@@ -210,21 +222,33 @@ impl Store {
 
         let volume = Volume::new(
             location.directory.clone(),
-            collection,
+            collection.clone(),
             vid,
             needle_map_type,
             replica_placement,
             ttl,
             preallocate,
         )?;
+
+        let version = volume.version();
         location.add_volume(vid, volume);
 
+        if let Some(new_volume_tx) = self.new_volumes_tx.as_ref() {
+            let message = VolumeShortInformationMessage {
+                id: vid,
+                collection: collection.to_string(),
+                replica_placement: Into::<u8>::into(replica_placement) as u32,
+                version: version as u32,
+                ttl: ttl.to_u32(),
+            };
+            new_volume_tx.unbounded_send(message)?;
+        }
         Ok(())
     }
 
     pub async fn add_volume(
         &self,
-        volumes: Vec<u32>,
+        volume_id: VolumeId,
         collection: String,
         needle_map_type: NeedleMapType,
         replica_placement: String,
@@ -235,17 +259,15 @@ impl Store {
         let ttl = Ttl::new(&ttl)?;
 
         let collection = FastStr::new(collection);
-        for volume in volumes {
-            self.do_add_volume(
-                volume,
-                collection.clone(),
-                needle_map_type,
-                rp,
-                ttl,
-                preallocate,
-            )
-            .await?;
-        }
+        self.do_add_volume(
+            volume_id,
+            collection.clone(),
+            needle_map_type,
+            rp,
+            ttl,
+            preallocate,
+        )
+        .await?;
         Ok(())
     }
 

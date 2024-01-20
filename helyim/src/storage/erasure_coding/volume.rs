@@ -34,14 +34,14 @@ use crate::{
 pub struct EcVolume {
     pub volume_id: VolumeId,
     dir: FastStr,
-    collection: FastStr,
+    pub collection: FastStr,
     ecx_file: File,
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
-    shards: RwLock<Vec<Arc<EcVolumeShard>>>,
+    pub shards: RwLock<Vec<Arc<EcVolumeShard>>>,
     pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
-    pub shard_locations_refresh_time: SystemTime,
-    version: Version,
+    pub shard_locations_refresh_time: RwLock<SystemTime>,
+    pub version: Version,
     ecj_file: File,
 }
 
@@ -89,7 +89,7 @@ impl EcVolume {
             ecj_file,
             shards: RwLock::new(Vec::new()),
             shard_locations: DashMap::new(),
-            shard_locations_refresh_time: SystemTime::now(),
+            shard_locations_refresh_time: RwLock::new(SystemTime::now()),
             version,
         })
     }

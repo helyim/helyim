@@ -56,6 +56,8 @@ pub enum EcShardError {
 
     #[error("Erasure coding error: {0}")]
     ErasureCoding(#[from] reed_solomon_erasure::Error),
+    #[error("only {0} shards found but {0} required")]
+    Underflow(usize, usize),
 }
 
 impl From<EcShardError> for tonic::Status {

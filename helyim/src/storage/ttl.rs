@@ -89,6 +89,15 @@ impl Ttl {
         buf
     }
 
+    pub fn to_u32(&self) -> u32 {
+        if self.count == 0 {
+            return 0;
+        }
+        let mut output = (self.count as u32) << 8;
+        output += self.unit as u8 as u32;
+        output
+    }
+
     pub fn minutes(&self) -> u32 {
         match self.unit {
             Unit::Empty => 0,

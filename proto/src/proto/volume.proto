@@ -38,7 +38,7 @@ service VolumeServer {
 }
 
 message AllocateVolumeRequest {
-  repeated uint32 volumes = 1;
+  uint32 volume_id = 1;
   string collection = 2;
   string replication = 3;
   string ttl = 4;

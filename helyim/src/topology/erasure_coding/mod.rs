@@ -53,7 +53,7 @@ impl EcShardLocations {
 }
 
 impl Topology {
-    pub async fn sync_data_node_ecshards(
+    pub async fn sync_data_node_ec_shards(
         &mut self,
         shard_infos: &[VolumeEcShardInformationMessage],
         data_node: DataNodeRef,

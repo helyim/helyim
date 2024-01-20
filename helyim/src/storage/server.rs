@@ -220,6 +220,8 @@ impl VolumeServer {
                             Ok(heartbeat) => yield heartbeat,
                             Err(err) => error!("collect heartbeat error: {err}")
                         }
+
+                        yield store_ref.collect_erasure_coding_heartbeat().await;
                     }
                     // to avoid server side got `channel closed` error
                     _ = shutdown_rx.recv() => {
@@ -330,7 +332,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         self.store
             .add_volume(
-                request.volumes,
+                request.volume_id,
                 request.collection,
                 self.needle_map_type,
                 request.replication,

@@ -323,14 +323,13 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_data(
+    pub fn read_bytes(
         &mut self,
-        file: &File,
+        bytes: Bytes,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> Result<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
         if self.size != size && offset.actual_offset() < MAX_POSSIBLE_VOLUME_SIZE {
@@ -352,6 +351,17 @@ impl Needle {
         }
 
         Ok(())
+    }
+
+    pub fn read_data(
+        &mut self,
+        file: &File,
+        offset: Offset,
+        size: Size,
+        version: Version,
+    ) -> Result<(), NeedleError> {
+        let bytes = read_needle_blob(file, offset, size)?;
+        self.read_bytes(bytes, offset, size, version)
     }
 
     pub fn has_ttl(&self) -> bool {

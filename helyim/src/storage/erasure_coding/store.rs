@@ -1,13 +1,18 @@
 use std::{
+    io::ErrorKind,
     ops::Add,
     os::unix::fs::FileExt,
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
+use bytes::Bytes;
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
-use helyim_proto::{volume::VolumeEcShardReadRequest, VolumeEcShardInformationMessage};
+use helyim_proto::{
+    volume::VolumeEcShardReadRequest, HeartbeatRequest, LookupEcVolumeRequest,
+    VolumeEcShardInformationMessage,
+};
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};
 
@@ -15,12 +20,12 @@ use crate::{
     rt_spawn,
     storage::{
         erasure_coding::{
-            add_shard_id, volume::EcVolume, EcVolumeError, EcVolumeRef, EcVolumeShard, Interval,
-            ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
+            add_shard_id, volume::EcVolume, EcShardError, EcVolumeError, EcVolumeRef,
+            EcVolumeShard, Interval, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
         store::Store,
-        NeedleId, VolumeId,
+        Needle, NeedleError, NeedleId, VolumeId,
     },
     util::grpc::{helyim_client, volume_server_client},
 };
@@ -62,8 +67,8 @@ impl Store {
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
-        match self.locations.first() {
-            Some(location) => match location.load_ec_shard(&collection, vid, shard_id).await {
+        for location in self.locations.iter() {
+            match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
                     if let Some(tx) = self.new_ec_shards_tx.as_ref() {
                         tx.unbounded_send(VolumeEcShardInformationMessage {
@@ -74,6 +79,16 @@ impl Store {
                     }
                     Ok(())
                 }
+                Err(EcVolumeError::Io(err)) => {
+                    if err.kind() == ErrorKind::NotFound {
+                        continue;
+                    }
+                    error!(
+                        "{} load ec shard {vid}.{shard_id}, error: {err}",
+                        location.directory
+                    );
+                    Err(EcVolumeError::Io(err))
+                }
                 Err(err) => {
                     error!(
                         "{} load ec shard {vid}.{shard_id}, error: {err}",
@@ -81,9 +96,9 @@ impl Store {
                     );
                     Err(err)
                 }
-            },
-            None => Err(EcVolumeError::ShardNotFound(vid, shard_id)),
+            }
         }
+        Err(EcVolumeError::ShardNotFound(vid, shard_id))
     }
 
     pub async fn unmount_ec_shards(
@@ -108,6 +123,42 @@ impl Store {
         Err(EcVolumeError::ShardNotFound(vid, shard_id))
     }
 
+    pub async fn read_ec_shard_needle(
+        &self,
+        vid: VolumeId,
+        needle: &mut Needle,
+    ) -> Result<usize, EcVolumeError> {
+        for location in self.locations.iter() {
+            if let Some(volume) = location.find_ec_volume(vid) {
+                let (index, intervals) = volume
+                    .locate_ec_shard_needle(needle.id, volume.version)
+                    .await?;
+                if index.size.is_deleted() {
+                    return Err(EcVolumeError::Needle(NeedleError::Deleted(vid, needle.id)));
+                }
+
+                info!(
+                    "read ec volume {vid} offset {} size {}",
+                    index.offset.actual_offset(),
+                    index.size.actual_size()
+                );
+
+                let (bytes, is_deleted) = self
+                    .read_ec_shard_intervals(needle.id, volume.as_ref(), intervals)
+                    .await?;
+                if is_deleted {
+                    return Err(EcVolumeError::Needle(NeedleError::Deleted(vid, needle.id)));
+                }
+
+                let bytes = Bytes::from(bytes);
+                let len = bytes.len();
+                needle.read_bytes(bytes, index.offset, index.size, volume.version)?;
+                return Ok(len);
+            }
+        }
+        Err(EcVolumeError::ShardNotFound(vid, 0))
+    }
+
     async fn cached_lookup_ec_shard_locations(
         &self,
         volume: &EcVolume,
@@ -117,16 +168,22 @@ impl Store {
         if shard_count < DATA_SHARDS_COUNT
             && volume
                 .shard_locations_refresh_time
+                .read()
+                .await
                 .add(Duration::from_secs(11))
                 > now
             || shard_count == TOTAL_SHARDS_COUNT
                 && volume
                     .shard_locations_refresh_time
+                    .read()
+                    .await
                     .add(Duration::from_secs(37 * 60))
                     > now
             || shard_count >= DATA_SHARDS_COUNT
                 && volume
                     .shard_locations_refresh_time
+                    .read()
+                    .await
                     .add(Duration::from_secs(7 * 60))
                     > now
         {
@@ -135,8 +192,37 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let client = helyim_client(&self.current_master.read().await)?;
-        // TODO
+        let master = self.current_master.read().await.clone();
+        let client = helyim_client(&master)?;
+        let request = LookupEcVolumeRequest {
+            volume_id: volume.volume_id,
+        };
+        let response = client.lookup_ec_volume(request).await?;
+        let response = response.into_inner();
+        if response.shard_id_locations.len() < DATA_SHARDS_COUNT as usize {
+            error!(
+                "only {} shards found but {} required",
+                response.shard_id_locations.len(),
+                DATA_SHARDS_COUNT
+            );
+            return Err(EcShardError::Underflow(
+                response.shard_id_locations.len(),
+                DATA_SHARDS_COUNT as usize,
+            )
+            .into());
+        }
+
+        for location in response.shard_id_locations {
+            let shard_id = location.shard_id as ShardId;
+            volume.shard_locations.remove(&shard_id);
+            for loc in location.locations {
+                if let Some(mut entry) = volume.shard_locations.get_mut(&shard_id) {
+                    entry.push(FastStr::new(loc.url));
+                }
+            }
+        }
+
+        *volume.shard_locations_refresh_time.write().await = SystemTime::now();
         Ok(())
     }
 
@@ -210,11 +296,38 @@ impl Store {
         Ok((bytes_read, is_deleted))
     }
 
+    async fn read_ec_shard_intervals(
+        &self,
+        needle_id: NeedleId,
+        volume: &EcVolume,
+        intervals: Vec<Interval>,
+    ) -> Result<(Vec<u8>, bool), EcVolumeError> {
+        self.cached_lookup_ec_shard_locations(volume).await?;
+
+        let mut data = Vec::new();
+        let mut is_deleted = false;
+        for (i, interval) in intervals.iter().enumerate() {
+            let (d, deleted) = self
+                .read_one_ec_shard_interval(needle_id, volume, interval)
+                .await?;
+            if deleted {
+                is_deleted = true;
+            }
+            if i == 0 {
+                data = d;
+            } else {
+                data.extend_from_slice(&d);
+            }
+        }
+
+        Ok((data, is_deleted))
+    }
+
     async fn read_one_ec_shard_interval(
         &self,
         needle_id: NeedleId,
         ec_volume: &EcVolume,
-        interval: Interval,
+        interval: &Interval,
     ) -> Result<(Vec<u8>, bool), EcVolumeError> {
         let actual_offset = interval.offset(
             ERASURE_CODING_LARGE_BLOCK_SIZE,
@@ -375,5 +488,21 @@ impl Store {
             buf.copy_from_slice(data);
         }
         Ok((buf.len(), is_deleted))
+    }
+
+    pub async fn collect_erasure_coding_heartbeat(&self) -> HeartbeatRequest {
+        let mut ec_shard_messages = Vec::new();
+
+        for location in self.locations.iter() {
+            for ec_shard in location.ec_volumes.iter() {
+                ec_shard_messages.extend(ec_shard.get_volume_ec_shard_info().await);
+            }
+        }
+
+        HeartbeatRequest {
+            has_no_ec_shards: ec_shard_messages.is_empty(),
+            ec_shards: ec_shard_messages,
+            ..Default::default()
+        }
     }
 }
