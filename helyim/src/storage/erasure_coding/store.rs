@@ -1,5 +1,4 @@
 use std::{
-    io::ErrorKind,
     ops::Add,
     os::unix::fs::FileExt,
     sync::Arc,
@@ -63,32 +62,28 @@ impl Store {
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
-        for location in self.locations.iter() {
-            match location.load_ec_shard(&collection, vid, shard_id).await {
+        match self.locations.first() {
+            Some(location) => match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
-                    if let Some(tx) = self.new_ec_shards_tx.as_mut() {
-                        let shard_bits = 0;
-                        tx.send(VolumeEcShardInformationMessage {
+                    if let Some(tx) = self.new_ec_shards_tx.as_ref() {
+                        tx.unbounded_send(VolumeEcShardInformationMessage {
                             id: vid,
                             collection: collection.to_string(),
-                            ec_index_bits: add_shard_id(shard_bits, shard_id),
-                        })
-                        .await?;
+                            ec_index_bits: add_shard_id(0, shard_id),
+                        })?;
                     }
-                    return Ok(());
-                }
-                Err(EcVolumeError::Io(err)) => {
-                    if err.kind() == ErrorKind::NotFound {
-                        continue;
-                    }
+                    Ok(())
                 }
                 Err(err) => {
-                    error!("mount ec shard failed, error: {err}");
-                    return Err(err);
+                    error!(
+                        "{} load ec shard {vid}.{shard_id}, error: {err}",
+                        location.directory
+                    );
+                    Err(err)
                 }
-            }
+            },
+            None => Err(EcVolumeError::ShardNotFound(vid, shard_id)),
         }
-        Ok(())
     }
 
     pub async fn unmount_ec_shards(
@@ -96,25 +91,21 @@ impl Store {
         vid: VolumeId,
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
-        match self.find_ec_shard(vid, shard_id).await {
-            Some(shard) => {
-                for location in self.locations.iter() {
-                    if location.unload_ec_shard(vid, shard_id).await {
-                        if let Some(tx) = self.deleted_ec_shards_tx.as_ref() {
-                            let shard_bits = 0;
-                            tx.unbounded_send(VolumeEcShardInformationMessage {
-                                id: vid,
-                                collection: shard.collection.to_string(),
-                                ec_index_bits: add_shard_id(shard_bits, shard_id),
-                            })?;
-                        }
-                        break;
+        if let Some(shard) = self.find_ec_shard(vid, shard_id).await {
+            for location in self.locations.iter() {
+                if location.unload_ec_shard(vid, shard_id).await {
+                    if let Some(tx) = self.deleted_ec_shards_tx.as_ref() {
+                        tx.unbounded_send(VolumeEcShardInformationMessage {
+                            id: vid,
+                            collection: shard.collection.to_string(),
+                            ec_index_bits: add_shard_id(0, shard_id),
+                        })?;
+                        return Ok(());
                     }
                 }
-                Ok(())
             }
-            None => Err(EcVolumeError::ShardNotFound(vid, shard_id)),
         }
+        Err(EcVolumeError::ShardNotFound(vid, shard_id))
     }
 
     async fn cached_lookup_ec_shard_locations(
@@ -235,12 +226,12 @@ impl Store {
 
         match ec_volume.find_shard(shard_id).await {
             Some(shard) => {
-                shard.ecd_file.read_at(&mut data, actual_offset)?;
+                shard.ecd_file.read_exact_at(&mut data, actual_offset)?;
                 Ok((data, false))
             }
             None => {
                 if let Some(locations) = ec_volume.shard_locations.get(&shard_id) {
-                    let (_, is_deleted) = self
+                    match self
                         .read_remote_ec_shard_interval(
                             &locations,
                             needle_id,
@@ -249,8 +240,19 @@ impl Store {
                             &mut data,
                             actual_offset,
                         )
-                        .await?;
-                    return Ok((data, is_deleted));
+                        .await
+                    {
+                        Ok((_, is_deleted)) => {
+                            return Ok((data, is_deleted));
+                        }
+                        Err(err) => {
+                            info!(
+                                "clearing ec shard {}.{shard_id} locations: {err}",
+                                ec_volume.volume_id
+                            );
+                            ec_volume.shard_locations.remove(&shard_id);
+                        }
+                    }
                 }
 
                 let (_, is_deleted) = self

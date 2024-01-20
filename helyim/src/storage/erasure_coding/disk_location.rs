@@ -44,11 +44,11 @@ impl DiskLocation {
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
         let collection = FastStr::new(collection);
-        let shard = EcVolumeShard::new(self.directory.clone(), collection.clone(), vid, shard_id)?;
+        let shard = EcVolumeShard::new(self.directory.clone(), collection, vid, shard_id)?;
         let volume = match self.ec_volumes.get_mut(&vid) {
             Some(volume) => volume,
             None => {
-                let volume = EcVolume::new(self.directory.clone(), collection, vid)?;
+                let volume = EcVolume::new(self.directory.clone(), shard.collection.clone(), vid)?;
                 self.ec_volumes.entry(vid).or_insert(Arc::new(volume))
             }
         };
@@ -75,7 +75,8 @@ impl DiskLocation {
         vid: VolumeId,
     ) -> Result<(), EcVolumeError> {
         for shard in shards {
-            let shard_id = u64::from_str_radix(&shard[3..], 16)?;
+            let ext = Path::new(shard).extension().unwrap();
+            let shard_id = ext.to_string_lossy()[3..].parse::<u64>()?;
             self.load_ec_shard(collection, vid, shard_id as ShardId)
                 .await?;
         }
@@ -83,7 +84,7 @@ impl DiskLocation {
     }
 
     pub async fn load_all_shards(&self) -> Result<(), EcVolumeError> {
-        let dir = fs::read_dir(self.directory.to_string())?;
+        let dir = fs::read_dir(self.directory.as_str())?;
         let mut entries = Vec::new();
         for entry in dir {
             entries.push(entry?);
@@ -114,7 +115,7 @@ impl DiskLocation {
                                 continue;
                             }
 
-                            if ext.eq_ignore_ascii_case("ecx") && vid == pre_volume_id {
+                            if ext == "ecx" && vid == pre_volume_id {
                                 self.load_ec_shards(&same_volume_shards, collection, vid)
                                     .await?;
                                 pre_volume_id = vid;
@@ -133,6 +134,5 @@ impl DiskLocation {
 fn parse_volume_id(name: &str) -> Result<(VolumeId, &str), VolumeError> {
     let index = name.find('_').unwrap_or_default();
     let (collection, vid) = (&name[0..index], &name[index + 1..]);
-    let vid = u32::from_str_radix(vid, 16)?;
-    Ok((vid, collection))
+    Ok((vid.parse()?, collection))
 }
