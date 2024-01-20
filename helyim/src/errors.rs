@@ -15,11 +15,13 @@ use tracing::error;
 use crate::{
     raft::types::RaftError,
     storage::{NeedleError, VolumeError},
-    topology::TopologyError,
+    topology::TopologyError, filer::FilerError,
 };
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Filer error: {0}")]
+    Filer(#[from] FilerError),
     #[error("Volume error: {0}")]
     Volume(#[from] VolumeError),
     #[error("Needle error: {0}")]

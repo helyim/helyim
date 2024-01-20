@@ -105,7 +105,7 @@ impl Deref for MasterClient {
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
     #[error("{0}")]
-    Box(Box<dyn std::error::Error>),
+    Box(Box<dyn std::error::Error + Sync + Send>),
     #[error("{0}")]
     String(String),
     #[error("Unknown volume id: {0}")]

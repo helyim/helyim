@@ -5,8 +5,8 @@
 #![deny(unused_qualifications)]
 
 pub mod client;
-pub mod filer;
 pub mod directory;
+pub mod filer;
 
 pub mod errors;
 mod images;

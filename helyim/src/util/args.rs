@@ -109,29 +109,29 @@ impl VolumeOptions {
     }
 }
 
-// just 
+// just
 #[derive(Args, Debug)]
 pub struct FilerOptions {
     #[arg(long, default_value("127.0.0.1:9333"))]
-    pub masters: Vec<FastStr>,
+    pub master_server: Vec<FastStr>,
     #[arg(long)]
-	pub collection: FastStr,
+    pub collection: FastStr,
     #[arg(long)]
-	pub default_replication: FastStr,
+    pub default_replication: FastStr,
     #[arg(long, default_value_t = false)]
-	pub redirect_on_read: bool,
+    pub redirect_on_read: bool,
     #[arg(long)]
-	pub disable_dir_listing: bool,
+    pub disable_dir_listing: bool,
     #[arg(long)]
-	pub max_mb: u64,
+    pub max_mb: u64,
     #[arg(long)]
-	pub dir_listing_limit: u64,
-	#[arg(long, default_value(""))]
+    pub dir_listing_limit: u64,
+    #[arg(long, default_value(""))]
     pub data_center: FastStr,
     // #[arg(long)]
-	// pub default_level_db_dir: FastStr,
+    // pub default_level_db_dir: FastStr,
     #[arg(long, default_value_t = false)]
-	pub disable_http: bool,
+    pub disable_http: bool,
     #[arg(long, default_value("127.0.0.1"))]
     pub ip: FastStr,
     #[arg(long, default_value_t = 8888)]

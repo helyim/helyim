@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use faststr::FastStr;
-use redis::{Client, SetExpiry, SetOptions, aio::Connection, AsyncCommands};
+use redis::{aio::Connection, AsyncCommands, Client, SetExpiry, SetOptions};
 
 use crate::{
     filer::{entry::Entry, FilerError, FilerStore},
@@ -55,20 +55,22 @@ impl FilerStore for RedisStore {
         let mut con = self.get_async_connection().await?;
         let opt =
             SetOptions::default().with_expiration(SetExpiry::EX(entry.ttl().try_into().unwrap()));
-        con.set_options(entry.path(), value, opt).await.map_err(|err| {
-            FilerError::FileStoreErr(
-                format!("set to redis err, key: {}, err: {}", entry.path(), err).into(),
-            )
-        })?;
-
-        
+        con.set_options(entry.path(), value, opt)
+            .await
+            .map_err(|err| {
+                FilerError::FileStoreErr(
+                    format!("set to redis err, key: {}, err: {}", entry.path(), err).into(),
+                )
+            })?;
 
         let (dir, name) = dir_and_name(&entry.path);
 
         if !name.is_empty() {
-            con.sadd(gen_directory_list_key(dir), name).await.map_err(|err| {
-                FilerError::FileStoreErr(format!("sadd to redis err: {}", err).into())
-            })?;
+            con.sadd(gen_directory_list_key(dir), name)
+                .await
+                .map_err(|err| {
+                    FilerError::FileStoreErr(format!("sadd to redis err: {}", err).into())
+                })?;
         }
 
         Ok(())
@@ -109,9 +111,11 @@ impl FilerStore for RedisStore {
         let (dir, name) = dir_and_name(path);
 
         if !name.is_empty() {
-            con.srem(gen_directory_list_key(dir), name).await.map_err(|err| {
-                FilerError::FileStoreErr(format!("srem to redis err: {}", err).into())
-            })?;
+            con.srem(gen_directory_list_key(dir), name)
+                .await
+                .map_err(|err| {
+                    FilerError::FileStoreErr(format!("srem to redis err: {}", err).into())
+                })?;
         }
 
         Ok(())
@@ -220,7 +224,8 @@ mod test {
         let client = redis::Client::open("redis://127.0.0.1/")?;
         let mut con = client.get_async_connection().await?;
         cmd("DEL").arg("my_key").query_async(&mut con).await?;
-        let result: Result<Vec<u8>, RedisError> = cmd("GET").arg("my_key").query_async(&mut con).await;
+        let result: Result<Vec<u8>, RedisError> =
+            cmd("GET").arg("my_key").query_async(&mut con).await;
 
         println!("{:?}", result);
         Ok(())
@@ -260,12 +265,16 @@ mod test {
             assert_eq!(entry_new.mode, 0o600, "update failure");
         }
 
-        let entries = filer_store.list_directory_entries("/etc/ceph", "", false, 20).await?;
+        let entries = filer_store
+            .list_directory_entries("/etc/ceph", "", false, 20)
+            .await?;
         assert_eq!(entries.len(), 1);
 
         filer_store.delete_entry(&path).await?;
 
-        let entries = filer_store.list_directory_entries("/etc/ceph", "", false, 20).await?;
+        let entries = filer_store
+            .list_directory_entries("/etc/ceph", "", false, 20)
+            .await?;
         assert!(entries.is_empty());
         Ok(())
     }

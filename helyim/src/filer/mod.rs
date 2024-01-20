@@ -3,14 +3,18 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use async_trait::async_trait;
 use async_recursion::async_recursion;
+use async_trait::async_trait;
+use axum::{response::{IntoResponse, Response}, Json};
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
+use hyper::StatusCode;
 use moka::sync::Cache;
+use serde_json::json;
 use tracing::error;
 
+use self::redis::redis_store::RedisStore;
 use crate::{
     client::{ClientError, MasterClient},
     filer::{
@@ -20,10 +24,9 @@ use crate::{
     util::file::file_name,
 };
 
-use self::redis::redis_store::RedisStore;
-
 mod redis;
 
+pub mod api;
 pub mod deletion;
 pub mod entry;
 pub mod file_chunks;
@@ -103,7 +106,11 @@ impl Filer {
         Ok(self.master_client.try_all_masters().await?)
     }
 
-    pub async fn update_entry(&self, old_entry: Option<&Entry>, entry: &Entry) -> Result<(), FilerError> {
+    pub async fn update_entry(
+        &self,
+        old_entry: Option<&Entry>,
+        entry: &Entry,
+    ) -> Result<(), FilerError> {
         if let Some(old_entry) = old_entry {
             if old_entry.is_directory() && !entry.is_directory() {
                 error!("existing {0} is a directory", entry.path());
@@ -142,12 +149,13 @@ impl Filer {
         if path.starts_with('/') && path.len() > 1 {
             path = &path[..path.len() - 1];
         }
-        let result = self.filer_store()?
-            .list_directory_entries(path, start_filename, inclusive, limit);
+        let result =
+            self.filer_store()?
+                .list_directory_entries(path, start_filename, inclusive, limit);
         result.await
     }
 
-    #[async_recursion(?Send)]
+    #[async_recursion]
     pub async fn delete_entry_meta_and_data(
         &self,
         path: &str,
@@ -164,8 +172,9 @@ impl Filer {
                 let include_last_file = false;
 
                 while limit > 0 {
-                    let entries =
-                        self.list_directory_entries(path, &last_filename, include_last_file, 1024).await?;
+                    let entries = self
+                        .list_directory_entries(path, &last_filename, include_last_file, 1024)
+                        .await?;
                     if entries.is_empty() {
                         break;
                     }
@@ -177,7 +186,8 @@ impl Filer {
                                 entry.path(),
                                 is_recursive,
                                 should_delete_chunks,
-                            ).await?;
+                            )
+                            .await?;
                             limit -= 1;
                             if limit <= 0 {
                                 break;
@@ -234,6 +244,8 @@ pub type FilerRef = Arc<Filer>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum FilerError {
+    #[error("file store err: {0}")]
+    FileStoreErr(FastStr),
     #[error("init FilerStore failed: {0}")]
     InitErr(FastStr),
     #[error("Master client error: {0}")]
@@ -242,12 +254,37 @@ pub enum FilerError {
     IsDirectory(FastStr),
     #[error("Existing {0} is a file")]
     IsFile(FastStr),
+    #[error("Reqwest error: {0}")]
+    Request(#[from] reqwest::Error),
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
-    #[error("Try send error: {0}")]
-    TrySend(#[from] TrySendError<Option<FileId>>),
+    #[error("Raw Filer error: {0}")]
+    String(String),
     #[error("serialization error")]
     SerializationErr,
-    #[error("file store err: {0}")]
-    FileStoreErr(FastStr),
+    #[error("Try send error: {0}")]
+    TrySend(#[from] TrySendError<Option<FileId>>),
+}
+
+impl From<FilerError> for tonic::Status {
+    fn from(value: FilerError) -> Self {
+        tonic::Status::internal(value.to_string())
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for FilerError {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl IntoResponse for FilerError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
+    }
 }
