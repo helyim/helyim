@@ -21,7 +21,7 @@ use crate::{
 
 /// generates .ecx file from existing .idx file all keys are sorted in ascending order
 pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
-    let mut nm = SortedIndexMap::load_from_index(&format!("{}.idx", base_filename))?;
+    let nm = SortedIndexMap::load_from_index(&format!("{}.idx", base_filename))?;
     let mut ecx_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -29,8 +29,8 @@ pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<()
         .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
 
-    nm.map.sort_by(|k1, _, k2, _| k1.cmp(k2));
-    for (key, value) in nm.map.iter() {
+    nm.map.write().sort_by(|k1, _, k2, _| k1.cmp(k2));
+    for (key, value) in nm.map.read().iter() {
         let buf = value.as_bytes(*key);
         ecx_file.write_all(&buf)?;
     }

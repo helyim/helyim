@@ -12,13 +12,14 @@ use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
-    VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
-    VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
-    VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
-    VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
-    VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
-    VolumeEcShardsUnmountResponse, VolumeInfo,
+    VacuumVolumeCompactResponse, VolumeDeleteRequest, VolumeDeleteResponse,
+    VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest,
+    VolumeEcShardReadResponse, VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse,
+    VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest,
+    VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest, VolumeEcShardsMountResponse,
+    VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest,
+    VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse,
+    VolumeInfo, VolumeMarkReadonlyRequest, VolumeMarkReadonlyResponse,
 };
 use tokio::time::sleep;
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
@@ -216,7 +217,7 @@ impl VolumeServer {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match store_ref.collect_heartbeat().await {
+                        match store_ref.collect_heartbeat() {
                             Ok(heartbeat) => yield heartbeat,
                             Err(err) => error!("collect heartbeat error: {err}")
                         }
@@ -343,13 +344,31 @@ impl HelyimVolumeServer for StorageGrpcServer {
         Ok(Response::new(AllocateVolumeResponse {}))
     }
 
+    async fn volume_delete(
+        &self,
+        request: Request<VolumeDeleteRequest>,
+    ) -> StdResult<Response<VolumeDeleteResponse>, Status> {
+        let request = request.into_inner();
+        self.store.delete_volume(request.volume_id).await?;
+        Ok(Response::new(VolumeDeleteResponse {}))
+    }
+
+    async fn volume_mark_readonly(
+        &self,
+        request: Request<VolumeMarkReadonlyRequest>,
+    ) -> StdResult<Response<VolumeMarkReadonlyResponse>, Status> {
+        let request = request.into_inner();
+        self.store.mark_volume_readonly(request.volume_id).await?;
+        Ok(Response::new(VolumeMarkReadonlyResponse {}))
+    }
+
     async fn vacuum_volume_check(
         &self,
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -360,8 +379,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} compact", request.volume_id);
         self.store
-            .compact_volume(request.volume_id, request.preallocate)
-            .await?;
+            .compact_volume(request.volume_id, request.preallocate)?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
 
@@ -371,11 +389,8 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
-        self.store.commit_compact_volume(request.volume_id).await?;
-        // TODO: check whether the volume is read only
-        Ok(Response::new(VacuumVolumeCommitResponse {
-            is_read_only: false,
-        }))
+        self.store.commit_compact_volume(request.volume_id)?;
+        Ok(Response::new(VacuumVolumeCommitResponse {}))
     }
 
     async fn vacuum_volume_cleanup(
@@ -384,7 +399,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} cleanup", request.volume_id);
-        self.store.commit_cleanup_volume(request.volume_id).await?;
+        self.store.commit_cleanup_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
@@ -393,7 +408,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
         let request = request.into_inner();
-        match self.store.find_volume(request.volume_id).await? {
+        match self.store.find_volume(request.volume_id) {
             Some(volume) => {
                 let base_filename = volume.filename();
                 let collection = volume.collection.clone();

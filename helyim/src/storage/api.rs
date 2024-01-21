@@ -109,7 +109,7 @@ async fn replicate_delete(
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -187,7 +187,7 @@ async fn replicate_write(
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -376,7 +376,7 @@ pub async fn get_or_head_handler(
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
 
     let mut response = Response::new(Body::empty());
-    if !ctx.store.has_volume(vid).await? {
+    if !ctx.store.has_volume(vid) {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume {} is not belongs to this server", vid);

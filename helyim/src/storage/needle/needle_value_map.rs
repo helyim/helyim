@@ -2,6 +2,7 @@ use std::{fs, os::unix::fs::OpenOptionsExt};
 
 use indexmap::IndexMap;
 use leapfrog::LeapMap;
+use parking_lot::RwLock;
 
 use crate::storage::{
     needle::NeedleValue, types::Size, walk_index_file, NeedleError, NeedleId, VolumeError,
@@ -51,13 +52,13 @@ impl NeedleValueMap for MemoryNeedleValueMap {
 }
 
 pub struct SortedIndexMap {
-    pub(crate) map: IndexMap<NeedleId, NeedleValue>,
+    pub map: RwLock<IndexMap<NeedleId, NeedleValue>>,
 }
 
 impl SortedIndexMap {
     pub fn load_from_index(index_filename: &str) -> Result<Self, VolumeError> {
-        let mut nm = Self {
-            map: IndexMap::new(),
+        let nm = Self {
+            map: RwLock::new(IndexMap::new()),
         };
         let mut index_file = fs::OpenOptions::new()
             .read(true)
@@ -78,16 +79,16 @@ impl SortedIndexMap {
     }
 }
 
-impl SortedIndexMap {
-    fn set(&mut self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
-        self.map.insert(key, value)
+impl NeedleValueMap for SortedIndexMap {
+    fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
+        self.map.write().insert(key, value)
     }
 
-    fn delete(&mut self, key: NeedleId) -> Option<NeedleValue> {
-        self.map.remove(&key)
+    fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
+        self.map.write().remove(&key)
     }
 
-    fn get(&mut self, key: NeedleId) -> Option<NeedleValue> {
-        self.map.get(&key).copied()
+    fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+        self.map.read().get(&key).copied()
     }
 }
