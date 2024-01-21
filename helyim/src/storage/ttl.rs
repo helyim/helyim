@@ -206,7 +206,7 @@ mod tests {
         let ttl2 = Ttl::from_bytes(&ttl_bytes[..]).unwrap();
         assert_eq!(ttl.minutes(), ttl2.minutes());
 
-        let ttl3 = Ttl::from_u32(Into::<u32>::into(ttl));
+        let ttl3 = Ttl::from_u32(Into::<u32>::into(ttl)).unwrap();
         assert_eq!(ttl.minutes(), ttl3.minutes());
     }
 }
