@@ -18,6 +18,7 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::once;
+use helyim_proto::volume::{VolumeEcShardsGenerateRequest, VolumeEcShardsToVolumeRequest};
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
@@ -31,14 +32,18 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
+        erasure_coding::EcVolumeError,
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::{
+        grpc::volume_server_client,
         http::{
-            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
+            extractor::{
+                DeleteExtractor, ErasureCodingExtractor, GetOrHeadExtractor, PostExtractor,
+            },
             HTTP_DATE_FORMAT,
         },
         parser::parse_url_path,
@@ -472,4 +477,31 @@ pub async fn get_or_head_handler(
     *response.status_mut() = StatusCode::ACCEPTED;
 
     Ok(response)
+}
+
+// erasure coding
+pub async fn generate_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsGenerateRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_generate(request).await?;
+    Ok(())
+}
+
+pub async fn generate_volume_from_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsToVolumeRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_to_volume(request).await?;
+    Ok(())
 }

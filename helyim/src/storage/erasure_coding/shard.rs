@@ -52,9 +52,9 @@ impl EcVolumeShard {
 
 pub fn ec_shard_filename(collection: &str, dir: &str, volume_id: VolumeId) -> String {
     if collection.is_empty() {
-        format!("{}{}", dir, volume_id)
+        format!("{}/{}", dir, volume_id)
     } else {
-        format!("{}{}_{}", dir, collection, volume_id)
+        format!("{}/{}_{}", dir, collection, volume_id)
     }
 }
 

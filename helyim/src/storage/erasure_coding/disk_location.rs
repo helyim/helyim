@@ -4,13 +4,16 @@ use faststr::FastStr;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::storage::{
-    disk_location::DiskLocation,
-    erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeRef, EcVolumeShard, ShardId},
-    VolumeError, VolumeId,
+use crate::{
+    storage::{
+        disk_location::DiskLocation,
+        erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeRef, EcVolumeShard, ShardId},
+        VolumeId,
+    },
+    util::parser::parse_collection_volume_id,
 };
 
-static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\.ec[0-9][0-9]").unwrap());
+static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("ec[0-9][0-9]").unwrap());
 
 impl DiskLocation {
     pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeRef> {
@@ -75,10 +78,12 @@ impl DiskLocation {
         vid: VolumeId,
     ) -> Result<(), EcVolumeError> {
         for shard in shards {
-            let ext = Path::new(shard).extension().unwrap();
-            let shard_id = ext.to_string_lossy()[3..].parse::<u64>()?;
-            self.load_ec_shard(collection, vid, shard_id as ShardId)
-                .await?;
+            if let Some(index) = shard.find('.') {
+                let ext = &shard[index + 1..];
+                let shard_id = ext[2..].parse::<u64>()?;
+                self.load_ec_shard(collection, vid, shard_id as ShardId)
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -103,7 +108,8 @@ impl DiskLocation {
                 if let Some(ext) = file_path.extension() {
                     let filename = filename.to_string_lossy().to_string();
                     let base_name = &filename[..filename.len() - ext.len() - 1];
-                    match parse_volume_id(base_name) {
+
+                    match parse_collection_volume_id(base_name) {
                         Ok((vid, collection)) => {
                             if let Some(m) = REGEX.find(&ext.to_string_lossy()) {
                                 if pre_volume_id == 0 || vid == pre_volume_id {
@@ -129,10 +135,4 @@ impl DiskLocation {
         }
         Ok(())
     }
-}
-
-fn parse_volume_id(name: &str) -> Result<(VolumeId, &str), VolumeError> {
-    let index = name.find('_').unwrap_or_default();
-    let (collection, vid) = (&name[0..index], &name[index + 1..]);
-    Ok((vid.parse()?, collection))
 }

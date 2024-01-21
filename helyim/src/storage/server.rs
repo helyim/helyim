@@ -33,7 +33,10 @@ use crate::{
     proto::save_volume_info,
     rt_spawn,
     storage::{
-        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageState},
+        api::{
+            delete_handler, generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
+            get_or_head_handler, post_handler, status_handler, StorageState,
+        },
         erasure_coding::{
             ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
             write_data_file, write_ec_files, write_index_file_from_ec_index,
@@ -284,6 +287,14 @@ async fn start_volume_server(
         .route("/", get(default_handler))
         .route("/status", get(status_handler))
         .route("/favicon.ico", get(favicon_handler))
+        .route(
+            "/volume/ec/generate",
+            get(generate_ec_shards_handler).put(generate_ec_shards_handler),
+        )
+        .route(
+            "/volume/ec/restore",
+            get(generate_volume_from_ec_shards_handler).put(generate_volume_from_ec_shards_handler),
+        )
         .fallback_service(
             get(get_or_head_handler)
                 .head(get_or_head_handler)
@@ -411,18 +422,22 @@ impl HelyimVolumeServer for StorageGrpcServer {
         match self.store.find_volume(request.volume_id) {
             Some(volume) => {
                 let base_filename = volume.filename();
-                let collection = volume.collection.clone();
-                if collection != request.collection {
+                if volume.collection != request.collection {
                     return Err(Status::invalid_argument(format!(
-                        "invalid collection, expect: {collection}"
+                        "invalid collection, expect: {}",
+                        volume.collection
                     )));
                 }
-                write_ec_files(&base_filename)?;
+                // write .ecx file
                 write_sorted_file_from_index(&base_filename, ".ecx")?;
+                // write .ec00 - .ec13 files
+                write_ec_files(&base_filename)?;
+
                 let volume_info = VolumeInfo {
                     version: volume.version() as u32,
                     ..Default::default()
                 };
+                // write .vif files
                 save_volume_info(&format!("{}.vif", base_filename), volume_info)?;
                 Ok(Response::new(VolumeEcShardsGenerateResponse::default()))
             }
@@ -648,7 +663,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         Ok(Response::new(VolumeEcBlobDeleteResponse::default()))
     }
 
-    /// generate the .idx, .dat, files from .ecx, .ecj and .ec01 - .ec14 files
+    /// generate the .idx, .dat, files from .ecx, .ecj and .ec00 - .ec13 files
     async fn volume_ec_shards_to_volume(
         &self,
         request: Request<VolumeEcShardsToVolumeRequest>,
@@ -657,7 +672,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
         match self.store.find_ec_volume(request.volume_id).await {
             Some(volume) => {
-                if volume.collection() == request.collection {
+                if volume.collection() != request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));
                 }
                 let base_filename = volume.filename();

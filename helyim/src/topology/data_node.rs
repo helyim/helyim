@@ -144,7 +144,7 @@ impl DataNode {
     ) -> StdResult<AllocateVolumeResponse, VolumeError> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
-        let response = client.allocate_volume(request.clone()).await?;
+        let response = client.allocate_volume(request).await?;
         Ok(response.into_inner())
     }
 

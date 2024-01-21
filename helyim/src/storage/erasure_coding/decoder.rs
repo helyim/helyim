@@ -2,7 +2,7 @@ use std::{
     cmp::min,
     fs,
     io::{copy, ErrorKind, Read, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{FileExt, OpenOptionsExt},
     result::Result as StdResult,
 };
 
@@ -50,6 +50,7 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
 }
 
 pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
+    // TODO: handle version
     let version = read_ec_volume_version(base_filename)?;
     let mut data_filesize = 0;
     iterate_ecx_file(
@@ -71,12 +72,12 @@ pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
 }
 
 fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
-    let mut data_file = fs::OpenOptions::new()
+    let data_file = fs::OpenOptions::new()
         .read(true)
         .mode(0o644)
         .open(format!("{}.ec00", base_filename))?;
     let mut super_block = [0u8; SUPER_BLOCK_SIZE];
-    data_file.read_exact(&mut super_block)?;
+    data_file.read_exact_at(&mut super_block, 0)?;
     let super_block = SuperBlock::parse(super_block)?;
     Ok(super_block.version)
 }
@@ -143,7 +144,7 @@ where
     }
 }
 
-/// generates .dat from from .ec00 ~ .ec09 files
+/// generates .dat from from .ec00 ~ .ec13 files
 pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()> {
     let mut data_file = fs::OpenOptions::new()
         .write(true)

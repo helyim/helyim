@@ -64,7 +64,8 @@ impl Store {
         for i in 0..folders.len() {
             let location = DiskLocation::new(&folders[i], max_counts[i]);
             location.load_existing_volumes(needle_map_type).await?;
-
+            // load erasure coding shards
+            location.load_all_shards().await?;
             locations.push(location);
         }
 

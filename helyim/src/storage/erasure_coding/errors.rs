@@ -1,3 +1,10 @@
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
 use crate::storage::{erasure_coding::ShardId, NeedleError, VolumeError, VolumeId};
 
 #[derive(thiserror::Error, Debug)]
@@ -8,6 +15,8 @@ pub enum EcVolumeError {
     BoxError(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("ParseInt error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
+    #[error("{0}")]
+    String(String),
 
     #[error("Erasure coding error: {0}")]
     ErasureCoding(#[from] reed_solomon_erasure::Error),
@@ -41,6 +50,17 @@ pub enum EcVolumeError {
 impl From<EcVolumeError> for tonic::Status {
     fn from(value: EcVolumeError) -> Self {
         tonic::Status::internal(value.to_string())
+    }
+}
+
+impl IntoResponse for EcVolumeError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
     }
 }
 

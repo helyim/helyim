@@ -60,7 +60,7 @@ fn generate_ec_files(
         .read(true)
         .mode(0o0)
         .open(format!("{}.dat", base_filename))?;
-    let remaining = data_file.metadata()?.len();
+    let remaining = data_file.metadata()?.len() as i64;
     encode_data_file(
         remaining,
         base_filename,
@@ -112,7 +112,7 @@ fn generate_missing_ec_files(base_filename: &str) -> Result<Vec<u32>, EcShardErr
 fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, EcShardError> {
     let mut files = Vec::with_capacity(TOTAL_SHARDS_COUNT as usize);
     for i in 0..TOTAL_SHARDS_COUNT {
-        let fname = format!("{}{}", base_filename, to_ext(i as ShardId));
+        let filename = format!("{}{}", base_filename, to_ext(i as ShardId));
         let mut options = fs::OpenOptions::new();
         if readonly {
             options.read(true);
@@ -121,7 +121,7 @@ fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, EcSha
         }
         options.mode(0o644);
 
-        let file = options.open(fname)?;
+        let file = options.open(filename)?;
         files.push(file);
     }
     Ok(files)
@@ -194,7 +194,7 @@ fn encode_data_one_batch(
 }
 
 fn encode_data_file(
-    mut remaining: u64,
+    mut remaining: i64,
     base_filename: &str,
     buf_size: u64,
     large_block_size: u64,
@@ -208,7 +208,7 @@ fn encode_data_file(
     let mut outputs = open_ec_files(base_filename, false)?;
 
     let mut processed_size = 0u64;
-    while remaining > large_block_size * DATA_SHARDS_COUNT as u64 {
+    while remaining > large_block_size as i64 * DATA_SHARDS_COUNT as i64 {
         encode_data(
             data_file,
             &reed_solomon,
@@ -218,7 +218,7 @@ fn encode_data_file(
             &mut outputs,
         )?;
         processed_size += large_block_size * DATA_SHARDS_COUNT as u64;
-        remaining -= large_block_size * DATA_SHARDS_COUNT as u64;
+        remaining -= large_block_size as i64 * DATA_SHARDS_COUNT as i64;
     }
 
     while remaining > 0 {
@@ -231,7 +231,7 @@ fn encode_data_file(
             &mut outputs,
         )?;
         processed_size += small_block_size * DATA_SHARDS_COUNT as u64;
-        remaining -= small_block_size * DATA_SHARDS_COUNT as u64;
+        remaining -= small_block_size as i64 * DATA_SHARDS_COUNT as i64;
     }
 
     Ok(())
