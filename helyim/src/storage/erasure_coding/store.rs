@@ -77,7 +77,7 @@ impl Store {
                             ec_index_bits: add_shard_id(0, shard_id),
                         })?;
                     }
-                    Ok(())
+                    return Ok(());
                 }
                 Err(EcVolumeError::Io(err)) => {
                     if err.kind() == ErrorKind::NotFound {
@@ -87,14 +87,14 @@ impl Store {
                         "{} load ec shard {vid}.{shard_id}, error: {err}",
                         location.directory
                     );
-                    Err(EcVolumeError::Io(err))
+                    return Err(EcVolumeError::Io(err));
                 }
                 Err(err) => {
                     error!(
                         "{} load ec shard {vid}.{shard_id}, error: {err}",
                         location.directory
                     );
-                    Err(err)
+                    return Err(err);
                 }
             }
         }
