@@ -51,6 +51,7 @@ pub use volume_info::VolumeInfo;
 
 use crate::storage::{
     needle::{NeedleError, NEEDLE_ENTRY_SIZE},
+    ttl::TtlError,
     types::Offset,
     NeedleId,
 };
@@ -84,10 +85,9 @@ impl Default for SuperBlock {
 impl SuperBlock {
     pub fn parse(buf: [u8; SUPER_BLOCK_SIZE]) -> Result<SuperBlock, VolumeError> {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
-        let ttl = Ttl::from(&buf[2..4]);
+        let ttl = Ttl::from_bytes(&buf[2..4])?;
         let compact_revision = (&buf[4..6]).get_u16();
         let compact_revision = AtomicU16::new(compact_revision);
-
         Ok(SuperBlock {
             version: buf[0],
             replica_placement: rp,
@@ -709,6 +709,8 @@ pub enum VolumeError {
     Compacting(VolumeId),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
     #[error("NeedleMapper is not load, volume: {0}")]
     NeedleMapperNotLoad(VolumeId),
     #[error("No free space: {0}")]

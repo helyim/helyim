@@ -14,7 +14,7 @@ use tracing::error;
 
 use crate::{
     raft::types::RaftError,
-    storage::{erasure_coding::EcVolumeError, NeedleError, VolumeError},
+    storage::{erasure_coding::EcVolumeError, NeedleError, TtlError, VolumeError},
     topology::TopologyError,
 };
 
@@ -26,6 +26,8 @@ pub enum Error {
     EcVolume(#[from] EcVolumeError),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
     #[error("Raft error: {0}")]
     Raft(#[from] RaftError),
     #[error("Topology error: {0}")]

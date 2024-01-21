@@ -32,7 +32,7 @@ impl VolumeInfo {
             delete_bytes: m.deleted_bytes,
             read_only: m.read_only,
             version: m.version as Version,
-            ttl: Ttl::from(m.ttl),
+            ttl: Ttl::from_u32(m.ttl)?,
             replica_placement: rp,
         })
     }

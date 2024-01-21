@@ -164,18 +164,20 @@ fn encode_data_one_batch(
     outputs: &mut [File],
 ) -> Result<(), EcShardError> {
     for (i, buf) in bufs.iter_mut().enumerate().take(DATA_SHARDS_COUNT as usize) {
+        let mut n = 0;
         match data_file.read_at(buf, start_offset + block_size + i as u64) {
-            Ok(n) => {
-                if n < buf.len() {
-                    for byte in buf.iter_mut().rev().take(n) {
-                        *byte = 0u8;
-                    }
-                }
-            }
+            Ok(size) => n = size,
             Err(err) => {
                 if err.kind() != ErrorKind::UnexpectedEof {
                     return Err(EcShardError::Io(err));
                 }
+            }
+        }
+        if n < buf.len() {
+            let mut t = buf.len() - 1;
+            while t >= n {
+                buf[t] = 0;
+                t -= 1;
             }
         }
     }
