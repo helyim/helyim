@@ -146,7 +146,7 @@ fn encode_data(
         encode_data_one_batch(
             data_file,
             reed_solomon,
-            start_offset + i + buf_size,
+            start_offset + i * buf_size,
             block_size,
             bufs,
             outputs,
@@ -163,9 +163,12 @@ fn encode_data_one_batch(
     mut bufs: &mut [Vec<u8>],
     outputs: &mut [File],
 ) -> Result<(), EcShardError> {
+    assert_eq!(bufs.len(), outputs.len());
+    assert_eq!(bufs.len(), TOTAL_SHARDS_COUNT as usize);
+
     for (i, buf) in bufs.iter_mut().enumerate().take(DATA_SHARDS_COUNT as usize) {
         let mut n = 0;
-        match data_file.read_at(buf, start_offset + block_size + i as u64) {
+        match data_file.read_at(buf, start_offset + block_size * i as u64) {
             Ok(size) => n = size,
             Err(err) => {
                 if err.kind() != ErrorKind::UnexpectedEof {
@@ -173,22 +176,21 @@ fn encode_data_one_batch(
                 }
             }
         }
-        if n < buf.len() {
-            let mut t = buf.len() - 1;
-            while t >= n {
-                buf[t] = 0;
-                t -= 1;
+
+        let buf_len = buf.len();
+        if n < buf_len {
+            for (t, byte) in buf.iter_mut().enumerate().rev() {
+                if t < buf_len - n {
+                    break;
+                }
+                *byte = 0;
             }
         }
     }
 
     reed_solomon.encode(&mut bufs)?;
 
-    for (i, output) in outputs
-        .iter_mut()
-        .enumerate()
-        .take(TOTAL_SHARDS_COUNT as usize)
-    {
+    for (i, output) in outputs.iter_mut().enumerate() {
         output.write_all(&bufs[i])?;
     }
 
