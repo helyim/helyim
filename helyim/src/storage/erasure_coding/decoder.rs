@@ -49,7 +49,7 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
     )
 }
 
-pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
+pub fn find_data_filesize(base_filename: &str) -> Result<i64> {
     // TODO: handle version
     let version = read_ec_volume_version(base_filename)?;
     let mut data_filesize = 0;
@@ -68,7 +68,7 @@ pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
             },
         ),
     )?;
-    Ok(data_filesize)
+    Ok(data_filesize as i64)
 }
 
 fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
@@ -145,7 +145,7 @@ where
 }
 
 /// generates .dat from from .ec00 ~ .ec13 files
-pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()> {
+pub fn write_data_file(base_filename: &str, mut data_filesize: i64) -> Result<()> {
     let mut data_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -155,7 +155,7 @@ pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()
 
     let mut input_files = Vec::with_capacity(DATA_SHARDS_COUNT as usize);
     for shard_id in 0..DATA_SHARDS_COUNT {
-        let shard_filename = format!("{}.{}", base_filename, to_ext(shard_id as ShardId));
+        let shard_filename = format!("{}{}", base_filename, to_ext(shard_id as ShardId));
         let shard_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o0)
@@ -163,24 +163,23 @@ pub fn write_data_file(base_filename: &str, mut data_filesize: u64) -> Result<()
         input_files.push(shard_file);
     }
 
-    while data_filesize >= DATA_SHARDS_COUNT as u64 * ERASURE_CODING_LARGE_BLOCK_SIZE {
+    while data_filesize >= DATA_SHARDS_COUNT as i64 * ERASURE_CODING_LARGE_BLOCK_SIZE as i64 {
         let mut large_block = vec![0u8; ERASURE_CODING_LARGE_BLOCK_SIZE as usize];
         for shard in input_files.iter_mut().take(DATA_SHARDS_COUNT as usize) {
             shard.read_exact(&mut large_block)?;
             data_file.write_all(&large_block)?;
-            data_filesize -= ERASURE_CODING_LARGE_BLOCK_SIZE;
+            data_filesize -= ERASURE_CODING_LARGE_BLOCK_SIZE as i64;
         }
     }
 
     while data_filesize > 0 {
         for shard in input_files.iter_mut().take(DATA_SHARDS_COUNT as usize) {
-            let read = min(data_filesize, ERASURE_CODING_SMALL_BLOCK_SIZE);
+            let read = min(data_filesize, ERASURE_CODING_SMALL_BLOCK_SIZE as i64);
             let mut small_block = vec![0u8; read as usize];
             shard.read_exact(&mut small_block)?;
             data_file.write_all(&small_block)?;
             data_filesize -= read;
         }
-        assert_eq!(data_filesize, 0);
     }
 
     Ok(())

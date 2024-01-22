@@ -98,11 +98,11 @@ impl NeedleValue {
             size: Size(-1),
         }
     }
-    pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
-        let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
-        (&mut buf[..]).put_u64(needle_id);
-        (&mut buf[..]).put_u32(self.offset.0);
-        (&mut buf[..]).put_i32(self.size.0);
+    pub fn as_bytes(&self, needle_id: NeedleId) -> Vec<u8> {
+        let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
+        buf.put_u64(needle_id);
+        buf.put_u32(self.offset.0);
+        buf.put_i32(self.size.0);
         buf
     }
 }
