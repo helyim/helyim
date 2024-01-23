@@ -8,8 +8,6 @@ use crate::storage::{
     needle::NeedleValue, types::Size, walk_index_file, NeedleError, NeedleId, VolumeError,
 };
 
-type Visit = Box<dyn FnMut(&NeedleId, &NeedleValue) -> Result<(), NeedleError>>;
-
 pub trait NeedleValueMap: Send + Sync {
     fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue>;
     fn delete(&self, key: NeedleId) -> Option<NeedleValue>;
@@ -76,6 +74,17 @@ impl SortedIndexMap {
             },
         )?;
         Ok(nm)
+    }
+
+    pub fn ascending_visit<F>(&self, mut visit: F) -> Result<(), NeedleError>
+    where
+        F: FnMut(&NeedleId, &NeedleValue) -> Result<(), NeedleError>,
+    {
+        self.map.write().sort_by(|k1, _, k2, _| k1.cmp(k2));
+        for (key, value) in self.map.read().iter() {
+            visit(key, value)?;
+        }
+        Ok(())
     }
 }
 

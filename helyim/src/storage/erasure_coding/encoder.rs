@@ -15,6 +15,7 @@ use crate::{
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
         needle::SortedIndexMap,
+        NeedleError,
     },
     util::file::file_exists,
 };
@@ -29,11 +30,12 @@ pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<()
         .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
 
-    nm.map.write().sort_by(|k1, _, k2, _| k1.cmp(k2));
-    for (key, value) in nm.map.read().iter() {
+    nm.ascending_visit(|key, value| -> Result<(), NeedleError> {
         let buf = value.as_bytes(*key);
         ecx_file.write_all(&buf)?;
-    }
+        Ok(())
+    })?;
+
     Ok(())
 }
 
