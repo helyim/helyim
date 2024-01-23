@@ -463,10 +463,8 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let mut rebuilt_shard_ids = Vec::new();
         for location in self.store.locations().iter() {
             let ecx_filename = format!("{}/{}.ecx", location.directory, base_filename);
-            println!("ecx filename: {ecx_filename}");
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}/{}", location.directory, base_filename);
-                println!("base_filename: {base_filename}");
                 rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
                 rebuild_ecx_file(&base_filename)?;
                 break;

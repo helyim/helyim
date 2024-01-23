@@ -262,9 +262,9 @@ fn rebuild_ec_files_inner(
 
     loop {
         for i in 0..TOTAL_SHARDS_COUNT as usize {
-            match bufs[i].as_mut() {
-                Some(buf) => {
-                    if let Some(ref input) = inputs[i] {
+            if shard_has_data[i] {
+                if let Some(buf) = bufs[i].as_mut() {
+                    if let Some(input) = inputs[i].as_ref() {
                         let n = input.read_at(buf, start_offset)?;
                         if n == 0 {
                             return Ok(());
@@ -280,7 +280,8 @@ fn rebuild_ec_files_inner(
                         }
                     }
                 }
-                None => bufs[i] = None,
+            } else {
+                bufs[i] = None;
             }
         }
 
