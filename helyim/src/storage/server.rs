@@ -677,7 +677,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
                 }
                 let base_filename = volume.filename();
                 let data_filesize = find_data_filesize(&base_filename)?;
-                write_data_file(&base_filename, data_filesize)?;
+                write_data_file(&base_filename, data_filesize as i64)?;
                 write_index_file_from_ec_index(&base_filename)?;
 
                 Ok(Response::new(VolumeEcShardsToVolumeResponse::default()))

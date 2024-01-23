@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Buf, BufMut};
+use bytes::Buf;
 use tracing::{debug, error};
 
 use crate::storage::{
@@ -140,11 +140,7 @@ impl NeedleMapper {
         value: NeedleValue,
     ) -> Result<(), VolumeError> {
         if let Some(file) = self.index_file.as_ref() {
-            let mut buf = vec![];
-            buf.put_u64(key);
-            buf.put_u32(value.offset.0);
-            buf.put_i32(value.size.0);
-
+            let buf = value.as_bytes(key);
             let offset = file.metadata()?.len();
             if let Err(err) = file.write_all_at(&buf, offset) {
                 error!(

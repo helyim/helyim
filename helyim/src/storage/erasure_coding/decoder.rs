@@ -49,7 +49,7 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
     )
 }
 
-pub fn find_data_filesize(base_filename: &str) -> Result<i64> {
+pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
     // TODO: handle version
     let version = read_ec_volume_version(base_filename)?;
     let mut data_filesize = 0;
@@ -68,7 +68,7 @@ pub fn find_data_filesize(base_filename: &str) -> Result<i64> {
             },
         ),
     )?;
-    Ok(data_filesize as i64)
+    Ok(data_filesize)
 }
 
 fn read_ec_volume_version(base_filename: &str) -> Result<Version> {
