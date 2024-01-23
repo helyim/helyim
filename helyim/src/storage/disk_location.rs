@@ -13,7 +13,7 @@ use tracing::info;
 use crate::{
     anyhow, rt_spawn,
     storage::{
-        erasure_coding::EcVolumeRef,
+        erasure_coding::EcVolume,
         needle::NeedleMapType,
         ttl::Ttl,
         volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
@@ -25,7 +25,7 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: DashMap<VolumeId, Volume>,
-    pub ec_volumes: DashMap<VolumeId, EcVolumeRef>,
+    pub ec_volumes: DashMap<VolumeId, EcVolume>,
 }
 
 impl DiskLocation {

@@ -38,7 +38,7 @@ pub use shard::{ec_shard_base_filename, ec_shard_filename, EcVolumeShard};
 mod store;
 
 mod volume;
-pub use volume::{add_shard_id, EcVolumeRef};
+pub use volume::{add_shard_id, EcVolume};
 
 mod volume_info;
 pub use volume_info::{EcVolumeInfo, ShardBits};

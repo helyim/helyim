@@ -255,5 +255,3 @@ impl EcVolume {
 pub fn add_shard_id(ec_index_bits: u32, shard_id: ShardId) -> u32 {
     ec_index_bits | 1 << shard_id
 }
-
-pub type EcVolumeRef = Arc<EcVolume>;

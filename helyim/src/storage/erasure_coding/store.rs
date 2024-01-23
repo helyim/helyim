@@ -7,6 +7,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
 use helyim_proto::{
@@ -20,8 +21,8 @@ use crate::{
     rt_spawn,
     storage::{
         erasure_coding::{
-            add_shard_id, volume::EcVolume, EcShardError, EcVolumeError, EcVolumeRef,
-            EcVolumeShard, Interval, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
+            add_shard_id, volume::EcVolume, EcShardError, EcVolumeError, EcVolumeShard, Interval,
+            ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
         store::Store,
@@ -45,10 +46,10 @@ impl Store {
         None
     }
 
-    pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeRef> {
+    pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolume>> {
         for location in self.locations.iter() {
             if let Some(volume) = location.ec_volumes.get(&vid) {
-                return Some(volume.clone());
+                return Some(volume);
             }
         }
         None
@@ -144,7 +145,7 @@ impl Store {
                 );
 
                 let (bytes, is_deleted) = self
-                    .read_ec_shard_intervals(needle.id, volume.as_ref(), intervals)
+                    .read_ec_shard_intervals(needle.id, volume.value(), intervals)
                     .await?;
                 if is_deleted {
                     return Err(EcVolumeError::Needle(NeedleError::Deleted(vid, needle.id)));

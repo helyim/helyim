@@ -1,5 +1,6 @@
 use std::{fs, path::Path, sync::Arc};
 
+use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -7,7 +8,7 @@ use regex::Regex;
 use crate::{
     storage::{
         disk_location::DiskLocation,
-        erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeRef, EcVolumeShard, ShardId},
+        erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeShard, ShardId},
         VolumeId,
     },
     util::parser::parse_collection_volume_id,
@@ -16,10 +17,8 @@ use crate::{
 static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("ec[0-9][0-9]").unwrap());
 
 impl DiskLocation {
-    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<EcVolumeRef> {
-        self.ec_volumes
-            .get(&vid)
-            .map(|volume| volume.value().clone())
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolume>> {
+        self.ec_volumes.get(&vid)
     }
 
     pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
@@ -52,7 +51,7 @@ impl DiskLocation {
             Some(volume) => volume,
             None => {
                 let volume = EcVolume::new(self.directory.clone(), shard.collection.clone(), vid)?;
-                self.ec_volumes.entry(vid).or_insert(Arc::new(volume))
+                self.ec_volumes.entry(vid).or_insert(volume)
             }
         };
         volume.add_shard(shard).await;
