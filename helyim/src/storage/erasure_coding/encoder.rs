@@ -180,7 +180,7 @@ fn encode_data_one_batch(
         let buf_len = buf.len();
         if n < buf_len {
             for (t, byte) in buf.iter_mut().enumerate().rev() {
-                if t < buf_len - n {
+                if t < n {
                     break;
                 }
                 *byte = 0;

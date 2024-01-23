@@ -18,7 +18,9 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::once;
-use helyim_proto::volume::{VolumeEcShardsGenerateRequest, VolumeEcShardsToVolumeRequest};
+use helyim_proto::volume::{
+    VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
+};
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
@@ -503,5 +505,18 @@ pub async fn generate_volume_from_ec_shards_handler(
         collection: extractor.query.collection.unwrap_or_default().to_string(),
     };
     let _ = client.volume_ec_shards_to_volume(request).await?;
+    Ok(())
+}
+
+pub async fn rebuild_missing_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsRebuildRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_rebuild(request).await?;
     Ok(())
 }
