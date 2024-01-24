@@ -1,5 +1,8 @@
 use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, path::Path, time::SystemTime};
 
+use faststr::FastStr;
+use mime_guess::mime;
+
 pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)>, std::io::Error> {
     match metadata(filename) {
         Ok(metadata) => {
@@ -58,6 +61,21 @@ pub fn new_full_path(dir: &str, filename: &str) -> String {
         .as_os_str()
         .to_string_lossy()
         .to_string()
+}
+
+pub fn guess_mimetype(filename: &str) -> FastStr {
+    let mut guess_mtype = String::new();
+    if let Some(idx) = filename.find('.') {
+        let ext = &filename[idx..];
+        let m = mime_guess::from_ext(ext).first_or_octet_stream();
+        if m.type_() != mime::APPLICATION || m.subtype() != mime::OCTET_STREAM {
+            guess_mtype.push_str(m.type_().as_str());
+            guess_mtype.push('/');
+            guess_mtype.push_str(m.subtype().as_str());
+        }
+    }
+
+    guess_mtype.into()
 }
 
 #[cfg(test)]

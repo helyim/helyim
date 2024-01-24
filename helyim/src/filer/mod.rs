@@ -5,7 +5,10 @@ use std::{
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use axum::{response::{IntoResponse, Response}, Json};
+use axum::{
+    response::{IntoResponse, Response},
+    Json,
+};
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
@@ -31,6 +34,8 @@ pub mod deletion;
 pub mod entry;
 pub mod file_chunks;
 pub mod server;
+pub mod stream;
+pub mod util;
 
 pub use server::FilerSever;
 
@@ -91,7 +96,7 @@ impl Filer {
         Ok(())
     }
 
-    pub fn current_master(&self) -> &str {
+    pub fn current_master(&self) -> FastStr {
         self.master_client.current_master()
     }
 
@@ -102,7 +107,7 @@ impl Filer {
         }
     }
 
-    pub async fn keep_connected_to_master(&mut self) -> Result<(), FilerError> {
+    pub async fn keep_connected_to_master(&self) -> Result<(), FilerError> {
         Ok(self.master_client.try_all_masters().await?)
     }
 

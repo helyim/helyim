@@ -1,6 +1,6 @@
 mod location;
 
-use std::{ops::Deref, time::Duration};
+use std::{ops::Deref, sync::RwLock, time::Duration};
 
 use async_stream::stream;
 use faststr::FastStr;
@@ -16,10 +16,9 @@ use crate::{
     util::grpc::helyim_client,
 };
 
-#[derive(Clone)]
 pub struct MasterClient {
     name: FastStr,
-    current_master: FastStr,
+    current_master: RwLock<FastStr>,
     masters: Vec<FastStr>,
     locations: LocationMap,
 }
@@ -28,7 +27,7 @@ impl MasterClient {
     pub fn new(name: FastStr, masters: Vec<FastStr>) -> Self {
         Self {
             name,
-            current_master: FastStr::empty(),
+            current_master: FastStr::empty().into(),
             masters,
             locations: LocationMap::default(),
         }
@@ -36,11 +35,11 @@ impl MasterClient {
 }
 
 impl MasterClient {
-    pub fn current_master(&self) -> &str {
-        &self.current_master
+    pub fn current_master(&self) -> FastStr {
+        (*self.current_master.read().unwrap()).clone()
     }
 
-    pub async fn try_all_masters(&mut self) -> Result<(), ClientError> {
+    pub async fn try_all_masters(&self) -> Result<(), ClientError> {
         for master in self.masters.iter() {
             let name = self.name.to_string();
             let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -69,9 +68,11 @@ impl MasterClient {
                             self.locations.delete_location(vid, loc.clone());
                         }
 
-                        if self.current_master.is_empty() {
-                            info!("connected to {master}");
-                            self.current_master = master.clone();
+                        if let Ok(mut current_master_rw) = self.current_master.write() {
+                            if current_master_rw.is_empty() {
+                                info!("connected to {master}");
+                                *current_master_rw = master.clone();
+                            }
                         }
                     }
                 }
@@ -81,7 +82,8 @@ impl MasterClient {
                 }
             }
 
-            self.current_master = FastStr::empty();
+            let mut current_master_rw = self.current_master.write().unwrap();
+            *current_master_rw = FastStr::empty().into();
         }
 
         Ok(())

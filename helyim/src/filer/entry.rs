@@ -169,7 +169,7 @@ pub fn entry_to_pb(entry: &Entry) -> PbEntry {
         name: entry.path().into(),
         is_directory: entry.is_directory(),
         chunks: entry.chunks.clone(),
-        attributes: Some(entry_attribute_to_pb(&entry)),
+        attributes: Some(entry_attribute_to_pb(entry)),
         extended: HashMap::default(),
         hard_link_id: Vec::new(),
         hard_link_counter: 0,
@@ -196,7 +196,7 @@ mod test {
             attr: Attr {
                 mtime: SystemTime::now(),
                 crtime: SystemTime::now(),
-                mode: 0644,
+                mode: 0o644,
                 uid: 1,
                 gid: 1,
                 mime: "application/zip".into(),

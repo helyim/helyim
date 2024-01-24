@@ -20,7 +20,6 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::once;
 use hyper::Body;
 use libflate::gzip::Decoder;
-use mime_guess::mime;
 use multer::Multipart;
 use serde_json::{json, Value};
 use tracing::{error, info};
@@ -37,6 +36,7 @@ use crate::{
     },
     util,
     util::{
+        file::guess_mimetype,
         http::{
             extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
             HTTP_DATE_FORMAT,
@@ -334,15 +334,7 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
 
     let mut guess_mtype = String::new();
     if !is_chunked_file {
-        if let Some(idx) = filename.find('.') {
-            let ext = &filename[idx..];
-            let m = mime_guess::from_ext(ext).first_or_octet_stream();
-            if m.type_() != mime::APPLICATION || m.subtype() != mime::OCTET_STREAM {
-                guess_mtype.push_str(m.type_().as_str());
-                guess_mtype.push('/');
-                guess_mtype.push_str(m.subtype().as_str());
-            }
-        }
+        guess_mtype = guess_mimetype(&filename).to_string();
 
         if !post_mtype.is_empty() && guess_mtype != post_mtype {
             guess_mtype = post_mtype;

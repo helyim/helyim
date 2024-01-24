@@ -1,31 +1,39 @@
-use std::{collections::HashMap, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration, net::SocketAddr};
+use std::{net::SocketAddr, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
-use axum::{extract::DefaultBodyLimit, Router, routing::get};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use helyim_proto::filer::{
     helyim_filer_server::{HelyimFiler, HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
     CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse,
     DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse,
-    Entry, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest,
+    KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest,
     ListEntriesResponse, LookupDirectoryEntryRequest, LookupDirectoryEntryResponse,
     LookupVolumeRequest, LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest,
     UpdateEntryResponse,
 };
 use tokio_stream::Stream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
-use tower_http::{timeout::TimeoutLayer, compression::CompressionLayer};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
 use super::{
+    api::{delete_handler, get_or_head_handler, post_handler},
     entry::entry_to_pb,
-    Filer, FilerRef, FilerError, api::{get_or_head_handler, post_handler, delete_handler},
+    Filer, FilerError, FilerRef,
 };
 use crate::{
     errors::Result,
+    filer::api::FilerState,
     operation::list_master,
     rt_spawn,
-    util::{args::FilerOptions, file::new_full_path, grpc::grpc_port, sys::exit, http::default_handler}, filer::api::FilerState,
+    util::{
+        args::FilerOptions,
+        file::new_full_path,
+        grpc::grpc_port,
+        http::{default_handler, favicon_handler},
+        sys::exit,
+    },
 };
 
 pub struct FilerSever {
@@ -79,14 +87,17 @@ impl FilerSever {
     pub async fn start(&mut self) -> Result<()> {
         let filer = self.filer.clone();
         let read_redirect = self.options.redirect_on_read;
-        
+        let disable_dir_listing = self.options.disable_dir_listing;
+
+        self.filer.keep_connected_to_master().await?;
+
         self.update_masters().await?;
 
         let ctx = FilerState {
             filer,
             read_redirect,
+            disable_dir_listing,
         };
-
 
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
@@ -112,6 +123,8 @@ async fn start_filer_server(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     let app = Router::new()
+        .route("/", get(default_handler))
+        .route("/favicon.ico", get(favicon_handler))
         .fallback_service(
             get(get_or_head_handler)
                 .head(get_or_head_handler)

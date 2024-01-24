@@ -13,13 +13,17 @@ use serde_json::json;
 use tracing::error;
 
 use crate::{
+    client::ClientError,
+    filer::FilerError,
     raft::types::RaftError,
     storage::{NeedleError, VolumeError},
-    topology::TopologyError, filer::FilerError,
+    topology::TopologyError,
 };
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Filer error: {0}")]
+    Client(#[from] ClientError),
     #[error("Filer error: {0}")]
     Filer(#[from] FilerError),
     #[error("Volume error: {0}")]

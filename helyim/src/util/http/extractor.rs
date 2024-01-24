@@ -28,6 +28,7 @@ pub(super) static HYPER_CLIENT: Lazy<Client<HttpConnector, Body>> = Lazy::new(||
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {
+    pub method: Method,
     pub uri: Uri,
     pub headers: HeaderMap,
 }

@@ -1,4 +1,6 @@
 #![allow(unused_attributes)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::mutable_key_type)]
 #![allow(clippy::module_inception)]

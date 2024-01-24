@@ -48,7 +48,6 @@ use crate::{
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
-        parser::parse_host_port,
         sys::exit,
     },
 };
@@ -175,6 +174,7 @@ impl VolumeServer {
                         master,
                         store.clone(),
                         pulse,
+                        shutdown.clone(),
                     ) => {
                             match ret {
                                 Err(VolumeError::LeaderChanged(new, old)) => {
@@ -207,15 +207,24 @@ impl VolumeServer {
         master: &FastStr,
         store: StoreRef,
         pulse: u64,
+        mut shutdown_rx: async_broadcast::Receiver<()>,
     ) -> StdResult<(), VolumeError> {
         let mut interval = tokio::time::interval(Duration::from_secs(pulse));
+
         let store_ref = store.clone();
         let request_stream = stream! {
             loop {
-                interval.tick().await;
-                match store_ref.collect_heartbeat().await {
-                    Ok(heartbeat) => yield heartbeat,
-                    Err(err) => error!("collect heartbeat error: {err}")
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match store_ref.collect_heartbeat().await {
+                            Ok(heartbeat) => yield heartbeat,
+                            Err(err) => error!("collect heartbeat error: {err}")
+                        }
+                    }
+                    // to avoid server side got `channel closed` error
+                    _ = shutdown_rx.recv() => {
+                        break;
+                    }
                 }
             }
         };
@@ -224,11 +233,7 @@ impl VolumeServer {
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();
-
-                let (_ip, port) = parse_host_port(master)?;
-                let grpc_port = grpc_port(port);
-                info!("heartbeat client starting up success, will heartbeat to {grpc_port}");
-
+                info!("heartbeat client starting up success, will heartbeat to {master}");
                 while let Some(response) = stream.next().await {
                     match response {
                         Ok(response) => {
