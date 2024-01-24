@@ -28,7 +28,7 @@ impl EcShardLocations {
         }
     }
 
-    pub async fn add_shard(&mut self, shard_id: ShardId, data_node: DataNodeRef) -> bool {
+    pub async fn add_ec_shard(&mut self, shard_id: ShardId, data_node: DataNodeRef) -> bool {
         let data_nodes = &self.locations[shard_id as usize];
         for node in data_nodes {
             if node.id() == data_node.id() {
@@ -39,7 +39,7 @@ impl EcShardLocations {
         true
     }
 
-    pub async fn delete_shard(&mut self, shard_id: ShardId, data_node: &DataNodeRef) -> bool {
+    pub async fn delete_ec_shard(&mut self, shard_id: ShardId, data_node: &DataNodeRef) -> bool {
         let data_nodes = &self.locations[shard_id as usize];
         let mut index = -1;
         for (i, node) in data_nodes.iter().enumerate() {
@@ -69,7 +69,7 @@ impl Topology {
         let mut shards = Vec::new();
         for shard in shard_infos {
             let shard = EcVolumeInfo::new(
-                FastStr::new(shard.collection.clone()),
+                FastStr::new(&shard.collection),
                 shard.id,
                 shard.ec_index_bits.into(),
             );
@@ -96,7 +96,7 @@ impl Topology {
 
         for shard in new_ec_shards.iter() {
             new_shards.push(EcVolumeInfo::new(
-                FastStr::new(shard.collection.clone()),
+                FastStr::new(&shard.collection),
                 shard.id,
                 shard.ec_index_bits.into(),
             ));
@@ -104,7 +104,7 @@ impl Topology {
 
         for shard in deleted_ec_shards.iter() {
             deleted_shards.push(EcVolumeInfo::new(
-                FastStr::new(shard.collection.clone()),
+                FastStr::new(&shard.collection),
                 shard.id,
                 shard.ec_index_bits.into(),
             ));
@@ -130,13 +130,13 @@ impl Topology {
         match self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
             Some(mut locations) => {
                 for shard_id in ec_shard_infos.shard_bits.shard_ids() {
-                    let _ = locations.add_shard(shard_id, data_node.clone()).await;
+                    let _ = locations.add_ec_shard(shard_id, data_node.clone()).await;
                 }
             }
             None => {
                 let mut locations = EcShardLocations::new(ec_shard_infos.collection.clone());
                 for shard_id in ec_shard_infos.shard_bits.shard_ids() {
-                    let _ = locations.add_shard(shard_id, data_node.clone()).await;
+                    let _ = locations.add_ec_shard(shard_id, data_node.clone()).await;
                 }
                 self.ec_shards.insert(ec_shard_infos.volume_id, locations);
             }
@@ -150,7 +150,7 @@ impl Topology {
     ) {
         if let Some(mut locations) = self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
             for shard_id in ec_shard_infos.shard_bits.shard_ids() {
-                let _ = locations.delete_shard(shard_id, data_node).await;
+                let _ = locations.delete_ec_shard(shard_id, data_node).await;
             }
         }
     }
