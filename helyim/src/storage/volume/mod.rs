@@ -288,7 +288,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn write_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let volume_id = self.id;
         if self.readonly() {
             return Err(VolumeError::Readonly(volume_id));
@@ -324,7 +324,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn delete_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn delete_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         if self.readonly() {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -349,7 +349,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn read_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn read_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let _lock = self.data_file_lock.read();
 
         match self.get_index(needle.id)? {

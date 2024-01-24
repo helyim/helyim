@@ -442,8 +442,8 @@ impl Needle {
         self.size.actual_size()
     }
 
-    pub fn data_size(&self) -> u32 {
-        self.data.len() as u32
+    pub fn data_size(&self) -> usize {
+        self.data.len()
     }
 
     pub fn body_len(&self) -> u32 {

@@ -59,7 +59,7 @@ fn search_needle_from_sorted_index(
     needle_id: NeedleId,
     process_needle: Option<ProcessNeedleFn>,
 ) -> Result<NeedleValue, NeedleError> {
-    let mut buf = [0u8; NEEDLE_ENTRY_SIZE as usize];
+    let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
     let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_ENTRY_SIZE as u64);
     while low < high {
         let middle = (low + high) / 2;

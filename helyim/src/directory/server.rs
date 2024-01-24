@@ -8,6 +8,7 @@ use faststr::FastStr;
 use futures::{Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
+    lookup_ec_volume_response::EcShardIdLocation,
     lookup_volume_response::VolumeLocation,
     HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
     LookupVolumeRequest, LookupVolumeResponse,
@@ -274,9 +275,42 @@ impl Helyim for DirectoryGrpcServer {
 
     async fn lookup_ec_volume(
         &self,
-        _request: Request<LookupEcVolumeRequest>,
+        request: Request<LookupEcVolumeRequest>,
     ) -> StdResult<Response<LookupEcVolumeResponse>, Status> {
-        todo!()
+        if !self.topology.is_leader().await {
+            return Err(Status::permission_denied("this node is not raft leader"));
+        }
+        let request = request.into_inner();
+        let ec_locations = match self.topology.lookup_ec_shards(request.volume_id) {
+            Some(locations) => locations,
+            None => {
+                return Err(Status::not_found(format!(
+                    "ec volume {} not found",
+                    request.volume_id
+                )))
+            }
+        };
+
+        let mut shard_id_locations = Vec::new();
+        for (shard_id, shard_locations) in ec_locations.value().locations.iter().enumerate() {
+            let mut locations = Vec::new();
+            for data_node in shard_locations {
+                locations.push(Location {
+                    url: data_node.url(),
+                    public_url: data_node.public_url.to_string(),
+                });
+            }
+            shard_id_locations.push(EcShardIdLocation {
+                locations,
+                shard_id: shard_id as u32,
+            });
+        }
+
+        let response = LookupEcVolumeResponse {
+            shard_id_locations,
+            volume_id: request.volume_id,
+        };
+        Ok(Response::new(response))
     }
 }
 

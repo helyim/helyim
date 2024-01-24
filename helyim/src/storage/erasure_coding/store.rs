@@ -46,7 +46,11 @@ impl Store {
         None
     }
 
-    pub async fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolume>> {
+    pub fn has_ec_volume(&self, vid: VolumeId) -> bool {
+        self.find_ec_volume(vid).is_some()
+    }
+
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcVolume>> {
         for location in self.locations.iter() {
             if let Some(volume) = location.ec_volumes.get(&vid) {
                 return Some(volume);
@@ -243,12 +247,7 @@ impl Store {
         for src_node in src_nodes {
             match self
                 .do_read_remote_ec_shard_interval(
-                    src_node.to_string(),
-                    needle_id,
-                    volume_id,
-                    shard_id,
-                    buf,
-                    offset,
+                    src_node, needle_id, volume_id, shard_id, buf, offset,
                 )
                 .await
             {
@@ -266,14 +265,14 @@ impl Store {
 
     async fn do_read_remote_ec_shard_interval(
         &self,
-        src_node: String,
+        src_node: &str,
         needle_id: NeedleId,
         volume_id: VolumeId,
         shard_id: ShardId,
         buf: &mut [u8],
         offset: u64,
     ) -> Result<(usize, bool), EcVolumeError> {
-        let client = volume_server_client(&src_node)?;
+        let client = volume_server_client(src_node)?;
         let response = client
             .volume_ec_shard_read(VolumeEcShardReadRequest {
                 volume_id,
@@ -308,16 +307,16 @@ impl Store {
         let mut data = Vec::new();
         let mut is_deleted = false;
         for (i, interval) in intervals.iter().enumerate() {
-            let (d, deleted) = self
+            let (dat, deleted) = self
                 .read_one_ec_shard_interval(needle_id, volume, interval)
                 .await?;
             if deleted {
                 is_deleted = true;
             }
             if i == 0 {
-                data = d;
+                data = dat;
             } else {
-                data.extend_from_slice(&d);
+                data.extend_from_slice(&dat);
             }
         }
 
@@ -338,7 +337,7 @@ impl Store {
 
         let mut data = vec![0u8; interval.size as usize];
 
-        match ec_volume.find_shard(shard_id).await {
+        match ec_volume.find_ec_shard(shard_id).await {
             Some(shard) => {
                 shard.ecd_file.read_exact_at(&mut data, actual_offset)?;
                 Ok((data, false))
@@ -381,42 +380,6 @@ impl Store {
                 Ok((data, is_deleted))
             }
         }
-    }
-
-    async fn read_from_remote_locations(
-        &self,
-        locations: &[FastStr],
-        volume: &EcVolume,
-        shard_id: ShardId,
-        needle_id: NeedleId,
-        offset: u64,
-        buf_len: usize,
-    ) -> Result<(Option<Vec<u8>>, bool), EcVolumeError> {
-        let mut data = vec![0u8; buf_len];
-        let (bytes_read, is_deleted) = match self
-            .read_remote_ec_shard_interval(
-                locations,
-                needle_id,
-                volume.volume_id,
-                shard_id,
-                &mut data,
-                offset,
-            )
-            .await
-        {
-            Ok((bytes_read, is_deleted)) => (bytes_read, is_deleted),
-            Err(err) => {
-                volume.shard_locations.remove(&shard_id);
-                (0, false)
-            }
-        };
-        let data = if bytes_read == buf_len {
-            Some(data)
-        } else {
-            None
-        };
-
-        Ok((data, is_deleted))
     }
 
     async fn recover_one_remote_ec_shard_interval(
@@ -464,17 +427,33 @@ impl Store {
                 let buf_len = buf.len();
                 let mut entry_tx = tx.clone();
                 s.spawn(async move {
-                    if let Ok((Some(data), is_deleted)) = self
-                        .read_from_remote_locations(
-                            &locations, ec_volume, shard_id, needle_id, offset, buf_len,
+                    let mut data = vec![0; buf_len];
+                    match self
+                        .read_remote_ec_shard_interval(
+                            &locations,
+                            needle_id,
+                            ec_volume.volume_id,
+                            shard_id,
+                            &mut data,
+                            offset,
                         )
                         .await
                     {
-                        if let Err(err) = entry_tx.send((shard_id, data, is_deleted)).await {
-                            error!(
-                                "read from remote locations failed, needle_id: {needle_id}, \
-                                 shard_id: {shard_id}, error: {err}"
-                            );
+                        Ok((read, is_deleted)) => {
+                            if read == buf_len {
+                                if let Err(err) = entry_tx.send((shard_id, data, is_deleted)).await
+                                {
+                                    error!(
+                                        "read from remote locations failed, needle_id: \
+                                         {needle_id}, shard_id: {shard_id}, error: {err}"
+                                    );
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            error!("read ec shard from remote location error: {err}");
+                            let shard = shard_id as ShardId;
+                            ec_volume.shard_locations.remove(&shard);
                         }
                     }
                 });

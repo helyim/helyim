@@ -140,7 +140,7 @@ impl Store {
         &self,
         vid: VolumeId,
         needle: &mut Needle,
-    ) -> StdResult<u32, VolumeError> {
+    ) -> StdResult<usize, VolumeError> {
         match self.find_volume(vid) {
             Some(volume) => {
                 if volume.no_write_or_delete() {
@@ -158,14 +158,14 @@ impl Store {
         }
     }
 
-    pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
+    pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<usize> {
         match self.find_volume(vid) {
             Some(volume) => Ok(volume.read_needle(needle)?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
 
-    pub async fn write_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<u32> {
+    pub async fn write_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<usize> {
         match self.find_volume(vid) {
             Some(volume) => {
                 if volume.readonly() {

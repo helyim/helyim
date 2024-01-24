@@ -581,8 +581,8 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
         let request = request.into_inner();
 
-        if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
-            if let Some(shard) = volume.find_shard(request.shard_id as ShardId).await {
+        if let Some(volume) = self.store.find_ec_volume(request.volume_id) {
+            if let Some(shard) = volume.find_ec_shard(request.shard_id as ShardId).await {
                 if request.file_key != 0 {
                     let needle_value = volume.find_needle_from_ecx(request.file_key)?;
                     if needle_value.size.is_deleted() {
@@ -675,7 +675,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
         let request = request.into_inner();
 
-        match self.store.find_ec_volume(request.volume_id).await {
+        match self.store.find_ec_volume(request.volume_id) {
             Some(volume) => {
                 if volume.collection() != request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));

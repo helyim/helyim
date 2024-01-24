@@ -1,10 +1,14 @@
 #![allow(dead_code)]
 
+use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use helyim_proto::VolumeEcShardInformationMessage;
 
 use crate::{
-    storage::erasure_coding::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT},
+    storage::{
+        erasure_coding::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT},
+        VolumeId,
+    },
     topology::{DataNodeRef, Topology},
 };
 
@@ -13,7 +17,7 @@ mod data_node;
 #[derive(Clone)]
 pub struct EcShardLocations {
     collection: FastStr,
-    locations: Vec<Vec<DataNodeRef>>,
+    pub locations: Vec<Vec<DataNodeRef>>,
 }
 
 impl EcShardLocations {
@@ -53,6 +57,10 @@ impl EcShardLocations {
 }
 
 impl Topology {
+    pub fn lookup_ec_shards(&self, vid: VolumeId) -> Option<Ref<VolumeId, EcShardLocations>> {
+        self.ec_shards.get(&vid)
+    }
+
     pub async fn sync_data_node_ec_shards(
         &mut self,
         shard_infos: &[VolumeEcShardInformationMessage],

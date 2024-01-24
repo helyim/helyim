@@ -109,7 +109,7 @@ async fn replicate_delete(
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<usize> {
     let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
@@ -186,7 +186,7 @@ async fn replicate_write(
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<usize> {
     let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     let size = ctx.store.write_volume_needle(vid, needle).await?;
     // if the volume is replica, it will return needle directly.
@@ -383,7 +383,10 @@ pub async fn get_or_head_handler(
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
 
     let mut response = Response::new(Body::empty());
-    if !ctx.store.has_volume(vid) {
+
+    let has_volume = ctx.store.has_volume(vid);
+    let has_ec_volume = ctx.store.has_ec_volume(vid);
+    if !has_volume && !has_ec_volume {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume {} is not belongs to this server", vid);
@@ -394,7 +397,19 @@ pub async fn get_or_head_handler(
 
     let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
-    let _ = ctx.store.read_volume_needle(vid, &mut needle).await?;
+
+    let mut count = 0;
+    if has_volume {
+        count = ctx.store.read_volume_needle(vid, &mut needle).await?;
+    } else if has_ec_volume {
+        count = ctx.store.read_ec_shard_needle(vid, &mut needle).await?;
+    }
+
+    if count == 0 {
+        *response.status_mut() = StatusCode::NOT_FOUND;
+        return Ok(response);
+    }
+
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }

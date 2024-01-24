@@ -94,7 +94,7 @@ impl EcVolume {
         })
     }
 
-    pub async fn add_shard(&self, shard: EcVolumeShard) -> bool {
+    pub async fn add_ec_shard(&self, shard: EcVolumeShard) -> bool {
         for item in self.shards.read().await.iter() {
             if shard.shard_id == item.shard_id {
                 return false;
@@ -110,7 +110,7 @@ impl EcVolume {
         true
     }
 
-    pub async fn delete_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
+    pub async fn delete_ec_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
         let mut idx = None;
         for (i, shard) in self.shards.read().await.iter().enumerate() {
             if shard.shard_id == shard_id {
@@ -123,7 +123,7 @@ impl EcVolume {
         }
     }
 
-    pub async fn find_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
+    pub async fn find_ec_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
         self.shards
             .read()
             .await
@@ -132,7 +132,7 @@ impl EcVolume {
             .cloned()
     }
 
-    pub async fn shards_len(&self) -> usize {
+    pub async fn ec_shard_len(&self) -> usize {
         self.shards.read().await.len()
     }
 
