@@ -22,7 +22,7 @@ impl EcVolumeShard {
         collection: FastStr,
         volume_id: VolumeId,
         id: ShardId,
-    ) -> Result<Self, EcShardError> {
+    ) -> Result<Self, std::io::Error> {
         let base_filename = ec_shard_filename(&collection, &dir, volume_id);
         let ecd_filename = format!("{}{}", base_filename, to_ext(id));
         let ecd_file = fs::OpenOptions::new()
@@ -52,9 +52,9 @@ impl EcVolumeShard {
 
 pub fn ec_shard_filename(collection: &str, dir: &str, volume_id: VolumeId) -> String {
     if collection.is_empty() {
-        format!("{}{}", dir, volume_id)
+        format!("{}/{}", dir, volume_id)
     } else {
-        format!("{}{}_{}", dir, collection, volume_id)
+        format!("{}/{}_{}", dir, collection, volume_id)
     }
 }
 

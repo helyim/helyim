@@ -51,6 +51,7 @@ pub use volume_info::VolumeInfo;
 
 use crate::storage::{
     needle::{NeedleError, NEEDLE_ENTRY_SIZE},
+    ttl::TtlError,
     types::Offset,
     NeedleId,
 };
@@ -84,10 +85,9 @@ impl Default for SuperBlock {
 impl SuperBlock {
     pub fn parse(buf: [u8; SUPER_BLOCK_SIZE]) -> Result<SuperBlock, VolumeError> {
         let rp = ReplicaPlacement::from_u8(buf[1])?;
-        let ttl = Ttl::from(&buf[2..4]);
+        let ttl = Ttl::from_bytes(&buf[2..4])?;
         let compact_revision = (&buf[4..6]).get_u16();
         let compact_revision = AtomicU16::new(compact_revision);
-
         Ok(SuperBlock {
             version: buf[0],
             replica_placement: rp,
@@ -132,7 +132,10 @@ pub struct Volume {
     needle_map_type: NeedleMapType,
     pub super_block: Arc<SuperBlock>,
 
-    readonly: Arc<AtomicBool>,
+    no_write_or_delete: Arc<AtomicBool>,
+    no_write_can_delete: Arc<AtomicBool>,
+    is_compacting: Arc<AtomicBool>,
+
     last_modified: Arc<AtomicU64>,
     last_compact_index_offset: Arc<AtomicU64>,
     last_compact_revision: Arc<AtomicU16>,
@@ -178,7 +181,10 @@ impl Volume {
             data_file_lock: RwLock::new(()),
             needle_map_type,
             needle_mapper: None,
-            readonly: Arc::new(AtomicBool::new(true)),
+            no_write_or_delete: Arc::new(AtomicBool::new(false)),
+            no_write_can_delete: Arc::new(AtomicBool::new(false)),
+            is_compacting: Arc::new(AtomicBool::new(false)),
+
             last_compact_index_offset: Arc::new(AtomicU64::new(0)),
             last_compact_revision: Arc::new(AtomicU16::new(0)),
             last_modified: Arc::new(AtomicU64::new(0)),
@@ -224,10 +230,10 @@ impl Volume {
         };
 
         let file = if meta.permissions().readonly() {
+            self.set_no_write_or_delete(true);
             fs::OpenOptions::new().read(true).open(&name)?
         } else {
             self.set_last_modified(get_time(meta.modified()?)?.as_secs());
-            self.set_readonly(false);
             fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -245,22 +251,36 @@ impl Volume {
         }
 
         if load_index {
-            let index_file = fs::OpenOptions::new()
-                .read(true)
-                .create(true)
-                .write(true)
-                .open(self.index_filename())?;
+            let index_file = if self.no_write_or_delete() {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .mode(0o644)
+                    .open(self.index_filename())?
+            } else {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .create(true)
+                    .write(true)
+                    .mode(0o644)
+                    .open(self.index_filename())?
+            };
 
             if let Err(err) = check_volume_data_integrity(self, &index_file) {
-                self.set_readonly(true);
+                self.set_no_write_or_delete(true);
                 error!(
                     "volume data integrity checking failed. volume: {}, filename: {}, {err}",
                     self.id,
                     self.data_filename()
                 );
             }
-            let mut needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
-            needle_mapper.load_index_file(index_file)?;
+
+            let needle_mapper = if self.no_write_or_delete() || self.no_write_can_delete() {
+                todo!("load index file from sorted file")
+            } else {
+                let mut needle_mapper = NeedleMapper::new(self.id, self.needle_map_type);
+                needle_mapper.load_index_file(index_file)?;
+                needle_mapper
+            };
             self.needle_mapper = Some(needle_mapper);
             info!("load index file `{}` success", self.index_filename());
         }
@@ -268,7 +288,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn write_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let volume_id = self.id;
         if self.readonly() {
             return Err(VolumeError::Readonly(volume_id));
@@ -304,7 +324,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn delete_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn delete_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         if self.readonly() {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -329,7 +349,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn read_needle(&self, needle: &mut Needle) -> Result<u32, VolumeError> {
+    pub fn read_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let _lock = self.data_file_lock.read();
 
         match self.get_index(needle.id)? {
@@ -399,8 +419,8 @@ impl Volume {
     }
 
     pub fn destroy(&self) -> Result<(), VolumeError> {
-        if self.readonly() {
-            return Err(VolumeError::Readonly(self.id));
+        if self.is_compacting() {
+            return Err(VolumeError::Compacting(self.id));
         }
 
         fs::remove_file(Path::new(&self.data_filename()))?;
@@ -487,6 +507,10 @@ impl Volume {
             return Ok(());
         }
         file.write_all_at(&bytes, 0)?;
+
+        self.set_no_write_or_delete(false);
+        self.set_no_write_can_delete(false);
+
         debug!("write super block success");
         Ok(())
     }
@@ -576,12 +600,33 @@ impl Volume {
 }
 
 impl Volume {
-    pub fn set_readonly(&self, readonly: bool) {
-        self.readonly.store(readonly, Ordering::Relaxed)
+    pub fn no_write_or_delete(&self) -> bool {
+        self.no_write_or_delete.load(Ordering::Relaxed)
+    }
+
+    pub fn set_no_write_or_delete(&self, v: bool) {
+        self.no_write_or_delete.store(v, Ordering::Relaxed)
+    }
+
+    pub fn no_write_can_delete(&self) -> bool {
+        self.no_write_can_delete.load(Ordering::Relaxed)
+    }
+
+    pub fn set_no_write_can_delete(&self, v: bool) {
+        self.no_write_can_delete.store(v, Ordering::Relaxed)
+    }
+
+    pub fn is_compacting(&self) -> bool {
+        self.is_compacting.load(Ordering::Relaxed)
+    }
+
+    pub fn set_is_compacting(&self, v: bool) {
+        self.is_compacting.store(v, Ordering::Relaxed)
     }
 
     pub fn readonly(&self) -> bool {
-        self.readonly.load(Ordering::Relaxed)
+        self.no_write_or_delete.load(Ordering::Relaxed)
+            || self.no_write_can_delete.load(Ordering::Relaxed)
     }
 
     pub fn set_last_modified(&self, last_modified: u64) {
@@ -660,12 +705,18 @@ pub enum VolumeError {
     HasLoaded(VolumeId),
     #[error("Volume {0} is readonly.")]
     Readonly(VolumeId),
+    #[error("Volume {0} is compacting.")]
+    Compacting(VolumeId),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
     #[error("NeedleMapper is not load, volume: {0}")]
     NeedleMapperNotLoad(VolumeId),
     #[error("No free space: {0}")]
     NoFreeSpace(String),
+    #[error("Volume size limit {0} exceeded, current size is {1}")]
+    VolumeSizeLimit(u64, u64),
 
     // heartbeat
     #[error("Start heartbeat failed.")]

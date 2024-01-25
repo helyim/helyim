@@ -3,42 +3,29 @@ package volume;
 
 service VolumeServer {
   rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {}
+  rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {}
+  rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {}
 
   // vacuum
-  rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
-  }
-  rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
-  }
-  rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
-  }
-  rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
-  }
+  rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {}
+  rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {}
+  rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {}
+  rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {}
 
   // erasure coding
-  rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
-  }
-  rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
-  }
-  rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
-  }
-  rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
-  }
-  rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {
-  }
-  rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {
-  }
-  rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {
-  }
-  rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
-  }
-  rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
-  }
-
-
+  rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {}
+  rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {}
+  rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {}
+  rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {}
+  rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {}
+  rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {}
+  rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {}
+  rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {}
+  rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {}
 }
 
 message AllocateVolumeRequest {
-  repeated uint32 volumes = 1;
+  uint32 volume_id = 1;
   string collection = 2;
   string replication = 3;
   string ttl = 4;
@@ -65,7 +52,6 @@ message VacuumVolumeCommitRequest {
   uint32 volume_id = 1;
 }
 message VacuumVolumeCommitResponse {
-  bool is_read_only = 1;
 }
 
 message VacuumVolumeCleanupRequest {
@@ -167,4 +153,16 @@ message VolumeEcShardsToVolumeRequest {
   string collection = 2;
 }
 message VolumeEcShardsToVolumeResponse {
+}
+
+message VolumeDeleteRequest {
+  uint32 volume_id = 1;
+}
+message VolumeDeleteResponse {
+}
+
+message VolumeMarkReadonlyRequest {
+  uint32 volume_id = 1;
+}
+message VolumeMarkReadonlyResponse {
 }

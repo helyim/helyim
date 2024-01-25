@@ -17,6 +17,7 @@ use tracing::{error, info};
 
 use crate::{
     directory::DirectoryState,
+    storage::VolumeId,
     topology::{TopologyError, TopologyRef},
 };
 
@@ -62,6 +63,18 @@ pub struct StorageQuery {
     pub ttl: Option<FastStr>,
     // last modified
     pub ts: Option<u64>,
+}
+
+#[derive(Debug, FromRequest)]
+pub struct ErasureCodingExtractor {
+    #[from_request(via(Query))]
+    pub query: ErasureCodingQuery,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ErasureCodingQuery {
+    pub volume: VolumeId,
+    pub collection: Option<FastStr>,
 }
 
 pub struct FormOrJson<T>(pub T);

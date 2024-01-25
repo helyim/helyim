@@ -7,7 +7,7 @@ use crate::storage::Ttl;
 #[derive(Default, Serialize, Deserialize)]
 pub struct Upload {
     pub name: String,
-    pub size: u32,
+    pub size: usize,
     pub error: String,
 }
 

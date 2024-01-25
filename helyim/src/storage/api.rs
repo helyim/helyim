@@ -18,6 +18,9 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::once;
+use helyim_proto::volume::{
+    VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
+};
 use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
@@ -31,14 +34,18 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
+        erasure_coding::EcVolumeError,
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::{
+        grpc::volume_server_client,
         http::{
-            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
+            extractor::{
+                DeleteExtractor, ErasureCodingExtractor, GetOrHeadExtractor, PostExtractor,
+            },
             HTTP_DATE_FORMAT,
         },
         parser::parse_url_path,
@@ -102,14 +109,14 @@ async fn replicate_delete(
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<usize> {
     let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     let size = ctx.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -179,7 +186,7 @@ async fn replicate_write(
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
-) -> Result<u32> {
+) -> Result<usize> {
     let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
     let size = ctx.store.write_volume_needle(vid, needle).await?;
     // if the volume is replica, it will return needle directly.
@@ -187,7 +194,7 @@ async fn replicate_write(
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid).await? {
+    if let Some(volume) = ctx.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -376,7 +383,10 @@ pub async fn get_or_head_handler(
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
 
     let mut response = Response::new(Body::empty());
-    if !ctx.store.has_volume(vid).await? {
+
+    let has_volume = ctx.store.has_volume(vid);
+    let has_ec_volume = ctx.store.has_ec_volume(vid);
+    if !has_volume && !has_ec_volume {
         // TODO: support read redirect
         if !ctx.read_redirect {
             info!("volume {} is not belongs to this server", vid);
@@ -387,7 +397,19 @@ pub async fn get_or_head_handler(
 
     let mut needle = Needle::new_with_fid(fid)?;
     let cookie = needle.cookie;
-    let _ = ctx.store.read_volume_needle(vid, &mut needle).await?;
+
+    let mut count = 0;
+    if has_volume {
+        count = ctx.store.read_volume_needle(vid, &mut needle).await?;
+    } else if has_ec_volume {
+        count = ctx.store.read_ec_shard_needle(vid, &mut needle).await?;
+    }
+
+    if count == 0 {
+        *response.status_mut() = StatusCode::NOT_FOUND;
+        return Ok(response);
+    }
+
     if needle.cookie != cookie {
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
@@ -472,4 +494,44 @@ pub async fn get_or_head_handler(
     *response.status_mut() = StatusCode::ACCEPTED;
 
     Ok(response)
+}
+
+// erasure coding
+pub async fn generate_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsGenerateRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_generate(request).await?;
+    Ok(())
+}
+
+pub async fn generate_volume_from_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsToVolumeRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_to_volume(request).await?;
+    Ok(())
+}
+
+pub async fn rebuild_missing_ec_shards_handler(
+    State(ctx): State<StorageState>,
+    extractor: ErasureCodingExtractor,
+) -> StdResult<(), EcVolumeError> {
+    let client = volume_server_client(&ctx.store.public_url)?;
+    let request = VolumeEcShardsRebuildRequest {
+        volume_id: extractor.query.volume,
+        collection: extractor.query.collection.unwrap_or_default().to_string(),
+    };
+    let _ = client.volume_ec_shards_rebuild(request).await?;
+    Ok(())
 }

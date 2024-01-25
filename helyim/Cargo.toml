@@ -35,6 +35,7 @@ futures.workspace = true
 ginepro.workspace = true
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
+indexmap.workspace = true
 leapfrog.workspace = true
 libflate.workspace = true
 lru.workspace = true

@@ -13,7 +13,7 @@ use tracing::info;
 use crate::{
     anyhow, rt_spawn,
     storage::{
-        erasure_coding::EcVolumeRef,
+        erasure_coding::EcVolume,
         needle::NeedleMapType,
         ttl::Ttl,
         volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
@@ -25,7 +25,7 @@ pub struct DiskLocation {
     pub directory: FastStr,
     pub max_volume_count: i64,
     pub volumes: DashMap<VolumeId, Volume>,
-    pub ec_volumes: DashMap<VolumeId, EcVolumeRef>,
+    pub ec_volumes: DashMap<VolumeId, EcVolume>,
 }
 
 impl DiskLocation {
@@ -97,7 +97,7 @@ impl DiskLocation {
         self.volumes.get_mut(&vid)
     }
 
-    pub async fn delete_volume(&self, vid: VolumeId) -> Result<(), VolumeError> {
+    pub fn delete_volume(&self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some((vid, v)) = self.volumes.remove(&vid) {
             v.destroy()?;
             info!(

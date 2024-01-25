@@ -1,7 +1,7 @@
 use std::{
     fs,
     fs::File,
-    io::Write,
+    io::{ErrorKind, Write},
     os::unix::fs::{FileExt, OpenOptionsExt},
 };
 
@@ -14,27 +14,28 @@ use crate::{
             to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
-        volume::DATA_FILE_SUFFIX,
-        MemoryNeedleValueMap,
+        needle::SortedIndexMap,
+        NeedleError,
     },
     util::file::file_exists,
 };
 
 /// generates .ecx file from existing .idx file all keys are sorted in ascending order
 pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
-    let nm = MemoryNeedleValueMap::load_from_index(&format!("{}.idx", base_filename))?;
+    let nm = SortedIndexMap::load_from_index(&format!("{}.idx", base_filename))?;
     let mut ecx_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
-    for mut entry in nm.map.iter() {
-        if let Some((key, value)) = entry.key_value() {
-            let buf = value.as_bytes(key);
-            ecx_file.write_all(&buf)?;
-        }
-    }
+
+    nm.ascending_visit(|key, value| -> Result<(), NeedleError> {
+        let buf = value.as_bytes(*key);
+        ecx_file.write_all(&buf)?;
+        Ok(())
+    })?;
+
     Ok(())
 }
 
@@ -60,8 +61,8 @@ fn generate_ec_files(
     let data_file = fs::OpenOptions::new()
         .read(true)
         .mode(0o0)
-        .open(format!("{}.{}", base_filename, DATA_FILE_SUFFIX))?;
-    let remaining = data_file.metadata()?.len();
+        .open(format!("{}.dat", base_filename))?;
+    let remaining = data_file.metadata()?.len() as i64;
     encode_data_file(
         remaining,
         base_filename,
@@ -113,18 +114,21 @@ fn generate_missing_ec_files(base_filename: &str) -> Result<Vec<u32>, EcShardErr
 fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, EcShardError> {
     let mut files = Vec::with_capacity(TOTAL_SHARDS_COUNT as usize);
     for i in 0..TOTAL_SHARDS_COUNT {
-        let fname = format!("{}{}", base_filename, to_ext(i as ShardId));
+        let filename = format!("{}{}", base_filename, to_ext(i as ShardId));
         let mut options = fs::OpenOptions::new();
         if readonly {
             options.read(true);
         } else {
             options.write(true).create(true).truncate(true);
         }
-        let file = options.open(fname)?;
+        options.mode(0o644);
+
+        let file = options.open(filename)?;
         files.push(file);
     }
     Ok(files)
 }
+
 fn encode_data(
     data_file: &File,
     reed_solomon: &ReedSolomon<Field>,
@@ -144,7 +148,7 @@ fn encode_data(
         encode_data_one_batch(
             data_file,
             reed_solomon,
-            start_offset + i + buf_size,
+            start_offset + i * buf_size,
             block_size,
             bufs,
             outputs,
@@ -161,25 +165,34 @@ fn encode_data_one_batch(
     mut bufs: &mut [Vec<u8>],
     outputs: &mut [File],
 ) -> Result<(), EcShardError> {
+    assert_eq!(bufs.len(), outputs.len());
+    assert_eq!(bufs.len(), TOTAL_SHARDS_COUNT as usize);
+
     for (i, buf) in bufs.iter_mut().enumerate().take(DATA_SHARDS_COUNT as usize) {
-        let n = data_file.read_at(buf, start_offset + block_size + i as u64)?;
-        if n < buf.len() {
+        let mut n = 0;
+        match data_file.read_at(buf, start_offset + block_size * i as u64) {
+            Ok(size) => n = size,
+            Err(err) => {
+                if err.kind() != ErrorKind::UnexpectedEof {
+                    return Err(EcShardError::Io(err));
+                }
+            }
+        }
+
+        let buf_len = buf.len();
+        if n < buf_len {
             for (t, byte) in buf.iter_mut().enumerate().rev() {
                 if t < n {
                     break;
                 }
-                *byte = 0u8;
+                *byte = 0;
             }
         }
     }
 
     reed_solomon.encode(&mut bufs)?;
 
-    for (i, output) in outputs
-        .iter_mut()
-        .enumerate()
-        .take(TOTAL_SHARDS_COUNT as usize)
-    {
+    for (i, output) in outputs.iter_mut().enumerate() {
         output.write_all(&bufs[i])?;
     }
 
@@ -187,7 +200,7 @@ fn encode_data_one_batch(
 }
 
 fn encode_data_file(
-    mut remaining: u64,
+    mut remaining: i64,
     base_filename: &str,
     buf_size: u64,
     large_block_size: u64,
@@ -201,7 +214,7 @@ fn encode_data_file(
     let mut outputs = open_ec_files(base_filename, false)?;
 
     let mut processed_size = 0u64;
-    while remaining > large_block_size * DATA_SHARDS_COUNT as u64 {
+    while remaining > large_block_size as i64 * DATA_SHARDS_COUNT as i64 {
         encode_data(
             data_file,
             &reed_solomon,
@@ -211,7 +224,7 @@ fn encode_data_file(
             &mut outputs,
         )?;
         processed_size += large_block_size * DATA_SHARDS_COUNT as u64;
-        remaining -= large_block_size * DATA_SHARDS_COUNT as u64;
+        remaining -= large_block_size as i64 * DATA_SHARDS_COUNT as i64;
     }
 
     while remaining > 0 {
@@ -223,8 +236,8 @@ fn encode_data_file(
             &mut bufs,
             &mut outputs,
         )?;
-        processed_size += large_block_size * DATA_SHARDS_COUNT as u64;
-        remaining -= small_block_size * DATA_SHARDS_COUNT as u64;
+        processed_size += small_block_size * DATA_SHARDS_COUNT as u64;
+        remaining -= small_block_size as i64 * DATA_SHARDS_COUNT as i64;
     }
 
     Ok(())
@@ -241,6 +254,9 @@ fn rebuild_ec_files_inner(
     for (i, buf) in bufs.iter_mut().enumerate() {
         if shard_has_data[i] {
             *buf = Some(vec![0u8; ERASURE_CODING_SMALL_BLOCK_SIZE as usize]);
+            assert!(inputs[i].is_some());
+        } else {
+            assert!(outputs[i].is_some());
         }
     }
     let mut start_offset = 0u64;
@@ -249,8 +265,8 @@ fn rebuild_ec_files_inner(
     loop {
         for i in 0..TOTAL_SHARDS_COUNT as usize {
             if shard_has_data[i] {
-                if let Some(ref mut buf) = bufs[i] {
-                    if let Some(ref input) = inputs[i] {
+                if let Some(buf) = bufs[i].as_mut() {
+                    if let Some(input) = inputs[i].as_ref() {
                         let n = input.read_at(buf, start_offset)?;
                         if n == 0 {
                             return Ok(());
@@ -274,6 +290,7 @@ fn rebuild_ec_files_inner(
         reed_solomon.reconstruct(&mut bufs)?;
         for i in 0..TOTAL_SHARDS_COUNT as usize {
             if !shard_has_data[i] {
+                // filled by `reconstruct`
                 if let Some(ref buf) = bufs[i] {
                     if let Some(ref output) = outputs[i] {
                         let n = output.write_at(&buf[..input_buffer_data_size], start_offset)?;

@@ -38,7 +38,7 @@ pub use shard::{ec_shard_base_filename, ec_shard_filename, EcVolumeShard};
 mod store;
 
 mod volume;
-pub use volume::{add_shard_id, EcVolumeRef};
+pub use volume::{add_shard_id, EcVolume};
 
 mod volume_info;
 pub use volume_info::{EcVolumeInfo, ShardBits};
@@ -59,11 +59,11 @@ fn search_needle_from_sorted_index(
     needle_id: NeedleId,
     process_needle: Option<ProcessNeedleFn>,
 ) -> Result<NeedleValue, NeedleError> {
-    let mut buf = [0u8; NEEDLE_ENTRY_SIZE as usize];
+    let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
     let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_ENTRY_SIZE as u64);
     while low < high {
         let middle = (low + high) / 2;
-        ecx_file.read_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
+        ecx_file.read_exact_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
         let (key, offset, size) = read_index_entry(&buf);
         if key == needle_id {
             if let Some(mut process_needle) = process_needle {

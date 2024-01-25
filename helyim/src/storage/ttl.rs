@@ -82,11 +82,37 @@ impl Ttl {
         })
     }
 
+    pub fn from_u32(value: u32) -> Result<Ttl, TtlError> {
+        let mut buf = [0u8; 2];
+        buf[1] = value as u8;
+        buf[0] = (value >> 8) as u8;
+        Ttl::from_bytes(&buf[..])
+    }
+
+    pub fn from_bytes(buf: &[u8]) -> Result<Ttl, TtlError> {
+        match Unit::from_u8(buf[1]) {
+            Some(unit) => Ok(Ttl {
+                count: buf[0],
+                unit,
+            }),
+            None => Err(TtlError::InvalidUnit),
+        }
+    }
+
     pub fn as_bytes(&self) -> [u8; 2] {
         let mut buf = [0; 2];
         buf[0] = self.count;
         buf[1] = self.unit as u8;
         buf
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        if self.count == 0 {
+            return 0;
+        }
+        let mut output = (self.count as u32) << 8;
+        output += self.unit as u8 as u32;
+        output
     }
 
     pub fn minutes(&self) -> u32 {
@@ -122,24 +148,6 @@ impl From<Ttl> for u32 {
     }
 }
 
-impl From<u32> for Ttl {
-    fn from(u: u32) -> Self {
-        let mut buf = [0u8; 2];
-        buf[1] = u as u8;
-        buf[0] = (u >> 8) as u8;
-        Ttl::from(&buf[..])
-    }
-}
-
-impl From<&[u8]> for Ttl {
-    fn from(u: &[u8]) -> Self {
-        Ttl {
-            count: u[0],
-            unit: Unit::from_u8(u[1]).unwrap(),
-        }
-    }
-}
-
 fn parse_ttl(input: &str) -> Result<(u32, char), VolumeError> {
     let (_, (count, unit)) = pair(
         digit1,
@@ -153,6 +161,12 @@ fn parse_ttl(input: &str) -> Result<(u32, char), VolumeError> {
         ))),
     )(input)?;
     Ok((count.parse()?, unit.unwrap_or('m')))
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum TtlError {
+    #[error("Invalid unit")]
+    InvalidUnit,
 }
 
 #[cfg(test)]
@@ -189,10 +203,10 @@ mod tests {
         assert_eq!(ttl.minutes(), 5 * 60 * 24 * 365);
 
         let ttl_bytes = ttl.as_bytes();
-        let ttl2 = Ttl::from(&ttl_bytes[..]);
+        let ttl2 = Ttl::from_bytes(&ttl_bytes[..]).unwrap();
         assert_eq!(ttl.minutes(), ttl2.minutes());
 
-        let ttl3 = Ttl::from(Into::<u32>::into(ttl));
+        let ttl3 = Ttl::from_u32(Into::<u32>::into(ttl)).unwrap();
         assert_eq!(ttl.minutes(), ttl3.minutes());
     }
 }

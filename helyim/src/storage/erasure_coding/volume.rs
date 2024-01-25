@@ -1,8 +1,8 @@
 use std::{
     fs,
     fs::File,
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
+    io::{ErrorKind, Read},
+    os::unix::fs::{FileExt, OpenOptionsExt},
     sync::Arc,
     time::SystemTime,
 };
@@ -10,8 +10,7 @@ use std::{
 use bytes::{Buf, BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{VolumeEcShardInformationMessage, VolumeInfo};
-use parking_lot::Mutex;
+use helyim_proto::{volume::VolumeInfo, VolumeEcShardInformationMessage};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -26,7 +25,7 @@ use crate::{
             ERASURE_CODING_SMALL_BLOCK_SIZE,
         },
         needle::NEEDLE_ID_SIZE,
-        version::{Version, VERSION3},
+        version::{Version, VERSION2},
         NeedleError, NeedleId, NeedleValue, VolumeId,
     },
     util::file::file_exists,
@@ -35,15 +34,15 @@ use crate::{
 pub struct EcVolume {
     pub volume_id: VolumeId,
     dir: FastStr,
-    collection: FastStr,
+    pub collection: FastStr,
     ecx_file: File,
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
-    shards: Vec<Arc<EcVolumeShard>>,
+    pub shards: RwLock<Vec<Arc<EcVolumeShard>>>,
     pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
-    pub shard_locations_refresh_time: SystemTime,
-    version: Version,
-    ecj_file: Arc<Mutex<File>>,
+    pub shard_locations_refresh_time: RwLock<SystemTime>,
+    pub version: Version,
+    ecj_file: File,
 }
 
 impl EcVolume {
@@ -68,7 +67,8 @@ impl EcVolume {
             .mode(0o644)
             .open(format!("{}.ecj", base_filename))?;
 
-        let mut version = VERSION3;
+        // TODO: handle version
+        let mut version = VERSION2;
         let filename = format!("{}.vif", base_filename);
         if let Some(volume_info) = maybe_load_volume_info(&filename)? {
             version = volume_info.version as Version;
@@ -87,23 +87,23 @@ impl EcVolume {
             ecx_file,
             ecx_filesize,
             ecx_created_at,
-            ecj_file: Arc::new(Mutex::new(ecj_file)),
-            shards: Vec::new(),
+            ecj_file,
+            shards: RwLock::new(Vec::new()),
             shard_locations: DashMap::new(),
-            shard_locations_refresh_time: SystemTime::now(),
+            shard_locations_refresh_time: RwLock::new(SystemTime::now()),
             version,
         })
     }
 
-    pub fn add_shard(&mut self, shard: EcVolumeShard) -> bool {
-        for item in self.shards.iter() {
+    pub async fn add_ec_shard(&self, shard: EcVolumeShard) -> bool {
+        for item in self.shards.read().await.iter() {
             if shard.shard_id == item.shard_id {
                 return false;
             }
         }
 
-        self.shards.push(Arc::new(shard));
-        self.shards.sort_by(|left, right| {
+        self.shards.write().await.push(Arc::new(shard));
+        self.shards.write().await.sort_by(|left, right| {
             left.volume_id
                 .cmp(&right.volume_id)
                 .then(left.shard_id.cmp(&right.shard_id))
@@ -111,34 +111,39 @@ impl EcVolume {
         true
     }
 
-    pub fn delete_shard(&mut self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
+    pub async fn delete_ec_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
         let mut idx = None;
-        for (i, shard) in self.shards.iter().enumerate() {
+        for (i, shard) in self.shards.read().await.iter().enumerate() {
             if shard.shard_id == shard_id {
                 idx = Some(i);
             }
         }
-        idx.map(|idx| self.shards.remove(idx))
+        match idx {
+            Some(idx) => Some(self.shards.write().await.remove(idx)),
+            None => None,
+        }
     }
 
-    pub fn find_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
+    pub async fn find_ec_shard(&self, shard_id: ShardId) -> Option<Arc<EcVolumeShard>> {
         self.shards
+            .read()
+            .await
             .iter()
             .find(|shard| shard.shard_id == shard_id)
             .cloned()
     }
 
-    pub fn shards_len(&self) -> usize {
-        self.shards.len()
+    pub async fn ec_shard_len(&self) -> usize {
+        self.shards.read().await.len()
     }
 
-    pub fn locate_ec_shard_needle(
+    pub async fn locate_ec_shard_needle(
         &self,
         needle_id: NeedleId,
         version: Version,
     ) -> Result<(NeedleValue, Vec<Interval>), EcVolumeError> {
         let needle_value = self.find_needle_from_ecx(needle_id)?;
-        let shard = &self.shards[0];
+        let shard = &self.shards.read().await[0];
         let intervals = locate_data(
             ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE,
@@ -153,7 +158,7 @@ impl EcVolume {
         search_needle_from_sorted_index(&self.ecx_file, self.ecx_filesize, needle_id, None)
     }
 
-    pub fn delete_needle_from_ecx(&mut self, needle_id: NeedleId) -> Result<(), EcVolumeError> {
+    pub fn delete_needle_from_ecx(&self, needle_id: NeedleId) -> Result<(), EcVolumeError> {
         search_needle_from_sorted_index(
             &self.ecx_file,
             self.ecx_filesize,
@@ -164,9 +169,8 @@ impl EcVolume {
         let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
         buf.put_u64(needle_id);
 
-        let mut ecj_file = self.ecj_file.lock();
-        ecj_file.seek(SeekFrom::End(0))?;
-        ecj_file.write_all(&buf)?;
+        let offset = self.ecj_file.metadata()?.len();
+        self.ecj_file.write_all_at(&buf, offset)?;
         Ok(())
     }
 
@@ -217,9 +221,9 @@ impl EcVolume {
         self.collection.clone()
     }
 
-    pub fn destroy(&self) -> Result<(), EcVolumeError> {
+    pub async fn destroy(&self) -> Result<(), EcVolumeError> {
         let filename = self.filename();
-        for shard in self.shards.iter() {
+        for shard in self.shards.read().await.iter() {
             shard.destroy()?;
         }
         fs::remove_file(format!("{}.ecx", filename))?;
@@ -229,10 +233,10 @@ impl EcVolume {
     }
 
     // heartbeat
-    pub fn get_volume_ec_shard_info(&self) -> Vec<VolumeEcShardInformationMessage> {
+    pub async fn get_volume_ec_shard_info(&self) -> Vec<VolumeEcShardInformationMessage> {
         let mut infos = Vec::new();
         let mut pre_volume_id = u32::MAX as VolumeId;
-        for shard in self.shards.iter() {
+        for shard in self.shards.read().await.iter() {
             if shard.volume_id != pre_volume_id {
                 infos.push(VolumeEcShardInformationMessage {
                     id: shard.volume_id,
@@ -251,27 +255,4 @@ impl EcVolume {
 
 pub fn add_shard_id(ec_index_bits: u32, shard_id: ShardId) -> u32 {
     ec_index_bits | 1 << shard_id
-}
-
-#[derive(Clone)]
-pub struct EcVolumeRef(Arc<RwLock<EcVolume>>);
-
-impl EcVolumeRef {
-    pub fn new(
-        dir: FastStr,
-        collection: FastStr,
-        vid: VolumeId,
-    ) -> Result<EcVolumeRef, EcVolumeError> {
-        Ok(Self(Arc::new(RwLock::new(EcVolume::new(
-            dir, collection, vid,
-        )?))))
-    }
-
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, EcVolume> {
-        self.0.read().await
-    }
-
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, EcVolume> {
-        self.0.write().await
-    }
 }

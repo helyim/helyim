@@ -180,25 +180,12 @@ impl VolumeLayout {
         !self.is_oversize(v) && v.version == CURRENT_VERSION && !v.read_only
     }
 
-    pub async fn set_volume_available(
-        &self,
-        vid: VolumeId,
-        data_node: &DataNodeRef,
-        readonly: bool,
-    ) -> bool {
-        if let Some(volume_info) = data_node.get_volume(vid) {
-            if let Some(mut locations) = self.locations.get_mut(&vid) {
-                VolumeLayout::set_node(&mut locations, data_node.clone()).await;
-            }
+    pub async fn set_volume_available(&self, vid: VolumeId, data_node: &DataNodeRef) -> bool {
+        if let Some(mut locations) = self.locations.get_mut(&vid) {
+            VolumeLayout::set_node(&mut locations, data_node.clone()).await;
 
-            if volume_info.read_only || readonly {
-                return false;
-            }
-
-            if let Some(locations) = self.locations.get_mut(&vid) {
-                if locations.len() >= self.rp.copy_count() {
-                    return self.set_volume_writable(vid).await;
-                }
+            if locations.len() == self.rp.copy_count() {
+                return self.set_volume_writable(vid).await;
             }
         }
         false

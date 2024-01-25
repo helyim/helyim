@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use helyim_proto::{
+use helyim_proto::volume::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
 };
@@ -44,11 +44,12 @@ impl Volume {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
-        self.set_readonly(true);
+        self.set_is_compacting(true);
         self.copy_data_and_generate_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
         )?;
+        self.set_is_compacting(false);
         info!("compact {filename} success");
         Ok(())
     }
@@ -57,11 +58,12 @@ impl Volume {
         let filename = self.filename();
         self.set_last_compact_index_offset(self.index_file_size()?);
         self.set_last_compact_revision(self.super_block.compact_revision());
-        self.set_readonly(true);
+        self.set_is_compacting(true);
         self.copy_data_based_on_index_file(
             format!("{}.{COMPACT_DATA_FILE_SUFFIX}", filename),
             format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename),
         )?;
+        self.set_is_compacting(false);
         info!("compact {filename} success");
         Ok(())
     }
@@ -72,9 +74,11 @@ impl Volume {
         let compact_index_filename = format!("{}.{COMPACT_IDX_FILE_SUFFIX}", filename);
         let data_filename = format!("{}.{DATA_FILE_SUFFIX}", filename);
         let index_filename = format!("{}.{IDX_FILE_SUFFIX}", filename);
+        self.set_is_compacting(true);
 
         {
             let _lock = self.data_file_lock.write();
+
             info!("starting to commit compaction, filename: {compact_data_filename}");
             match self.makeup_diff(
                 &compact_data_filename,
@@ -100,7 +104,9 @@ impl Volume {
             self.data_file = None;
             self.needle_mapper = None;
         }
-        self.load(false, true)
+        self.load(false, true)?;
+        self.set_is_compacting(false);
+        Ok(())
     }
 
     pub fn cleanup_compact(&self) -> Result<(), std::io::Error> {
@@ -443,15 +449,11 @@ pub async fn batch_vacuum_volume_commit(
     data_nodes: &[DataNodeRef],
 ) -> bool {
     let mut commit_success = true;
-    let mut is_readonly = false;
     for data_node in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
         let response = data_node.vacuum_volume_commit(request).await;
         match response {
             Ok(response) => {
-                if response.is_read_only {
-                    is_readonly = true;
-                }
                 info!(
                     "commit volume {}:{volume_id} success.",
                     data_node.public_url
@@ -469,7 +471,7 @@ pub async fn batch_vacuum_volume_commit(
     if commit_success {
         for data_node in data_nodes {
             volume_layout
-                .set_volume_available(volume_id, data_node, is_readonly)
+                .set_volume_available(volume_id, data_node)
                 .await;
         }
     }

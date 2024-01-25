@@ -1,8 +1,15 @@
 use std::collections::HashMap;
 
-use crate::{storage::erasure_coding::EcVolumeInfo, topology::data_node::DataNode};
+use crate::{
+    storage::{erasure_coding::EcVolumeInfo, VolumeId},
+    topology::data_node::DataNode,
+};
 
 impl DataNode {
+    pub fn has_ec_shards(&self, vid: VolumeId) -> bool {
+        self.ec_shards.contains_key(&vid)
+    }
+
     pub fn get_ec_shards(&self) -> Vec<EcVolumeInfo> {
         let mut volumes = Vec::new();
         for ec_volume in self.ec_shards.iter() {

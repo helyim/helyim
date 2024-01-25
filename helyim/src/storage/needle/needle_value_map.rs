@@ -1,12 +1,12 @@
 use std::{fs, os::unix::fs::OpenOptionsExt};
 
+use indexmap::IndexMap;
 use leapfrog::LeapMap;
+use parking_lot::RwLock;
 
 use crate::storage::{
     needle::NeedleValue, types::Size, walk_index_file, NeedleError, NeedleId, VolumeError,
 };
-
-type Visit = Box<dyn FnMut(&NeedleId, &NeedleValue) -> Result<(), NeedleError>>;
 
 pub trait NeedleValueMap: Send + Sync {
     fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue>;
@@ -30,9 +30,34 @@ impl MemoryNeedleValueMap {
             map: LeapMap::new(),
         }
     }
+}
 
+impl NeedleValueMap for MemoryNeedleValueMap {
+    fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
+        self.map.insert(key, value)
+    }
+
+    fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
+        self.map.remove(&key)
+    }
+
+    fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+        match self.map.get(&key) {
+            Some(mut value) => value.value(),
+            None => None,
+        }
+    }
+}
+
+pub struct SortedIndexMap {
+    pub map: RwLock<IndexMap<NeedleId, NeedleValue>>,
+}
+
+impl SortedIndexMap {
     pub fn load_from_index(index_filename: &str) -> Result<Self, VolumeError> {
-        let nm = Self::new();
+        let nm = Self {
+            map: RwLock::new(IndexMap::new()),
+        };
         let mut index_file = fs::OpenOptions::new()
             .read(true)
             .mode(0o644)
@@ -50,21 +75,29 @@ impl MemoryNeedleValueMap {
         )?;
         Ok(nm)
     }
+
+    pub fn ascending_visit<F>(&self, mut visit: F) -> Result<(), NeedleError>
+    where
+        F: FnMut(&NeedleId, &NeedleValue) -> Result<(), NeedleError>,
+    {
+        self.map.write().sort_by(|k1, _, k2, _| k1.cmp(k2));
+        for (key, value) in self.map.read().iter() {
+            visit(key, value)?;
+        }
+        Ok(())
+    }
 }
 
-impl NeedleValueMap for MemoryNeedleValueMap {
+impl NeedleValueMap for SortedIndexMap {
     fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue> {
-        self.map.insert(key, value)
+        self.map.write().insert(key, value)
     }
 
     fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
-        self.map.remove(&key)
+        self.map.write().remove(&key)
     }
 
     fn get(&self, key: NeedleId) -> Option<NeedleValue> {
-        match self.map.get(&key) {
-            Some(mut value) => value.value(),
-            None => None,
-        }
+        self.map.read().get(&key).copied()
     }
 }

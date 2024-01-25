@@ -32,7 +32,6 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
         return Ok(());
     }
     let version = volume.version();
-
     verify_needle_integrity(volume.data_file()?, version, key, offset, size)
 }
 

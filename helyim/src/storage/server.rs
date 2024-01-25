@@ -7,18 +7,19 @@ use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::StreamExt;
-use helyim_proto::{
+use helyim_proto::volume::{
     volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
-    VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
-    VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
-    VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
-    VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
-    VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
-    VolumeEcShardsUnmountResponse, VolumeInfo,
+    VacuumVolumeCompactResponse, VolumeDeleteRequest, VolumeDeleteResponse,
+    VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest,
+    VolumeEcShardReadResponse, VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse,
+    VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest,
+    VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest, VolumeEcShardsMountResponse,
+    VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest,
+    VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse,
+    VolumeInfo, VolumeMarkReadonlyRequest, VolumeMarkReadonlyResponse,
 };
 use tokio::time::sleep;
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
@@ -32,7 +33,11 @@ use crate::{
     proto::save_volume_info,
     rt_spawn,
     storage::{
-        api::{delete_handler, get_or_head_handler, post_handler, status_handler, StorageState},
+        api::{
+            delete_handler, generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
+            get_or_head_handler, post_handler, rebuild_missing_ec_shards_handler, status_handler,
+            StorageState,
+        },
         erasure_coding::{
             ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
             write_data_file, write_ec_files, write_index_file_from_ec_index,
@@ -216,10 +221,12 @@ impl VolumeServer {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match store_ref.collect_heartbeat().await {
+                        match store_ref.collect_heartbeat() {
                             Ok(heartbeat) => yield heartbeat,
                             Err(err) => error!("collect heartbeat error: {err}")
                         }
+
+                        yield store_ref.collect_erasure_coding_heartbeat().await;
                     }
                     // to avoid server side got `channel closed` error
                     _ = shutdown_rx.recv() => {
@@ -281,6 +288,18 @@ async fn start_volume_server(
         .route("/", get(default_handler))
         .route("/status", get(status_handler))
         .route("/favicon.ico", get(favicon_handler))
+        .route(
+            "/volume/ec/generate",
+            get(generate_ec_shards_handler).put(generate_ec_shards_handler),
+        )
+        .route(
+            "/volume/ec/restore",
+            get(generate_volume_from_ec_shards_handler).put(generate_volume_from_ec_shards_handler),
+        )
+        .route(
+            "/volume/ec/rebuild",
+            get(rebuild_missing_ec_shards_handler).put(rebuild_missing_ec_shards_handler),
+        )
         .fallback_service(
             get(get_or_head_handler)
                 .head(get_or_head_handler)
@@ -330,7 +349,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         self.store
             .add_volume(
-                request.volumes,
+                request.volume_id,
                 request.collection,
                 self.needle_map_type,
                 request.replication,
@@ -341,13 +360,31 @@ impl HelyimVolumeServer for StorageGrpcServer {
         Ok(Response::new(AllocateVolumeResponse {}))
     }
 
+    async fn volume_delete(
+        &self,
+        request: Request<VolumeDeleteRequest>,
+    ) -> StdResult<Response<VolumeDeleteResponse>, Status> {
+        let request = request.into_inner();
+        self.store.delete_volume(request.volume_id).await?;
+        Ok(Response::new(VolumeDeleteResponse {}))
+    }
+
+    async fn volume_mark_readonly(
+        &self,
+        request: Request<VolumeMarkReadonlyRequest>,
+    ) -> StdResult<Response<VolumeMarkReadonlyResponse>, Status> {
+        let request = request.into_inner();
+        self.store.mark_volume_readonly(request.volume_id).await?;
+        Ok(Response::new(VolumeMarkReadonlyResponse {}))
+    }
+
     async fn vacuum_volume_check(
         &self,
         request: Request<VacuumVolumeCheckRequest>,
     ) -> StdResult<Response<VacuumVolumeCheckResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} check", request.volume_id);
-        let garbage_ratio = self.store.check_compact_volume(request.volume_id).await?;
+        let garbage_ratio = self.store.check_compact_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCheckResponse { garbage_ratio }))
     }
 
@@ -358,8 +395,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
         let request = request.into_inner();
         debug!("vacuum volume {} compact", request.volume_id);
         self.store
-            .compact_volume(request.volume_id, request.preallocate)
-            .await?;
+            .compact_volume(request.volume_id, request.preallocate)?;
         Ok(Response::new(VacuumVolumeCompactResponse {}))
     }
 
@@ -369,11 +405,8 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCommitResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} commit compaction", request.volume_id);
-        self.store.commit_compact_volume(request.volume_id).await?;
-        // TODO: check whether the volume is read only
-        Ok(Response::new(VacuumVolumeCommitResponse {
-            is_read_only: false,
-        }))
+        self.store.commit_compact_volume(request.volume_id)?;
+        Ok(Response::new(VacuumVolumeCommitResponse {}))
     }
 
     async fn vacuum_volume_cleanup(
@@ -382,7 +415,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<VacuumVolumeCleanupResponse>, Status> {
         let request = request.into_inner();
         debug!("vacuum volume {} cleanup", request.volume_id);
-        self.store.commit_cleanup_volume(request.volume_id).await?;
+        self.store.commit_cleanup_volume(request.volume_id)?;
         Ok(Response::new(VacuumVolumeCleanupResponse {}))
     }
 
@@ -391,21 +424,25 @@ impl HelyimVolumeServer for StorageGrpcServer {
         request: Request<VolumeEcShardsGenerateRequest>,
     ) -> StdResult<Response<VolumeEcShardsGenerateResponse>, Status> {
         let request = request.into_inner();
-        match self.store.find_volume(request.volume_id).await? {
+        match self.store.find_volume(request.volume_id) {
             Some(volume) => {
                 let base_filename = volume.filename();
-                let collection = volume.collection.clone();
-                if collection != request.collection {
+                if volume.collection != request.collection {
                     return Err(Status::invalid_argument(format!(
-                        "invalid collection, expect: {collection}"
+                        "invalid collection, expect: {}",
+                        volume.collection
                     )));
                 }
-                write_ec_files(&base_filename)?;
+                // write .ecx file
                 write_sorted_file_from_index(&base_filename, ".ecx")?;
+                // write .ec00 - .ec13 files
+                write_ec_files(&base_filename)?;
+
                 let volume_info = VolumeInfo {
                     version: volume.version() as u32,
                     ..Default::default()
                 };
+                // write .vif files
                 save_volume_info(&format!("{}.vif", base_filename), volume_info)?;
                 Ok(Response::new(VolumeEcShardsGenerateResponse::default()))
             }
@@ -425,9 +462,9 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
         let mut rebuilt_shard_ids = Vec::new();
         for location in self.store.locations().iter() {
-            let ecx_filename = format!("{}{}.ecx", location.directory, base_filename);
+            let ecx_filename = format!("{}/{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
-                let base_filename = format!("{}{}", location.directory, base_filename);
+                let base_filename = format!("{}/{}", location.directory, base_filename);
                 rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
                 rebuild_ecx_file(&base_filename)?;
                 break;
@@ -544,11 +581,10 @@ impl HelyimVolumeServer for StorageGrpcServer {
     ) -> StdResult<Response<Self::VolumeEcShardReadStream>, Status> {
         let request = request.into_inner();
 
-        if let Some(volume) = self.store.find_ec_volume(request.volume_id).await {
-            if let Some(shard) = volume.read().await.find_shard(request.shard_id as ShardId) {
+        if let Some(volume) = self.store.find_ec_volume(request.volume_id) {
+            if let Some(shard) = volume.find_ec_shard(request.shard_id as ShardId).await {
                 if request.file_key != 0 {
-                    let needle_value =
-                        volume.read().await.find_needle_from_ecx(request.file_key)?;
+                    let needle_value = volume.find_needle_from_ecx(request.file_key)?;
                     if needle_value.size.is_deleted() {
                         let response = VolumeEcShardReadResponse {
                             is_deleted: true,
@@ -619,38 +655,34 @@ impl HelyimVolumeServer for StorageGrpcServer {
         for location in self.store.locations().iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
                 let (needle_value, intervals) = volume
-                    .read()
-                    .await
-                    .locate_ec_shard_needle(request.file_key, request.version as Version)?;
+                    .locate_ec_shard_needle(request.file_key, request.version as Version)
+                    .await?;
                 if needle_value.size.is_deleted() {
                     return Ok(Response::new(VolumeEcBlobDeleteResponse::default()));
                 }
 
-                volume
-                    .write()
-                    .await
-                    .delete_needle_from_ecx(request.file_key)?;
+                volume.delete_needle_from_ecx(request.file_key)?;
                 break;
             }
         }
         Ok(Response::new(VolumeEcBlobDeleteResponse::default()))
     }
 
-    /// generate the .idx, .dat, files from .ecx, .ecj and .ec01 - .ec14 files
+    /// generate the .idx, .dat, files from .ecx, .ecj and .ec00 - .ec13 files
     async fn volume_ec_shards_to_volume(
         &self,
         request: Request<VolumeEcShardsToVolumeRequest>,
     ) -> StdResult<Response<VolumeEcShardsToVolumeResponse>, Status> {
         let request = request.into_inner();
 
-        match self.store.find_ec_volume(request.volume_id).await {
+        match self.store.find_ec_volume(request.volume_id) {
             Some(volume) => {
-                if volume.read().await.collection() == request.collection {
+                if volume.collection() != request.collection {
                     return Err(Status::invalid_argument("unexpected collection"));
                 }
-                let base_filename = volume.read().await.filename();
+                let base_filename = volume.filename();
                 let data_filesize = find_data_filesize(&base_filename)?;
-                write_data_file(&base_filename, data_filesize)?;
+                write_data_file(&base_filename, data_filesize as i64)?;
                 write_index_file_from_ec_index(&base_filename)?;
 
                 Ok(Response::new(VolumeEcShardsToVolumeResponse::default()))

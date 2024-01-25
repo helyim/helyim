@@ -44,6 +44,16 @@ pub fn parse_host_port(addr: &str) -> Result<(String, u16), ParseIntError> {
     }
 }
 
+pub fn parse_collection_volume_id(name: &str) -> Result<(VolumeId, &str), VolumeError> {
+    match name.find('_') {
+        Some(index) => {
+            let (collection, vid) = (&name[0..index], &name[index + 1..]);
+            Ok((vid.parse()?, collection))
+        }
+        None => Ok((name.parse()?, "")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::util::parser::{parse_filename, parse_url_path, parse_vid_fid};

@@ -24,7 +24,9 @@ mod needle_map;
 pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
 
 mod needle_value_map;
-pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap};
+pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
+
+use crate::storage::ttl::TtlError;
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
@@ -96,11 +98,11 @@ impl NeedleValue {
             size: Size(-1),
         }
     }
-    pub fn as_bytes(&self, needle_id: NeedleId) -> [u8; NEEDLE_INDEX_SIZE as usize] {
-        let mut buf = [0u8; NEEDLE_INDEX_SIZE as usize];
-        (&mut buf[..]).put_u64(needle_id);
-        (&mut buf[..]).put_u32(self.offset.0);
-        (&mut buf[..]).put_i32(self.size.0);
+    pub fn as_bytes(&self, needle_id: NeedleId) -> Vec<u8> {
+        let mut buf = vec![];
+        buf.put_u64(needle_id);
+        buf.put_u32(self.offset.0);
+        buf.put_i32(self.size.0);
         buf
     }
 }
@@ -207,7 +209,7 @@ impl Needle {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
                 data_file.read_exact_at(&mut buf, offset)?;
-                self.read_needle_data(Bytes::from(buf));
+                self.read_needle_data(Bytes::from(buf))?;
                 self.checksum = crc::checksum(&self.data);
             }
             n => return Err(NeedleError::UnsupportedVersion(n)),
@@ -215,7 +217,7 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_needle_data(&mut self, bytes: Bytes) {
+    pub fn read_needle_data(&mut self, bytes: Bytes) -> Result<(), NeedleError> {
         let mut idx = 0;
         let len = bytes.len();
 
@@ -249,7 +251,7 @@ impl Needle {
         }
 
         if idx < len && self.has_ttl() {
-            self.ttl = Ttl::from(&bytes[idx..idx + TTL_BYTES_LENGTH]);
+            self.ttl = Ttl::from_bytes(&bytes[idx..idx + TTL_BYTES_LENGTH])?;
             idx += TTL_BYTES_LENGTH;
         }
 
@@ -258,6 +260,8 @@ impl Needle {
             idx += 2;
             self.pairs = bytes.slice(idx..idx + self.pairs_size as usize);
         }
+
+        Ok(())
     }
 
     pub fn append<W: FileExt>(
@@ -323,14 +327,13 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_data(
+    pub fn read_bytes(
         &mut self,
-        file: &File,
+        bytes: Bytes,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> Result<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
         self.parse_needle_header(&bytes);
 
         if self.size != size && offset.actual_offset() < MAX_POSSIBLE_VOLUME_SIZE {
@@ -339,7 +342,7 @@ impl Needle {
 
         if version == VERSION2 {
             let end = NEEDLE_HEADER_SIZE + self.size.0 as u32;
-            self.read_needle_data(bytes.slice(NEEDLE_HEADER_SIZE as usize..end as usize));
+            self.read_needle_data(bytes.slice(NEEDLE_HEADER_SIZE as usize..end as usize))?;
         }
 
         let checksum_start = NEEDLE_HEADER_SIZE + size.0 as u32;
@@ -352,6 +355,17 @@ impl Needle {
         }
 
         Ok(())
+    }
+
+    pub fn read_data(
+        &mut self,
+        file: &File,
+        offset: Offset,
+        size: Size,
+        version: Version,
+    ) -> Result<(), NeedleError> {
+        let bytes = read_needle_blob(file, offset, size)?;
+        self.read_bytes(bytes, offset, size, version)
     }
 
     pub fn has_ttl(&self) -> bool {
@@ -428,8 +442,8 @@ impl Needle {
         self.size.actual_size()
     }
 
-    pub fn data_size(&self) -> u32 {
-        self.data.len() as u32
+    pub fn data_size(&self) -> usize {
+        self.data.len()
     }
 
     pub fn body_len(&self) -> u32 {
@@ -446,6 +460,9 @@ pub enum NeedleError {
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Parse integer error: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
 
     #[error("Volume {0}: needle {1} has deleted.")]
     Deleted(VolumeId, u64),

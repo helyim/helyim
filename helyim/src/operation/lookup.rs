@@ -1,13 +1,18 @@
-use std::time::Duration;
+use std::{num::ParseIntError, time::Duration};
 
 use faststr::FastStr;
 use helyim_proto::{
-    lookup_volume_response::VolumeLocation, LookupVolumeRequest, LookupVolumeResponse,
+    lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
 use moka::sync::{Cache, CacheBuilder};
 use serde::{Deserialize, Serialize};
+use tonic::Status;
 
-use crate::{errors::Result, storage::VolumeId, util::grpc::helyim_client};
+use crate::{
+    errors::Result,
+    storage::VolumeId,
+    util::{grpc::helyim_client, parser::parse_vid_fid},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +37,7 @@ pub struct Lookup {
 }
 
 pub struct Looker {
-    volumes: Cache<VolumeId, VolumeLocation>,
+    volumes: Cache<VolumeId, VolumeIdLocation>,
 }
 
 impl Looker {
@@ -46,7 +51,7 @@ impl Looker {
 
     async fn do_lookup(&self, vids: &[VolumeId], master: &str) -> Result<LookupVolumeResponse> {
         let request = LookupVolumeRequest {
-            volumes: vids.iter().map(|vid| vid.to_string()).collect(),
+            volume_or_file_ids: vids.iter().map(|vid| vid.to_string()).collect(),
             collection: String::default(),
         };
 
@@ -55,7 +60,7 @@ impl Looker {
         Ok(response.into_inner())
     }
 
-    pub async fn lookup(&self, vids: Vec<VolumeId>, master: &str) -> Result<Vec<VolumeLocation>> {
+    pub async fn lookup(&self, vids: Vec<VolumeId>, master: &str) -> Result<Vec<VolumeIdLocation>> {
         let mut volume_locations = Vec::with_capacity(vids.len());
         let mut volume_ids = vec![];
         for vid in vids {
@@ -67,10 +72,14 @@ impl Looker {
 
         match self.do_lookup(&volume_ids, master).await {
             Ok(lookup) => {
-                for location in lookup.volume_locations {
+                for location in lookup.volume_id_locations {
                     volume_locations.push(location.clone());
                     if !location.error.is_empty() {
-                        self.volumes.insert(location.volume_id, location);
+                        let (_, (vid, _fid)) = parse_vid_fid(&location.volume_or_file_id)?;
+                        let vid = vid.parse().map_err(|err: ParseIntError| {
+                            Status::invalid_argument(format!("parse volume id error: {err}"))
+                        })?;
+                        self.volumes.insert(vid, location);
                     }
                 }
                 Ok(volume_locations)

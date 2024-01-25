@@ -7,7 +7,7 @@ use std::{
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{
+use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
     VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
@@ -144,7 +144,7 @@ impl DataNode {
     ) -> StdResult<AllocateVolumeResponse, VolumeError> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
-        let response = client.allocate_volume(request.clone()).await?;
+        let response = client.allocate_volume(request).await?;
         Ok(response.into_inner())
     }
 
