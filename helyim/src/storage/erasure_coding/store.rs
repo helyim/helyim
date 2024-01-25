@@ -143,9 +143,11 @@ impl Store {
                 }
 
                 info!(
-                    "read ec volume {vid} offset {} size {}",
+                    "locate needle within ec shard success, ec volume: {vid}, offset: {}, size: \
+                     {}, interval len: {}",
                     index.offset.actual_offset(),
-                    index.size.actual_size()
+                    index.size.actual_size(),
+                    intervals.len()
                 );
 
                 let (bytes, is_deleted) = self
@@ -157,6 +159,12 @@ impl Store {
 
                 let bytes = Bytes::from(bytes);
                 let len = bytes.len();
+                info!(
+                    "read ec shard intervals success, volume id: {vid}, needle id: {}, read {len} \
+                     bytes ",
+                    needle.id
+                );
+
                 needle.read_bytes(bytes, index.offset, index.size, volume.version)?;
                 return Ok(len);
             }
@@ -339,6 +347,10 @@ impl Store {
 
         match ec_volume.find_ec_shard(shard_id).await {
             Some(shard) => {
+                info!(
+                    "read local ec shard success, shard id: {shard_id}, actual offset: \
+                     {actual_offset}"
+                );
                 shard.ecd_file.read_exact_at(&mut data, actual_offset)?;
                 Ok((data, false))
             }
@@ -356,6 +368,11 @@ impl Store {
                         .await
                     {
                         Ok((_, is_deleted)) => {
+                            info!(
+                                "read remote ec shard interval success, volume: {}, needle id: \
+                                 {needle_id}, shard id: {shard_id}, actual offset: {actual_offset}",
+                                ec_volume.volume_id
+                            );
                             return Ok((data, is_deleted));
                         }
                         Err(err) => {
@@ -377,6 +394,11 @@ impl Store {
                         actual_offset,
                     )
                     .await?;
+                info!(
+                    "recover one remote ec shard interval success, volume: {}, needle id: \
+                     {needle_id}, shard id: {shard_id}, actual offset: {actual_offset}",
+                    ec_volume.volume_id
+                );
                 Ok((data, is_deleted))
             }
         }

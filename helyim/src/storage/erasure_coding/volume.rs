@@ -25,7 +25,7 @@ use crate::{
             ERASURE_CODING_SMALL_BLOCK_SIZE,
         },
         needle::NEEDLE_ID_SIZE,
-        version::{Version, VERSION3},
+        version::{Version, VERSION2},
         NeedleError, NeedleId, NeedleValue, VolumeId,
     },
     util::file::file_exists,
@@ -67,7 +67,8 @@ impl EcVolume {
             .mode(0o644)
             .open(format!("{}.ecj", base_filename))?;
 
-        let mut version = VERSION3;
+        // TODO: handle version
+        let mut version = VERSION2;
         let filename = format!("{}.vif", base_filename);
         if let Some(volume_info) = maybe_load_volume_info(&filename)? {
             version = volume_info.version as Version;

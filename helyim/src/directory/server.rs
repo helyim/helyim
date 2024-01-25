@@ -1,7 +1,4 @@
-use std::{
-    net::SocketAddr, num::ParseIntError, pin::Pin, result::Result as StdResult, sync::Arc,
-    time::Duration,
-};
+use std::{net::SocketAddr, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
@@ -9,9 +6,9 @@ use futures::{Stream, StreamExt};
 use helyim_proto::{
     helyim_server::{Helyim, HelyimServer},
     lookup_ec_volume_response::EcShardIdLocation,
-    lookup_volume_response::VolumeLocation,
-    HeartbeatRequest, HeartbeatResponse, Location, LookupEcVolumeRequest, LookupEcVolumeResponse,
-    LookupVolumeRequest, LookupVolumeResponse,
+    lookup_volume_response::VolumeIdLocation,
+    HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest, Location, LookupEcVolumeRequest,
+    LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse, VolumeLocation,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
@@ -29,7 +26,8 @@ use crate::{
     storage::VolumeInfo,
     topology::{topology_vacuum_loop, volume_grow::VolumeGrowth, Topology, TopologyRef},
     util::{
-        args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler, sys::exit,
+        args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler,
+        parser::parse_vid_fid, sys::exit,
     },
 };
 
@@ -228,27 +226,35 @@ impl Helyim for DirectoryGrpcServer {
         Ok(Response::new(Box::pin(out_stream) as Self::HeartbeatStream))
     }
 
+    type KeepConnectedStream =
+        Pin<Box<dyn Stream<Item = StdResult<VolumeLocation, Status>> + Send>>;
+    async fn keep_connected(
+        &self,
+        _request: Request<Streaming<KeepConnectedRequest>>,
+    ) -> StdResult<Response<Self::KeepConnectedStream>, Status> {
+        todo!()
+    }
+
     async fn lookup_volume(
         &self,
         request: Request<LookupVolumeRequest>,
     ) -> StdResult<Response<LookupVolumeResponse>, Status> {
         let request = request.into_inner();
-        if request.volumes.is_empty() {
+        if request.volume_or_file_ids.is_empty() {
             return Err(Status::invalid_argument("volumes can't be empty"));
         }
 
-        let mut volume_locations = vec![];
-        for mut volume_id in request.volumes {
-            if let Some(idx) = volume_id.rfind(',') {
-                let _fid = volume_id.split_off(idx);
-            }
-            let volume_id = volume_id.parse().map_err(|err: ParseIntError| {
-                Status::invalid_argument(format!("parse volume id error: {err}"))
-            })?;
+        let mut volume_id_locations = vec![];
+        for volume_id in request.volume_or_file_ids {
+            let (_, (vid, _fid)) = parse_vid_fid(&volume_id)
+                .map_err(|err| Status::invalid_argument(format!("parse volume id error: {err}")))?;
+            let vid = vid
+                .parse()
+                .map_err(|err| Status::invalid_argument(format!("parse volume id error: {err}")))?;
 
             let mut locations = vec![];
             let mut error = String::default();
-            match self.topology.lookup(&request.collection, volume_id).await {
+            match self.topology.lookup(&request.collection, vid).await {
                 Some(nodes) => {
                     for dn in nodes.iter() {
                         let public_url = dn.public_url.to_string();
@@ -259,18 +265,20 @@ impl Helyim for DirectoryGrpcServer {
                     }
                 }
                 None => {
-                    error = format!("volume {volume_id} is not found");
+                    error = format!("volume {vid} is not found");
                 }
             }
 
-            volume_locations.push(VolumeLocation {
-                volume_id,
+            volume_id_locations.push(VolumeIdLocation {
+                volume_or_file_id: volume_id,
                 locations,
                 error,
             });
         }
 
-        Ok(Response::new(LookupVolumeResponse { volume_locations }))
+        Ok(Response::new(LookupVolumeResponse {
+            volume_id_locations,
+        }))
     }
 
     async fn lookup_ec_volume(
@@ -336,7 +344,7 @@ async fn handle_heartbeat(
     rack.set_data_center(Arc::downgrade(&data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
-    let node = rack
+    let data_node = rack
         .get_or_create_data_node(
             FastStr::new(node_addr),
             FastStr::new(ip),
@@ -345,7 +353,17 @@ async fn handle_heartbeat(
             heartbeat.max_volume_count as i64,
         )
         .await?;
-    node.set_rack(Arc::downgrade(&rack)).await;
+    data_node.set_rack(Arc::downgrade(&rack)).await;
+
+    let mut volume_location = VolumeLocation {
+        url: data_node.url(),
+        public_url: data_node.public_url.to_string(),
+        new_vids: vec![],
+        deleted_vids: vec![],
+        new_ec_vids: vec![],
+        deleted_ec_vids: vec![],
+        leader: None,
+    };
 
     let mut infos = vec![];
     for info_msg in heartbeat.volumes {
@@ -355,14 +373,62 @@ async fn handle_heartbeat(
         };
     }
 
-    let deleted_volumes = node.update_volumes(infos.clone()).await;
+    let deleted_volumes = data_node.update_volumes(infos.clone()).await;
 
     for v in infos {
-        topology.register_volume_layout(v, node.clone()).await;
+        topology.register_volume_layout(v, data_node.clone()).await;
     }
 
     for v in deleted_volumes.iter() {
         topology.unregister_volume_layout(v.clone()).await;
+    }
+
+    // erasure coding
+    if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
+        // update master interval volume layouts
+        topology
+            .increment_sync_data_node_ec_shards(
+                &heartbeat.new_ec_shards,
+                &heartbeat.deleted_ec_shards,
+                &data_node,
+            )
+            .await;
+
+        for shard in heartbeat.new_ec_shards.iter() {
+            volume_location.new_ec_vids.push(shard.id);
+        }
+
+        for shard in heartbeat.deleted_ec_shards.iter() {
+            if data_node.has_ec_shards(shard.id) {
+                continue;
+            }
+            volume_location.deleted_ec_vids.push(shard.id);
+        }
+    }
+
+    if !heartbeat.ec_shards.is_empty() || heartbeat.has_no_ec_shards {
+        let (new_shards, deleted_shards) = topology
+            .sync_data_node_ec_shards(&heartbeat.ec_shards, &data_node)
+            .await;
+
+        // broadcast the ec vid changes to master clients
+        for shard in new_shards {
+            volume_location.new_ec_vids.push(shard.volume_id);
+        }
+        for shard in deleted_shards {
+            if data_node.has_ec_shards(shard.volume_id) {
+                continue;
+            }
+            volume_location.deleted_ec_vids.push(shard.volume_id);
+        }
+    }
+
+    if !volume_location.new_vids.is_empty()
+        || !volume_location.deleted_vids.is_empty()
+        || !volume_location.new_ec_vids.is_empty()
+        || !volume_location.deleted_ec_vids.is_empty()
+    {
+        // TODO: broadcast to master clients
     }
 
     let leader = topology.current_leader_address().await.unwrap_or_default();

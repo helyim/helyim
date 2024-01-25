@@ -62,9 +62,9 @@ impl Topology {
     }
 
     pub async fn sync_data_node_ec_shards(
-        &mut self,
+        &self,
         shard_infos: &[VolumeEcShardInformationMessage],
-        data_node: DataNodeRef,
+        data_node: &DataNodeRef,
     ) -> (Vec<EcVolumeInfo>, Vec<EcVolumeInfo>) {
         let mut shards = Vec::new();
         for shard in shard_infos {
@@ -77,19 +77,19 @@ impl Topology {
         }
         let (new_shards, deleted_shards) = data_node.update_ec_shards(&mut shards).await;
         for shard in new_shards.iter() {
-            self.register_ec_shards(shard, &data_node).await;
+            self.register_ec_shards(shard, data_node).await;
         }
         for shard in deleted_shards.iter() {
-            self.unregister_ec_shards(shard, &data_node).await;
+            self.unregister_ec_shards(shard, data_node).await;
         }
         (new_shards, deleted_shards)
     }
 
     pub async fn increment_sync_data_node_ec_shards(
-        &mut self,
-        new_ec_shards: Vec<VolumeEcShardInformationMessage>,
-        deleted_ec_shards: Vec<VolumeEcShardInformationMessage>,
-        data_node: DataNodeRef,
+        &self,
+        new_ec_shards: &[VolumeEcShardInformationMessage],
+        deleted_ec_shards: &[VolumeEcShardInformationMessage],
+        data_node: &DataNodeRef,
     ) {
         let mut new_shards = Vec::new();
         let mut deleted_shards = Vec::new();
@@ -115,18 +115,14 @@ impl Topology {
             .await;
 
         for shard in new_shards.iter() {
-            self.register_ec_shards(shard, &data_node).await;
+            self.register_ec_shards(shard, data_node).await;
         }
         for shard in deleted_shards.iter() {
-            self.unregister_ec_shards(shard, &data_node).await;
+            self.unregister_ec_shards(shard, data_node).await;
         }
     }
 
-    pub async fn register_ec_shards(
-        &mut self,
-        ec_shard_infos: &EcVolumeInfo,
-        data_node: &DataNodeRef,
-    ) {
+    pub async fn register_ec_shards(&self, ec_shard_infos: &EcVolumeInfo, data_node: &DataNodeRef) {
         match self.ec_shards.get_mut(&ec_shard_infos.volume_id) {
             Some(mut locations) => {
                 for shard_id in ec_shard_infos.shard_bits.shard_ids() {
@@ -144,7 +140,7 @@ impl Topology {
     }
 
     pub async fn unregister_ec_shards(
-        &mut self,
+        &self,
         ec_shard_infos: &EcVolumeInfo,
         data_node: &DataNodeRef,
     ) {
