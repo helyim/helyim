@@ -3,6 +3,15 @@
 -----
 [seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
 
+### Features
+
+#### Additional Features
+
+- [x] Can choose no replication or different replication levels, rack and data center aware.
+- [x] Automatic compaction to reclaim disk space after deletion or update.
+- [x] Automatic master servers fail over - no single point of failure (SPOF).
+- [x] **Erasure Coding** for warm storage Rack-Aware 10.4 erasure coding reduces storage cost.
+
 ### Usage
 
 By default, the master node runs on port 9333, and the volume nodes run on port 8080. Let's start one master node, and one volume node on port 8080. Ideally, they should be started from different machines. We'll use localhost as an example.
