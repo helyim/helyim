@@ -10,7 +10,7 @@ use std::{
 use bytes::{Buf, BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{volume::VolumeInfo, VolumeEcShardInformationMessage};
+use helyim_proto::{directory::VolumeEcShardInformationMessage, volume::VolumeInfo};
 use tokio::sync::RwLock;
 
 use crate::{

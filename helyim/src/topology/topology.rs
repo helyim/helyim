@@ -16,10 +16,13 @@ use axum::{
 };
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::{VolumeInformationMessage, VolumeShortInformationMessage};
+use helyim_proto::directory::{
+    VolumeInformationMessage, VolumeLocation, VolumeShortInformationMessage,
+};
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tonic::Status;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -89,11 +92,11 @@ impl Topology {
         }
     }
 
-    pub async fn get_or_create_data_center(&self, name: FastStr) -> DataCenterRef {
-        match self.data_centers.get(&name) {
+    pub async fn get_or_create_data_center(&self, name: &str) -> DataCenterRef {
+        match self.data_centers.get(name) {
             Some(data_node) => data_node.value().clone(),
             None => {
-                let data_center = Arc::new(DataCenter::new(name.clone()));
+                let data_center = Arc::new(DataCenter::new(FastStr::new(name)));
                 self.link_data_center(data_center.clone());
                 data_center
             }
@@ -151,6 +154,21 @@ impl Topology {
 
         let file_id = FileId::new(volume_id, file_id, rand::random::<u32>());
         Ok((file_id, count, node))
+    }
+
+    pub async fn register_data_node(
+        &self,
+        dc_name: &str,
+        rack_name: &str,
+        data_node: &DataNodeRef,
+    ) {
+        if data_node.rack.read().await.upgrade().is_some() {
+            return;
+        }
+        let dc = self.get_or_create_data_center(dc_name).await;
+        let rack = dc.get_or_create_rack(rack_name).await;
+        rack.link_data_node(data_node.clone()).await;
+        info!("data node: {} relink to topology", data_node.id());
     }
 
     pub async fn sync_data_node_registration(
@@ -336,7 +354,7 @@ impl Topology {
         *self.raft.write().await = Some(raft);
     }
 
-    pub async fn current_leader(&self) -> Option<NodeId> {
+    pub async fn current_leader_id(&self) -> Option<NodeId> {
         match self.raft.read().await.as_ref() {
             Some(raft) => raft.current_leader().await,
             None => None,
@@ -347,6 +365,16 @@ impl Topology {
         match self.raft.read().await.as_ref() {
             Some(raft) => raft.current_leader_address().await,
             None => None,
+        }
+    }
+
+    pub async fn current_leader(&self) -> Result<FastStr, TopologyError> {
+        match self.raft.read().await.as_ref() {
+            Some(raft) => match raft.current_leader_address().await {
+                Some(leader) => Ok(leader),
+                None => Err(TopologyError::NoLeader),
+            },
+            None => Err(TopologyError::NoLeader),
         }
     }
 
@@ -363,9 +391,46 @@ impl Topology {
             None => BTreeMap::new(),
         }
     }
+
+    pub async fn inform_new_leader(&self, tx: &UnboundedSender<Result<VolumeLocation, Status>>) {
+        match self.current_leader().await {
+            Ok(leader) => {
+                let mut location = VolumeLocation::new();
+                location.leader = Some(leader.to_string());
+
+                let _ = tx.send(Ok(location));
+            }
+            Err(_err) => {
+                error!("can not get leader of the cluster.");
+            }
+        }
+    }
 }
 
 impl Topology {
+    pub fn to_volume_locations(&self) -> Vec<VolumeLocation> {
+        let mut locations = Vec::new();
+
+        for data_center in self.data_centers.iter() {
+            for rack in data_center.racks.iter() {
+                for data_node in rack.data_nodes.iter() {
+                    let mut location = VolumeLocation::new();
+                    location.url = data_node.url();
+                    location.public_url = data_node.public_url.to_string();
+
+                    for volume in data_node.volumes.iter() {
+                        location.new_vids.push(volume.id);
+                    }
+                    for volume in data_node.ec_shards.iter() {
+                        location.new_vids.push(volume.volume_id);
+                    }
+                    locations.push(location);
+                }
+            }
+        }
+        locations
+    }
+
     fn link_data_center(&self, data_center: Arc<DataCenter>) {
         if !self.data_centers.contains_key(data_center.id()) {
             self.adjust_max_volume_count(data_center.max_volume_count());

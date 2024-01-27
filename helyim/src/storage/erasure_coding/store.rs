@@ -11,8 +11,8 @@ use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
 use helyim_proto::{
-    volume::VolumeEcShardReadRequest, HeartbeatRequest, LookupEcVolumeRequest,
-    VolumeEcShardInformationMessage,
+    directory::{HeartbeatRequest, LookupEcVolumeRequest, VolumeEcShardInformationMessage},
+    volume::VolumeEcShardReadRequest,
 };
 use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};

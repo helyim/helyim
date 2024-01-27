@@ -2,7 +2,7 @@
 
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
-use helyim_proto::VolumeEcShardInformationMessage;
+use helyim_proto::directory::VolumeEcShardInformationMessage;
 
 use crate::{
     storage::{

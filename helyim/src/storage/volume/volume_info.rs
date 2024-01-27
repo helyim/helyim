@@ -21,7 +21,7 @@ pub struct VolumeInfo {
 }
 
 impl VolumeInfo {
-    pub fn new(m: &helyim_proto::VolumeInformationMessage) -> Result<VolumeInfo> {
+    pub fn new(m: &helyim_proto::directory::VolumeInformationMessage) -> Result<VolumeInfo> {
         let rp = ReplicaPlacement::from_u8(m.replica_placement as u8)?;
         Ok(VolumeInfo {
             id: m.id as VolumeId,
@@ -37,7 +37,9 @@ impl VolumeInfo {
         })
     }
 
-    pub fn new_from_short(m: &helyim_proto::VolumeShortInformationMessage) -> Result<VolumeInfo> {
+    pub fn new_from_short(
+        m: &helyim_proto::directory::VolumeShortInformationMessage,
+    ) -> Result<VolumeInfo> {
         let rp = ReplicaPlacement::from_u8(m.replica_placement as u8)?;
         Ok(VolumeInfo {
             id: m.id as VolumeId,

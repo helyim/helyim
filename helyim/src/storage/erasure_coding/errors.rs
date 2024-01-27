@@ -38,7 +38,10 @@ pub enum EcVolumeError {
     FutureSendError(#[from] futures::channel::mpsc::SendError),
     #[error("Future channel try send error: {0}")]
     FutureTrySendError(
-        #[from] futures::channel::mpsc::TrySendError<helyim_proto::VolumeEcShardInformationMessage>,
+        #[from]
+        futures::channel::mpsc::TrySendError<
+            helyim_proto::directory::VolumeEcShardInformationMessage,
+        >,
     ),
 
     #[error("Tonic transport error: {0}")]

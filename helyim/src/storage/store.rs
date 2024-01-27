@@ -9,7 +9,7 @@ use std::{
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use futures::channel::mpsc::UnboundedSender;
-use helyim_proto::{
+use helyim_proto::directory::{
     HeartbeatRequest, VolumeEcShardInformationMessage, VolumeInformationMessage,
     VolumeShortInformationMessage,
 };

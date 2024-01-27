@@ -43,11 +43,11 @@ impl DataCenter {
         *self.topology.write().await = topology;
     }
 
-    pub async fn get_or_create_rack(&self, id: FastStr) -> RackRef {
-        match self.racks.get(&id) {
+    pub async fn get_or_create_rack(&self, id: &str) -> RackRef {
+        match self.racks.get(id) {
             Some(rack) => rack.value().clone(),
             None => {
-                let rack = Arc::new(Rack::new(id.clone()));
+                let rack = Arc::new(Rack::new(FastStr::new(id)));
                 self.link_rack(rack.clone()).await;
                 rack
             }
