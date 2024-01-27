@@ -229,7 +229,7 @@ impl VolumeLayout {
         if let Some(mut location) = self.locations.get_mut(&v.id) {
             let mut removed = true;
             location.value_mut().retain(|node| {
-                if node.ip != data_node.ip && node.port != data_node.port {
+                if node.ip != data_node.ip || node.port != data_node.port {
                     true
                 } else {
                     removed = true;
