@@ -71,7 +71,7 @@ impl DataNode {
         format!("{}:{}", self.ip, self.port)
     }
 
-    pub async fn update_volumes(&self, volume_infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
+    pub async fn update_volumes(&self, volume_infos: &[VolumeInfo]) -> Vec<VolumeInfo> {
         let mut volumes = HashSet::new();
         for info in volume_infos.iter() {
             volumes.insert(info.id);
@@ -105,16 +105,16 @@ impl DataNode {
     }
 
     #[allow(clippy::map_entry)]
-    pub async fn add_or_update_volume(&self, v: VolumeInfo) {
+    pub async fn add_or_update_volume(&self, v: &VolumeInfo) {
         if self.volumes.contains_key(&v.id) {
-            self.volumes.insert(v.id, v);
+            self.volumes.insert(v.id, v.clone());
         } else {
             self.adjust_volume_count(1).await;
             if !v.read_only {
                 self.adjust_active_volume_count(1).await;
             }
             self.adjust_max_volume_id(v.id).await;
-            self.volumes.insert(v.id, v);
+            self.volumes.insert(v.id, v.clone());
         }
     }
 

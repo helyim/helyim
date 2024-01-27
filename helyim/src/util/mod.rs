@@ -18,7 +18,7 @@ pub mod sys;
 
 pub mod time;
 
-pub fn get_or_default(s: String) -> FastStr {
+pub fn get_or_default(s: &str) -> FastStr {
     if s.is_empty() {
         FastStr::from_static_str(crate::DEFAULT)
     } else {

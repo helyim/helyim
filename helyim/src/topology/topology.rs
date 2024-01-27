@@ -152,23 +152,23 @@ impl Topology {
         Ok((file_id, count, node))
     }
 
-    pub async fn register_volume_layout(&self, volume: VolumeInfo, data_node: DataNodeRef) {
+    pub async fn register_volume_layout(&self, volume: &VolumeInfo, data_node: DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
             volume.ttl,
         )
-        .register_volume(&volume, data_node)
+        .register_volume(volume, data_node)
         .await
     }
 
-    pub async fn unregister_volume_layout(&self, volume: VolumeInfo) {
+    pub async fn unregister_volume_layout(&self, volume: &VolumeInfo) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
             volume.ttl,
         )
-        .unregister_volume(&volume)
+        .unregister_volume(volume)
         .await;
     }
 
