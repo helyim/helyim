@@ -133,7 +133,7 @@ impl VolumeLayout {
             match volume {
                 Some(v) => {
                     if v.read_only {
-                        self.remove_from_writable(v.id).await;
+                        self.remove_from_writable(&v.id).await;
                         self.readonly_volumes.insert(v.id, true);
                         return;
                     } else {
@@ -141,7 +141,7 @@ impl VolumeLayout {
                     }
                 }
                 None => {
-                    self.remove_from_writable(v.id).await;
+                    self.remove_from_writable(&v.id).await;
                     self.readonly_volumes.remove(&v.id);
                     return;
                 }
@@ -159,7 +159,7 @@ impl VolumeLayout {
                     self.set_volume_writable(v.id).await;
                 }
             } else {
-                self.remove_from_writable(v.id).await;
+                self.remove_from_writable(&v.id).await;
             }
         }
     }
@@ -191,6 +191,18 @@ impl VolumeLayout {
         false
     }
 
+    pub async fn set_volume_unavailable(&self, vid: &VolumeId, data_node: &DataNodeRef) -> bool {
+        if let Some(mut locations) = self.locations.get_mut(vid) {
+            locations
+                .value_mut()
+                .retain(|node| node.ip != data_node.ip || node.port != data_node.port);
+            if locations.len() < self.rp.copy_count() {
+                return self.remove_from_writable(vid).await;
+            }
+        }
+        false
+    }
+
     pub async fn set_volume_writable(&self, vid: VolumeId) -> bool {
         if self.writable_volumes.read().await.contains(&vid) {
             return false;
@@ -199,24 +211,34 @@ impl VolumeLayout {
         true
     }
 
-    pub async fn remove_from_writable(&self, vid: VolumeId) {
+    pub async fn remove_from_writable(&self, vid: &VolumeId) -> bool {
         let mut idx = -1;
         for (i, id) in self.writable_volumes.read().await.iter().enumerate() {
-            if *id == vid {
+            if id == vid {
                 idx = i as i32;
             }
         }
-        if idx > 0 {
+        if idx >= 0 {
             self.writable_volumes.write().await.remove(idx as usize);
+            return true;
         }
+        false
     }
 
     pub async fn unregister_volume(&self, v: &VolumeInfo, data_node: &DataNodeRef) {
-        self.remove_from_writable(v.id).await;
         if let Some(mut location) = self.locations.get_mut(&v.id) {
-            location
-                .value_mut()
-                .retain(|node| node.ip != data_node.ip && node.port != data_node.port);
+            let mut removed = true;
+            location.value_mut().retain(|node| {
+                if node.ip != data_node.ip && node.port != data_node.port {
+                    true
+                } else {
+                    removed = true;
+                    false
+                }
+            });
+            if removed {
+                self.ensure_correct_writable(v).await;
+            }
         }
         self.locations.retain(|_, locations| !locations.is_empty());
     }

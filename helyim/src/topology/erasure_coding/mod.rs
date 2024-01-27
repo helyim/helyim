@@ -85,7 +85,7 @@ impl Topology {
         (new_shards, deleted_shards)
     }
 
-    pub async fn increment_sync_data_node_ec_shards(
+    pub async fn incremental_sync_data_node_ec_shards(
         &self,
         new_ec_shards: &[VolumeEcShardInformationMessage],
         deleted_ec_shards: &[VolumeEcShardInformationMessage],

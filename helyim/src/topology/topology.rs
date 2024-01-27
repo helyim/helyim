@@ -235,6 +235,31 @@ impl Topology {
         .await;
     }
 
+    pub async fn unregister_data_node(&self, data_node: &DataNodeRef) {
+        for volume in data_node.volumes.iter() {
+            self.get_volume_layout(
+                volume.collection.clone(),
+                volume.replica_placement,
+                volume.ttl,
+            )
+            .set_volume_unavailable(volume.key(), data_node)
+            .await;
+        }
+
+        data_node
+            .adjust_volume_count(-data_node.volume_count())
+            .await;
+        data_node
+            .adjust_active_volume_count(-data_node.active_volume_count())
+            .await;
+        data_node
+            .adjust_max_volume_count(-data_node.max_volume_count())
+            .await;
+        if let Some(rack) = data_node.rack.read().await.upgrade() {
+            rack.unlink_data_node(data_node.id()).await;
+        }
+    }
+
     pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
         let vid = self.max_volume_id();
         let next = vid + 1;

@@ -17,7 +17,6 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
     topology::{node::Node, rack::Rack},
     util::grpc::volume_server_client,
@@ -32,7 +31,7 @@ pub struct DataNode {
     node: Node,
     #[serde(skip)]
     pub rack: RwLock<Weak<Rack>>,
-    volumes: DashMap<VolumeId, VolumeInfo>,
+    pub volumes: DashMap<VolumeId, VolumeInfo>,
     pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
 }
@@ -50,11 +49,11 @@ impl DataNode {
         port: u16,
         public_url: FastStr,
         max_volume_count: i64,
-    ) -> Result<DataNode> {
+    ) -> DataNode {
         let node = Node::new(id);
         node.set_max_volume_count(max_volume_count);
 
-        Ok(DataNode {
+        DataNode {
             ip,
             port,
             public_url,
@@ -64,7 +63,7 @@ impl DataNode {
             volumes: DashMap::new(),
             ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
-        })
+        }
     }
 
     pub fn url(&self) -> String {

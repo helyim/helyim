@@ -10,11 +10,10 @@ use helyim_proto::{
     HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest, Location, LookupEcVolumeRequest,
     LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse, VolumeLocation,
 };
-use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     directory::api::{
@@ -24,7 +23,6 @@ use crate::{
     raft::{create_raft_router, RaftServer},
     rt_spawn,
     sequence::Sequencer,
-    storage::VolumeInfo,
     topology::{
         topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology, TopologyRef,
     },
@@ -201,6 +199,7 @@ impl Helyim for DirectoryGrpcServer {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
         tokio::spawn(async move {
+            let mut data_node_opt = None;
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(mut heartbeat) => {
@@ -209,18 +208,20 @@ impl Helyim for DirectoryGrpcServer {
                                 tx.send(Ok(heartbeat_response(volume_size_limit, &topology).await));
                             continue;
                         }
-                        debug!("receive {:?}", heartbeat);
-                        if let Err(err) = handle_heartbeat(
-                            &tx,
-                            &mut heartbeat,
-                            &topology,
-                            volume_size_limit,
-                            addr,
-                        )
-                        .await
-                        {
-                            error!("handle heartbeat error: {err}");
+                        topology.set_max_sequence(heartbeat.max_file_key);
+
+                        if data_node_opt.is_none() {
+                            let data_node = update_topology(&mut heartbeat, &topology, addr).await;
+                            data_node_opt = Some(data_node);
                         }
+
+                        update_volume_layout(
+                            &heartbeat,
+                            &topology,
+                            data_node_opt.as_ref().unwrap(),
+                        )
+                        .await;
+                        let _ = tx.send(Ok(heartbeat_response(volume_size_limit, &topology).await));
                     }
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
@@ -230,6 +231,7 @@ impl Helyim for DirectoryGrpcServer {
                     }
                 }
             }
+            remove_data_node(&topology, data_node_opt).await;
         });
 
         let out_stream = UnboundedReceiverStream::new(rx);
@@ -332,13 +334,11 @@ impl Helyim for DirectoryGrpcServer {
     }
 }
 
-async fn handle_heartbeat(
-    tx: &UnboundedSender<StdResult<HeartbeatResponse, Status>>,
+async fn update_topology(
     heartbeat: &mut HeartbeatRequest,
     topology: &TopologyRef,
-    volume_size_limit: u64,
     addr: SocketAddr,
-) -> Result<()> {
+) -> DataNodeRef {
     topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
@@ -363,47 +363,17 @@ async fn handle_heartbeat(
             FastStr::new(&heartbeat.public_url),
             heartbeat.max_volume_count as i64,
         )
-        .await?;
+        .await;
     data_node.set_rack(Arc::downgrade(&rack)).await;
-
-    let mut infos = vec![];
-    while let Some(info_msg) = heartbeat.volumes.pop() {
-        match VolumeInfo::new(&info_msg) {
-            Ok(info) => infos.push(info),
-            Err(err) => info!("fail to convert joined volume: {err}"),
-        };
-    }
-
-    let (new_volumes, deleted_volumes) = data_node.update_volumes(infos).await;
-
-    for v in new_volumes {
-        topology.register_volume_layout(&v, &data_node).await;
-    }
-
-    for v in deleted_volumes {
-        topology.unregister_volume_layout(&v, &data_node).await;
-    }
-
-    let _ = tx.send(Ok(heartbeat_response(volume_size_limit, topology).await));
-
-    handle_ec_heartbeat(heartbeat, topology, &data_node).await;
-    Ok(())
+    data_node
 }
 
-async fn handle_ec_heartbeat(
+async fn update_volume_layout(
     heartbeat: &HeartbeatRequest,
     topology: &TopologyRef,
     data_node: &DataNodeRef,
 ) {
-    let mut volume_location = VolumeLocation {
-        url: data_node.url(),
-        public_url: data_node.public_url.to_string(),
-        new_vids: vec![],
-        deleted_vids: vec![],
-        new_ec_vids: vec![],
-        deleted_ec_vids: vec![],
-        leader: None,
-    };
+    let mut volume_location = volume_location(data_node);
 
     if !heartbeat.new_volumes.is_empty() || !heartbeat.deleted_volumes.is_empty() {
         for volume in heartbeat.new_volumes.iter() {
@@ -437,7 +407,7 @@ async fn handle_ec_heartbeat(
     if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
         // update master interval volume layouts
         topology
-            .increment_sync_data_node_ec_shards(
+            .incremental_sync_data_node_ec_shards(
                 &heartbeat.new_ec_shards,
                 &heartbeat.deleted_ec_shards,
                 data_node,
@@ -482,11 +452,41 @@ async fn handle_ec_heartbeat(
     }
 }
 
+async fn remove_data_node(topology: &TopologyRef, data_node_opt: Option<DataNodeRef>) {
+    if let Some(data_node) = data_node_opt {
+        topology.unregister_data_node(&data_node).await;
+
+        let mut volume_location = volume_location(&data_node);
+        for volume in data_node.volumes.iter() {
+            volume_location.deleted_vids.push(volume.id);
+        }
+        for shard in data_node.ec_shards.iter() {
+            volume_location.deleted_vids.push(shard.volume_id);
+        }
+
+        if !volume_location.deleted_vids.is_empty() {
+            // TODO: send to client channels
+        }
+    }
+}
+
 async fn heartbeat_response(volume_size_limit: u64, topology: &TopologyRef) -> HeartbeatResponse {
     let leader = topology.current_leader_address().await.unwrap_or_default();
     HeartbeatResponse {
         volume_size_limit,
         leader: leader.to_string(),
         ..Default::default()
+    }
+}
+
+fn volume_location(data_node: &DataNodeRef) -> VolumeLocation {
+    VolumeLocation {
+        url: data_node.url(),
+        public_url: data_node.public_url.to_string(),
+        new_vids: vec![],
+        deleted_vids: vec![],
+        new_ec_vids: vec![],
+        deleted_ec_vids: vec![],
+        leader: None,
     }
 }
