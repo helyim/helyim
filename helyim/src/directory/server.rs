@@ -212,6 +212,11 @@ impl Helyim for DirectoryGrpcServer {
 
                         if data_node_opt.is_none() {
                             let data_node = update_topology(&mut heartbeat, &topology, addr).await;
+                            info!(
+                                "register connected volume server: {}:{}",
+                                data_node.ip, data_node.port
+                            );
+
                             data_node_opt = Some(data_node);
                         }
 
@@ -226,7 +231,7 @@ impl Helyim for DirectoryGrpcServer {
                     Err(err) => {
                         if let Err(e) = tx.send(Err(err)) {
                             error!("heartbeat response dropped: {}", e);
-                            return;
+                            break;
                         }
                     }
                 }
@@ -454,6 +459,11 @@ async fn update_volume_layout(
 
 async fn remove_data_node(topology: &TopologyRef, data_node_opt: Option<DataNodeRef>) {
     if let Some(data_node) = data_node_opt {
+        info!(
+            "unregister disconnected volume server: {}:{}",
+            data_node.ip, data_node.port
+        );
+
         topology.unregister_data_node(&data_node).await;
 
         let mut volume_location = volume_location(&data_node);
