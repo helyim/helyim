@@ -4,6 +4,7 @@
 #![allow(clippy::module_inception)]
 #![deny(unused_qualifications)]
 
+pub mod client;
 pub mod directory;
 
 pub mod errors;

@@ -20,6 +20,7 @@ use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
 use crate::{
+    client::MasterClient,
     directory::api::{
         assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, DirectoryState,
     },
@@ -42,6 +43,7 @@ pub struct DirectoryServer {
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
     pub volume_grow: VolumeGrowth,
+    pub master_client: Option<MasterClient>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -75,6 +77,7 @@ impl DirectoryServer {
             garbage_threshold,
             volume_grow: VolumeGrowth,
             topology: topology.clone(),
+            master_client: None,
             shutdown,
         };
 
