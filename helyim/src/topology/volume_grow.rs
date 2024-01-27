@@ -120,7 +120,7 @@ impl VolumeGrowth {
             };
 
             dn.add_or_update_volume(&volume_info).await;
-            topology.register_volume_layout(&volume_info, dn).await;
+            topology.register_volume_layout(&volume_info, &dn).await;
         }
         Ok(())
     }

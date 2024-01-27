@@ -16,6 +16,7 @@ use axum::{
 };
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_proto::{VolumeInformationMessage, VolumeShortInformationMessage};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::RwLock;
@@ -152,7 +153,69 @@ impl Topology {
         Ok((file_id, count, node))
     }
 
-    pub async fn register_volume_layout(&self, volume: &VolumeInfo, data_node: DataNodeRef) {
+    pub async fn sync_data_node_registration(
+        &self,
+        volumes: &[VolumeInformationMessage],
+        data_node: &DataNodeRef,
+    ) -> (Vec<VolumeInfo>, Vec<VolumeInfo>) {
+        let mut volume_infos = Vec::new();
+        for volume in volumes {
+            match VolumeInfo::new(volume) {
+                Ok(volume) => volume_infos.push(volume),
+                Err(err) => error!("failed to convert joined volume information: {err}"),
+            }
+        }
+
+        let (new_volumes, deleted_volumes) = data_node.update_volumes(volume_infos).await;
+        for volume in new_volumes.iter() {
+            self.register_volume_layout(volume, data_node).await;
+        }
+        for volume in deleted_volumes.iter() {
+            self.unregister_volume_layout(volume, data_node).await;
+        }
+
+        (new_volumes, deleted_volumes)
+    }
+
+    pub async fn incremental_sync_data_node_registration(
+        &self,
+        new_volumes: &[VolumeShortInformationMessage],
+        deleted_volumes: &[VolumeShortInformationMessage],
+        data_node: &DataNodeRef,
+    ) {
+        let mut new_vis = vec![];
+        let mut old_vis = vec![];
+
+        for volume in new_volumes {
+            match VolumeInfo::new_from_short(volume) {
+                Ok(volume) => new_vis.push(volume),
+                Err(err) => {
+                    info!("create short volume info error: {err}");
+                    continue;
+                }
+            }
+        }
+        for volume in deleted_volumes {
+            match VolumeInfo::new_from_short(volume) {
+                Ok(volume) => old_vis.push(volume),
+                Err(err) => {
+                    info!("create short volume info error: {err}");
+                    continue;
+                }
+            }
+        }
+
+        data_node.delta_update_volumes(&new_vis, &old_vis).await;
+
+        for v in new_vis.iter() {
+            self.register_volume_layout(v, data_node).await;
+        }
+        for v in old_vis.iter() {
+            self.unregister_volume_layout(v, data_node).await;
+        }
+    }
+
+    pub async fn register_volume_layout(&self, volume: &VolumeInfo, data_node: &DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
@@ -162,13 +225,13 @@ impl Topology {
         .await
     }
 
-    pub async fn unregister_volume_layout(&self, volume: &VolumeInfo) {
+    pub async fn unregister_volume_layout(&self, volume: &VolumeInfo, data_node: &DataNodeRef) {
         self.get_volume_layout(
             volume.collection.clone(),
             volume.replica_placement,
             volume.ttl,
         )
-        .unregister_volume(volume)
+        .unregister_volume(volume, data_node)
         .await;
     }
 

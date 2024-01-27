@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{atomic::AtomicU64, Arc, Weak},
@@ -71,17 +71,39 @@ impl DataNode {
         format!("{}:{}", self.ip, self.port)
     }
 
-    pub async fn update_volumes(&self, volume_infos: &[VolumeInfo]) -> Vec<VolumeInfo> {
-        let mut volumes = HashSet::new();
+    pub async fn delta_update_volumes(
+        &self,
+        new_volumes: &[VolumeInfo],
+        deleted_volumes: &[VolumeInfo],
+    ) {
+        for volume in deleted_volumes {
+            self.adjust_volume_count(-1).await;
+
+            if !volume.read_only {
+                self.adjust_active_volume_count(-1).await;
+            }
+        }
+
+        for volume in new_volumes {
+            self.add_or_update_volume(volume).await;
+        }
+    }
+
+    pub async fn update_volumes(
+        &self,
+        volume_infos: Vec<VolumeInfo>,
+    ) -> (Vec<VolumeInfo>, Vec<VolumeInfo>) {
+        let mut actual_volume_map = HashMap::new();
         for info in volume_infos.iter() {
-            volumes.insert(info.id);
+            actual_volume_map.insert(info.id, info);
         }
 
         let mut deleted_id = vec![];
-        let mut deleted = vec![];
+        let mut deleted_volumes = vec![];
+        let mut new_volumes = vec![];
 
         for volume in self.volumes.iter() {
-            if !volumes.contains(volume.key()) {
+            if !actual_volume_map.contains_key(volume.key()) {
                 deleted_id.push(volume.id);
 
                 self.adjust_volume_count(-1).await;
@@ -92,20 +114,23 @@ impl DataNode {
         }
 
         for info in volume_infos {
-            self.add_or_update_volume(info).await;
+            if self.add_or_update_volume(&info).await {
+                new_volumes.push(info);
+            }
         }
 
         for id in deleted_id.iter() {
             if let Some((_, volume)) = self.volumes.remove(id) {
-                deleted.push(volume);
+                deleted_volumes.push(volume);
             }
         }
 
-        deleted
+        (new_volumes, deleted_volumes)
     }
 
     #[allow(clippy::map_entry)]
-    pub async fn add_or_update_volume(&self, v: &VolumeInfo) {
+    pub async fn add_or_update_volume(&self, v: &VolumeInfo) -> bool {
+        let mut is_new = false;
         if self.volumes.contains_key(&v.id) {
             self.volumes.insert(v.id, v.clone());
         } else {
@@ -115,7 +140,10 @@ impl DataNode {
             }
             self.adjust_max_volume_id(v.id).await;
             self.volumes.insert(v.id, v.clone());
+            is_new = true
         }
+
+        is_new
     }
 
     pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {

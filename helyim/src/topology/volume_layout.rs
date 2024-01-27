@@ -120,11 +120,11 @@ impl VolumeLayout {
         locations.push(dn);
     }
 
-    pub async fn register_volume(&self, v: &VolumeInfo, dn: DataNodeRef) {
+    pub async fn register_volume(&self, v: &VolumeInfo, dn: &DataNodeRef) {
         // release write lock
         {
             let mut locations = self.locations.entry(v.id).or_default();
-            VolumeLayout::set_node(&mut locations, dn).await;
+            VolumeLayout::set_node(&mut locations, dn.clone()).await;
         }
 
         let locations = self.locations.get(&v.id).unwrap();
@@ -211,8 +211,14 @@ impl VolumeLayout {
         }
     }
 
-    pub async fn unregister_volume(&self, v: &VolumeInfo) {
+    pub async fn unregister_volume(&self, v: &VolumeInfo, data_node: &DataNodeRef) {
         self.remove_from_writable(v.id).await;
+        if let Some(mut location) = self.locations.get_mut(&v.id) {
+            location
+                .value_mut()
+                .retain(|node| node.ip != data_node.ip && node.port != data_node.port);
+        }
+        self.locations.retain(|_, locations| !locations.is_empty());
     }
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {

@@ -193,7 +193,7 @@ impl Helyim for DirectoryGrpcServer {
         &self,
         request: Request<Streaming<HeartbeatRequest>>,
     ) -> StdResult<Response<Self::HeartbeatStream>, Status> {
-        let volume_size_limit = self.volume_size_limit_mb;
+        let volume_size_limit = self.volume_size_limit_mb * 1024 * 1024;
         let topology = self.topology.clone();
         let addr = request.remote_addr().unwrap();
 
@@ -368,20 +368,20 @@ async fn handle_heartbeat(
 
     let mut infos = vec![];
     while let Some(info_msg) = heartbeat.volumes.pop() {
-        match VolumeInfo::new(info_msg) {
+        match VolumeInfo::new(&info_msg) {
             Ok(info) => infos.push(info),
             Err(err) => info!("fail to convert joined volume: {err}"),
         };
     }
 
-    let deleted_volumes = data_node.update_volumes(&infos).await;
+    let (new_volumes, deleted_volumes) = data_node.update_volumes(infos).await;
 
-    for v in infos {
-        topology.register_volume_layout(&v, data_node.clone()).await;
+    for v in new_volumes {
+        topology.register_volume_layout(&v, &data_node).await;
     }
 
     for v in deleted_volumes {
-        topology.unregister_volume_layout(&v).await;
+        topology.unregister_volume_layout(&v, &data_node).await;
     }
 
     let _ = tx.send(Ok(heartbeat_response(volume_size_limit, topology).await));
@@ -404,6 +404,35 @@ async fn handle_ec_heartbeat(
         deleted_ec_vids: vec![],
         leader: None,
     };
+
+    if !heartbeat.new_volumes.is_empty() || !heartbeat.deleted_volumes.is_empty() {
+        for volume in heartbeat.new_volumes.iter() {
+            volume_location.new_vids.push(volume.id);
+        }
+        for volume in heartbeat.deleted_volumes.iter() {
+            volume_location.deleted_vids.push(volume.id);
+        }
+
+        topology
+            .incremental_sync_data_node_registration(
+                &heartbeat.new_volumes,
+                &heartbeat.deleted_volumes,
+                data_node,
+            )
+            .await;
+    }
+
+    if !heartbeat.volumes.is_empty() || !heartbeat.has_no_volumes {
+        let (new_volumes, deleted_volumes) = topology
+            .sync_data_node_registration(&heartbeat.volumes, data_node)
+            .await;
+        for volume in new_volumes {
+            volume_location.new_vids.push(volume.id);
+        }
+        for volume in deleted_volumes {
+            volume_location.deleted_vids.push(volume.id);
+        }
+    }
 
     if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
         // update master interval volume layouts

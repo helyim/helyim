@@ -21,12 +21,12 @@ pub struct VolumeInfo {
 }
 
 impl VolumeInfo {
-    pub fn new(m: helyim_proto::VolumeInformationMessage) -> Result<VolumeInfo> {
+    pub fn new(m: &helyim_proto::VolumeInformationMessage) -> Result<VolumeInfo> {
         let rp = ReplicaPlacement::from_u8(m.replica_placement as u8)?;
         Ok(VolumeInfo {
             id: m.id as VolumeId,
             size: m.size,
-            collection: FastStr::new(m.collection),
+            collection: FastStr::new(&m.collection),
             file_count: m.file_count as i64,
             delete_count: m.delete_count as i64,
             delete_bytes: m.deleted_bytes,
@@ -34,6 +34,18 @@ impl VolumeInfo {
             version: m.version as Version,
             ttl: Ttl::from_u32(m.ttl)?,
             replica_placement: rp,
+        })
+    }
+
+    pub fn new_from_short(m: &helyim_proto::VolumeShortInformationMessage) -> Result<VolumeInfo> {
+        let rp = ReplicaPlacement::from_u8(m.replica_placement as u8)?;
+        Ok(VolumeInfo {
+            id: m.id as VolumeId,
+            collection: FastStr::new(&m.collection),
+            version: m.version as Version,
+            ttl: Ttl::from_u32(m.ttl)?,
+            replica_placement: rp,
+            ..Default::default()
         })
     }
 }
