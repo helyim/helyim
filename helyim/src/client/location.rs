@@ -79,4 +79,8 @@ impl LocationMap {
         }
         locations.retain(|loc| loc.url != location.url);
     }
+
+    pub fn clear(&self) {
+        self.locations.clear();
+    }
 }

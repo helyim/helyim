@@ -1,9 +1,10 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
+use faststr::FastStr;
 use openraft::{
     error::{ForwardToLeader, NetworkError, RemoteError},
     BasicNode, RaftMetrics, TryAsRef,
@@ -66,13 +67,14 @@ impl RaftClient {
     /// With a initialized cluster, new node can be added with [`write`].
     /// Then setup replication with [`add_learner`].
     /// Then make the new node a member with [`change_membership`].
-    pub async fn init(&self) -> Result<(), RpcError<InitializeError>> {
-        self.do_send_rpc_to_leader("init", None::<&()>).await
+    pub async fn init(
+        &self,
+        req: &HashMap<NodeId, FastStr>,
+    ) -> Result<(), RpcError<InitializeError>> {
+        self.do_send_rpc_to_leader("init", Some(req)).await
     }
 
     /// Add a node as learner.
-    ///
-    /// The node to add has to exist, i.e., being added with `write(ExampleRequest::AddNode{})`
     pub async fn add_learner(
         &self,
         req: (NodeId, String),

@@ -6,9 +6,10 @@ use async_stream::stream;
 use faststr::FastStr;
 use helyim_proto::directory::KeepConnectedRequest;
 use nom::error::Error as NomError;
+use tokio::sync::{RwLock, RwLockReadGuard};
 use tokio_stream::StreamExt;
 use tonic::Status;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     client::location::{Location, LocationMap},
@@ -18,16 +19,16 @@ use crate::{
 
 pub struct MasterClient {
     name: FastStr,
-    current_master: FastStr,
+    current_master: RwLock<FastStr>,
     masters: Vec<FastStr>,
     locations: LocationMap,
 }
 
 impl MasterClient {
-    pub fn new(name: FastStr, masters: Vec<FastStr>) -> Self {
+    pub fn new(name: &str, masters: Vec<FastStr>) -> Self {
         Self {
-            name,
-            current_master: FastStr::empty(),
+            name: FastStr::new(name),
+            current_master: RwLock::new(FastStr::empty()),
             masters,
             locations: LocationMap::default(),
         }
@@ -35,11 +36,11 @@ impl MasterClient {
 }
 
 impl MasterClient {
-    pub fn current_master(&self) -> &str {
-        &self.current_master
+    pub async fn current_master(&self) -> RwLockReadGuard<FastStr> {
+        self.current_master.read().await
     }
 
-    pub async fn keep_connected_to_master(&mut self) {
+    pub async fn keep_connected_to_master(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             let _ = self.try_all_masters().await;
@@ -47,19 +48,40 @@ impl MasterClient {
         }
     }
 
-    async fn try_connect_to_master(&mut self, master: &str) -> Result<FastStr, ClientError> {
+    async fn try_all_masters(&self) -> Result<(), ClientError> {
+        let masters = self.masters.clone();
+
+        for master in masters.iter() {
+            let mut next_hinted_leader = self.try_connect_to_master(master).await?;
+            while !next_hinted_leader.is_empty() {
+                next_hinted_leader = self.try_connect_to_master(&next_hinted_leader).await?;
+            }
+            *self.current_master.write().await = FastStr::empty();
+            self.locations.clear();
+        }
+
+        Ok(())
+    }
+
+    async fn try_connect_to_master(&self, master: &str) -> Result<FastStr, ClientError> {
         let master = FastStr::new(master);
 
-        let master_addr = master.clone();
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+        let client_name = self.name.clone();
         let request_stream = stream! {
-            yield keep_connected_request(&master_addr);
+            loop {
+                yield keep_connected_request(&client_name);
+                interval.tick().await;
+            }
         };
 
         let client = helyim_client(&master)?;
         let mut next_hinted_leader = FastStr::empty();
         match client.keep_connected(request_stream).await {
             Ok(response) => {
-                self.current_master = master.clone();
+                *self.current_master.write().await = master.clone();
+                info!("current master is {}", master);
 
                 let mut stream = response.into_inner();
                 while let Some(location_ret) = stream.next().await {
@@ -93,23 +115,9 @@ impl MasterClient {
             }
             Err(status) => {
                 error!("keep connected to {master} error: {status}");
-                Err(ClientError::KeepConnected(master.clone(), status))
+                Ok(FastStr::empty())
             }
         }
-    }
-
-    async fn try_all_masters(&mut self) -> Result<(), ClientError> {
-        let masters = self.masters.clone();
-        for master in masters.iter() {
-            let mut next_hinted_leader = self.try_connect_to_master(master).await?;
-            while !next_hinted_leader.is_empty() {
-                next_hinted_leader = self.try_connect_to_master(&next_hinted_leader).await?;
-            }
-            self.current_master = FastStr::empty();
-            self.locations = LocationMap::default();
-        }
-
-        Ok(())
     }
 }
 

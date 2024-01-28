@@ -43,7 +43,7 @@ pub struct DirectoryServer {
     pub garbage_threshold: f64,
     pub topology: TopologyRef,
     pub volume_grow: VolumeGrowth,
-    pub master_client: Option<MasterClient>,
+    pub master_client: Arc<MasterClient>,
 
     shutdown: async_broadcast::Sender<()>,
 }
@@ -72,12 +72,13 @@ impl DirectoryServer {
             shutdown_rx.clone(),
         ));
 
+        let master_client = MasterClient::new("master", master_opts.raft.peers.clone());
         let master = DirectoryServer {
             options: master_opts,
             garbage_threshold,
             volume_grow: VolumeGrowth,
             topology: topology.clone(),
-            master_client: None,
+            master_client: Arc::new(master_client),
             shutdown,
         };
 
@@ -109,10 +110,9 @@ impl DirectoryServer {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let raft_node_id = self.options.raft.node_id;
         let raft_node_addr = format!("{}:{}", self.options.ip, self.options.port);
         // start raft node and control cluster with `raft_client`
-        let raft_server = RaftServer::start_node(raft_node_id, &raft_node_addr).await?;
+        let raft_server = RaftServer::start_node(&raft_node_addr).await?;
         raft_server.set_topology(&self.topology.clone()).await;
         self.topology.set_raft_server(raft_server.clone()).await;
 
@@ -129,13 +129,13 @@ impl DirectoryServer {
         rt_spawn(start_directory_server(ctx, addr, shutdown_rx, raft_router));
 
         raft_server
-            .start_node_with_peer(
-                raft_node_id,
-                &raft_node_addr,
-                self.options.raft.peer.as_ref(),
-            )
+            .start_node_with_peers(&raft_node_addr, &self.options.raft.peers)
             .await?;
 
+        let master_client = self.master_client.clone();
+        rt_spawn(async move {
+            master_client.keep_connected_to_master().await;
+        });
         Ok(())
     }
 }
@@ -294,7 +294,7 @@ impl Helyim for DirectoryGrpcServer {
             Some(Ok(request)) => {
                 if !topology.is_leader().await {
                     topology.inform_new_leader(&location_tx).await;
-                    return Err(Status::not_found("current node is raft leader"));
+                    return Err(Status::internal("current node is not raft leader"));
                 }
                 let client_name = FastStr::new(format!("{}.{addr}", request.name));
                 info!("add client: {client_name}");

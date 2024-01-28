@@ -105,7 +105,10 @@ pub async fn cluster_status_handler(State(ctx): State<DirectoryState>) -> Json<C
     let status = ClusterStatus {
         is_leader,
         leader,
-        peers: peers.into_values().collect(),
+        peers: peers
+            .iter()
+            .map(|(k, v)| FastStr::new(format!("{k} -> {v}")))
+            .collect(),
     };
     Json(status)
 }
