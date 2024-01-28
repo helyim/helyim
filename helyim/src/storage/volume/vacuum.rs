@@ -233,6 +233,7 @@ impl Volume {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .mode(0o644)
             .open(compact_data_filename)?;
         let compact_index_file = fs::OpenOptions::new()
