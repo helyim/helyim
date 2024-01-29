@@ -50,7 +50,7 @@ impl FilerSever {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         let options = Arc::new(filer_opts);
-        let filer = Filer::new(options.master_server.clone());
+        let filer = Filer::new(options.master_server.clone())?;
 
         let addr = format!("{}:{}", options.ip, grpc_port(options.port)).parse()?;
 
@@ -89,7 +89,7 @@ impl FilerSever {
         let read_redirect = self.options.redirect_on_read;
         let disable_dir_listing = self.options.disable_dir_listing;
 
-        self.filer.keep_connected_to_master().await?;
+        // self.filer.keep_connected_to_master().await?;
 
         self.update_masters().await?;
 
@@ -103,7 +103,8 @@ impl FilerSever {
         let shutdown_rx = self.shutdown.new_receiver();
 
         rt_spawn(start_filer_server(ctx, addr, shutdown_rx));
-        todo!()
+
+        Ok(())
     }
 }
 

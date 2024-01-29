@@ -122,9 +122,9 @@ pub struct FilerOptions {
     pub redirect_on_read: bool,
     #[arg(long)]
     pub disable_dir_listing: bool,
-    #[arg(long)]
+    #[arg(long, default_value_t = 1)]
     pub max_mb: u64,
-    #[arg(long)]
+    #[arg(long, default_value_t = 100)]
     pub dir_listing_limit: u64,
     #[arg(long, default_value(""))]
     pub data_center: FastStr,

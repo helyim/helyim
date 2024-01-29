@@ -1,4 +1,6 @@
 use std::{
+    fs,
+    path::Path,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -15,6 +17,7 @@ use helyim_proto::filer::FileId;
 use hyper::StatusCode;
 use moka::sync::Cache;
 use serde_json::json;
+use toml::Value;
 use tracing::error;
 
 use self::redis::redis_store::RedisStore;
@@ -68,7 +71,7 @@ pub struct Filer {
 }
 
 impl Filer {
-    pub fn new(masters: Vec<FastStr>) -> FilerRef {
+    pub fn new(masters: Vec<FastStr>) -> Result<FilerRef, FilerError> {
         let directories = moka::sync::CacheBuilder::new(1000)
             .time_to_live(Duration::from_secs(60 * 60))
             .name("filer-directory-cache")
@@ -76,24 +79,46 @@ impl Filer {
         let master_client = MasterClient::new(FastStr::new("filer"), masters);
         let (delete_file_id_tx, delete_file_id_rx) = unbounded();
 
-        let filer = Arc::new(Self {
+        let mut filer = Self {
             store: None,
             directories: Some(directories),
             delete_file_id_tx,
             master_client,
-        });
+        };
+
+        filer.initialize()?;
 
         tokio::spawn(loop_processing_deletion(delete_file_id_rx));
 
-        filer
+        Ok(Arc::new(filer))
     }
 
     pub fn initialize(&mut self) -> Result<(), FilerError> {
-        let mut store = RedisStore::new("");
-        store.initialize()?;
+        let config_paths = vec![
+            "./config.toml",
+            "~/.seaweedfs/config.toml",
+            "/etc/seaweedfs/config.toml",
+        ];
 
-        self.store = Some(Box::new(store));
-        Ok(())
+        for config_path in config_paths {
+            if Path::new(config_path).exists() {
+                println!("{config_path}");
+                let content = fs::read_to_string(config_path).expect("Failed to read file");
+                let value: Value = content.parse().expect("Failed to parse TOML");
+                if let Some(redis) = value.get("redis") {
+                    if let Some(addr) = redis.get("addr") {
+                        let mut store = RedisStore::new(addr.as_str().unwrap());
+                        store.initialize()?;
+
+                        self.store = Some(Box::new(store));
+
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        Err(FilerError::String("config file err".to_string()))
     }
 
     pub fn current_master(&self) -> FastStr {
@@ -292,4 +317,10 @@ impl IntoResponse for FilerError {
         let response = (StatusCode::BAD_REQUEST, Json(error));
         response.into_response()
     }
+}
+
+#[test]
+fn test_new_filer() -> Result<(), FilerError> {
+    let _ = Filer::new(vec!["127.0.0.1:9333".into()])?;
+    Ok(())
 }

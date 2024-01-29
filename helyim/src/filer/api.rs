@@ -187,7 +187,8 @@ pub async fn handle_multiple_chunks(
                 &mut entry.chunks,
                 ra.start as i64,
                 ra.length,
-            ).await?;
+            )
+            .await?;
 
             return Ok(());
         }
