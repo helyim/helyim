@@ -54,6 +54,7 @@ mod tests {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .read(true)
             .open(path)
             .unwrap();
@@ -68,6 +69,7 @@ mod tests {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .read(true)
             .open(path)
             .unwrap();
