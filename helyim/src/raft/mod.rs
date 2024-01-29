@@ -156,31 +156,26 @@ impl RaftServer {
         node_addr: &str,
         peers: &[FastStr],
     ) -> Result<(), RaftError> {
-        // wait for server to startup
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        if node_addr == peers[0] {
+            // wait for server to startup
+            tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let raft_client = RaftClient::new(node_addr.to_string());
+            let raft_client = RaftClient::new(node_addr.to_string());
 
-        let peers = peer_with_node_id(peers);
-        if let Err(err) = raft_client.init(&peers).await {
-            warn!("initialize raft server failed, {err}");
-            return Ok(());
-        }
+            let peers = peer_with_node_id(peers);
+            if let Err(err) = raft_client.init(&peers).await {
+                warn!("initialize raft server failed, {err}");
+                return Ok(());
+            }
 
-        let mut members = BTreeSet::new();
-
-        for (node_id, peer) in peers.iter() {
-            members.insert(*node_id);
-
-            if let Err(err) = raft_client.add_learner((*node_id, peer.to_string())).await {
-                warn!("add learner failed, {err}");
+            for (node_id, peer) in peers.iter() {
+                if node_id != &self.id {
+                    if let Err(err) = raft_client.add_learner((*node_id, peer.to_string())).await {
+                        warn!("add learner failed, {err}");
+                    }
+                }
             }
         }
-
-        if let Err(err) = raft_client.change_membership(&members).await {
-            warn!("change membership failed, {err}");
-        }
-
         Ok(())
     }
 

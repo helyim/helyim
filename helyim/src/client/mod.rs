@@ -41,10 +41,10 @@ impl MasterClient {
     }
 
     pub async fn keep_connected_to_master(&self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut interval = tokio::time::interval(Duration::from_secs(3));
         loop {
-            let _ = self.try_all_masters().await;
             interval.tick().await;
+            let _ = self.try_all_masters().await;
         }
     }
 
