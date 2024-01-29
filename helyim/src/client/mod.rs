@@ -9,7 +9,7 @@ use nom::error::Error as NomError;
 use tokio::sync::{RwLock, RwLockReadGuard};
 use tokio_stream::StreamExt;
 use tonic::Status;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     client::location::{Location, LocationMap},
@@ -114,7 +114,7 @@ impl MasterClient {
                 Ok(next_hinted_leader)
             }
             Err(status) => {
-                error!("keep connected to {master} error: {status}");
+                warn!("keep connected to {master} error: {}", status.message());
                 Ok(FastStr::empty())
             }
         }

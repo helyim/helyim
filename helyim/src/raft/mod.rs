@@ -167,14 +167,6 @@ impl RaftServer {
                 warn!("initialize raft server failed, {err}");
                 return Ok(());
             }
-
-            for (node_id, peer) in peers.iter() {
-                if node_id != &self.id {
-                    if let Err(err) = raft_client.add_learner((*node_id, peer.to_string())).await {
-                        warn!("add learner failed, {err}");
-                    }
-                }
-            }
         }
         Ok(())
     }
@@ -257,7 +249,7 @@ pub fn create_raft_router(raft_state: RaftServer) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use crate::raft::{parse_raft_peer, types::RaftRequest};
+    use crate::raft::{compute_node_id, parse_raft_peer, types::RaftRequest};
 
     #[test]
     pub fn test_parse_raft_peer() {

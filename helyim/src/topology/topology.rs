@@ -393,16 +393,11 @@ impl Topology {
     }
 
     pub async fn inform_new_leader(&self, tx: &UnboundedSender<Result<VolumeLocation, Status>>) {
-        match self.current_leader().await {
-            Ok(leader) => {
-                let mut location = VolumeLocation::new();
-                location.leader = Some(leader.to_string());
+        if let Ok(leader) = self.current_leader().await {
+            let mut location = VolumeLocation::new();
+            location.leader = Some(leader.to_string());
 
-                let _ = tx.send(Ok(location));
-            }
-            Err(_err) => {
-                error!("can not get leader of the cluster.");
-            }
+            let _ = tx.send(Ok(location));
         }
     }
 }
