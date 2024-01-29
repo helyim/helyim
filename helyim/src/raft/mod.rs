@@ -47,7 +47,7 @@ pub mod types;
 fn compute_node_id(addr: &str) -> NodeId {
     let mut node = 0;
     for (idx, c) in addr.char_indices() {
-        node += idx * c as u8 as usize;
+        node += idx * c as usize;
     }
     node as u64
 }

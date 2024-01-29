@@ -111,7 +111,7 @@ impl Ttl {
             return 0;
         }
         let mut output = (self.count as u32) << 8;
-        output += self.unit as u8 as u32;
+        output += self.unit as u32;
         output
     }
 
