@@ -76,8 +76,7 @@ impl DataNode {
         deleted_volumes: &[VolumeInfo],
     ) {
         for volume in deleted_volumes {
-            if self.volumes.contains_key(&volume.id) {
-                self.volumes.remove(&volume.id);
+            if self.volumes.remove(&volume.id).is_some() {
                 self.adjust_volume_count(-1).await;
 
                 if !volume.read_only {

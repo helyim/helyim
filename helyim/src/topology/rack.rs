@@ -134,12 +134,12 @@ impl Rack {
         max_volumes
     }
 
-    pub fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
+    pub fn free_space(&self) -> i64 {
+        let mut free_space = 0;
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_space();
+            free_space += data_node.free_space();
         }
-        free_volumes
+        free_space
     }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {

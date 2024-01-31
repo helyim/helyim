@@ -57,7 +57,7 @@ impl DataNode {
             }
         }
 
-        for ec_shards in actual_shards.iter_mut() {
+        for ec_shards in actual_shards.iter() {
             if self.ec_shards.contains_key(&ec_shards.volume_id) {
                 new_shards.push(ec_shards.clone());
                 new_shard_count += ec_shards.shard_bits.shard_id_count();
@@ -78,13 +78,13 @@ impl DataNode {
 
     pub async fn delta_update_ec_shards(
         &self,
-        new_shards: &mut [EcVolumeInfo],
-        deleted_shards: &mut [EcVolumeInfo],
+        new_shards: &[EcVolumeInfo],
+        deleted_shards: &[EcVolumeInfo],
     ) {
-        for shard in new_shards.iter_mut() {
+        for shard in new_shards.iter() {
             self.add_or_update_ec_shards(shard).await;
         }
-        for shard in deleted_shards.iter_mut() {
+        for shard in deleted_shards.iter() {
             self.delete_ec_shard(shard).await;
         }
     }

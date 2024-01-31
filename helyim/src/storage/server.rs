@@ -153,8 +153,9 @@ impl VolumeServer {
     async fn update_masters(&mut self) -> StdResult<(), VolumeError> {
         let cluster_status = list_master(&self.options.master_server).await?;
         self.current_master = FastStr::new(cluster_status.leader);
-        self.seed_master_nodes = cluster_status.peers;
-
+        for (_, peer) in cluster_status.peers {
+            self.seed_master_nodes.push(peer);
+        }
         Ok(())
     }
 }
@@ -181,23 +182,23 @@ impl VolumeServer {
                         pulse,
                         shutdown.clone(),
                     ) => {
-                            match ret {
-                                Err(VolumeError::LeaderChanged(new, old)) => {
-                                    if !new.is_empty() {
-                                        new_leader = new;
-                                    }
+                        match ret {
+                            Err(VolumeError::LeaderChanged(new, old)) => {
+                                if !new.is_empty() {
+                                    new_leader = new;
                                 }
-                                Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
-                                    warn!("heartbeat to {master} error: {err}");
-                                    sleep(Duration::from_secs(pulse)).await;
-                                    new_leader = FastStr::empty();
-                                    store.set_current_master(FastStr::empty()).await;
-                                }
-                                Err(err) => {
-                                    error!("heartbeat but error occur: {err}");
-                                }
-                                _ => {}
+                            }
+                            Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
+                                warn!("heartbeat to {master} error: {err}");
+                                new_leader = FastStr::empty();
+                                store.set_current_master(FastStr::empty()).await;
+                            }
+                            Err(err) => {
+                                error!("heartbeat but error occur: {err}");
+                            }
+                            _ => continue
                         }
+                        sleep(Duration::from_secs(pulse)).await;
                     }
                     _ = shutdown.recv() => {
                         info!("stopping heartbeat.");

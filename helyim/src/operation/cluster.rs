@@ -1,13 +1,15 @@
+use std::collections::BTreeMap;
+
 use faststr::FastStr;
 use serde::{Deserialize, Serialize};
 
-use crate::util::http::HTTP_CLIENT;
+use crate::{raft::types::NodeId, util::http::HTTP_CLIENT};
 
 #[derive(Serialize, Deserialize)]
 pub struct ClusterStatus {
     pub is_leader: bool,
     pub leader: FastStr,
-    pub peers: Vec<FastStr>,
+    pub peers: BTreeMap<NodeId, FastStr>,
 }
 
 pub async fn list_master(addr: &str) -> Result<ClusterStatus, reqwest::Error> {

@@ -111,7 +111,7 @@ impl Topology {
         }
 
         data_node
-            .delta_update_ec_shards(&mut new_shards, &mut deleted_shards)
+            .delta_update_ec_shards(&new_shards, &deleted_shards)
             .await;
 
         for shard in new_shards.iter() {

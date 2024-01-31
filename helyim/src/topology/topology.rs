@@ -455,12 +455,12 @@ impl Topology {
         max_volumes
     }
 
-    pub fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
+    pub fn free_space(&self) -> i64 {
+        let mut free_space = 0;
         for dc in self.data_centers.iter() {
-            free_volumes += dc.free_volumes();
+            free_space += dc.free_space();
         }
-        free_volumes
+        free_space
     }
 
     pub fn adjust_volume_count(&self, volume_count_delta: i64) {
@@ -534,7 +534,7 @@ pub async fn topology_vacuum_loop(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     info!("topology vacuum loop starting");
-    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
+    let mut interval = tokio::time::interval(Duration::from_secs(15));
     loop {
         tokio::select! {
             _ = interval.tick() => {
