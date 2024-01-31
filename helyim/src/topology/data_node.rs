@@ -5,7 +5,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc, Weak},
 };
 
-use dashmap::DashMap;
+use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
 use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
@@ -76,10 +76,13 @@ impl DataNode {
         deleted_volumes: &[VolumeInfo],
     ) {
         for volume in deleted_volumes {
-            self.adjust_volume_count(-1).await;
+            if self.volumes.contains_key(&volume.id) {
+                self.volumes.remove(&volume.id);
+                self.adjust_volume_count(-1).await;
 
-            if !volume.read_only {
-                self.adjust_active_volume_count(-1).await;
+                if !volume.read_only {
+                    self.adjust_active_volume_count(-1).await;
+                }
             }
         }
 
@@ -104,11 +107,6 @@ impl DataNode {
         for volume in self.volumes.iter() {
             if !actual_volume_map.contains_key(volume.key()) {
                 deleted_id.push(volume.id);
-
-                self.adjust_volume_count(-1).await;
-                if !volume.read_only {
-                    self.adjust_active_volume_count(-1).await;
-                }
             }
         }
 
@@ -120,6 +118,10 @@ impl DataNode {
 
         for id in deleted_id.iter() {
             if let Some((_, volume)) = self.volumes.remove(id) {
+                self.adjust_volume_count(-1).await;
+                if !volume.read_only {
+                    self.adjust_active_volume_count(-1).await;
+                }
                 deleted_volumes.push(volume);
             }
         }
@@ -145,8 +147,8 @@ impl DataNode {
         is_new
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
-        self.volumes.get(&vid).map(|volume| volume.value().clone())
+    pub fn get_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, VolumeInfo>> {
+        self.volumes.get(&vid)
     }
 
     pub async fn rack_id(&self) -> FastStr {
@@ -164,7 +166,9 @@ impl DataNode {
     pub async fn set_rack(&self, rack: Weak<Rack>) {
         *self.rack.write().await = rack;
     }
+}
 
+impl DataNode {
     pub async fn allocate_volume(
         &self,
         request: AllocateVolumeRequest,
@@ -217,7 +221,8 @@ impl DataNode {
 }
 
 impl DataNode {
-    pub fn free_volumes(&self) -> i64 {
+    /// number of free volume slots
+    pub fn free_space(&self) -> i64 {
         self.max_volume_count() - self.volume_count()
     }
 
@@ -286,3 +291,43 @@ impl DerefMut for DataNode {
 }
 
 pub type DataNodeRef = Arc<DataNode>;
+
+#[cfg(test)]
+mod test {
+    use faststr::FastStr;
+
+    use crate::{
+        storage::{ReplicaPlacement, Ttl, VolumeInfo, CURRENT_VERSION},
+        topology::data_node::DataNode,
+    };
+
+    async fn setup() -> DataNode {
+        let id = FastStr::new("127.0.0.1:9333");
+        let ip = FastStr::new("127.0.0.1");
+        let public_url = id.clone();
+        DataNode::new(id, ip, 9333, public_url, 1).await
+    }
+
+    #[tokio::test]
+    pub async fn test_add_or_update_volume() {
+        let data_node = setup().await;
+        let volume = VolumeInfo {
+            id: 0,
+            size: 0,
+            collection: FastStr::new("default_collection"),
+            version: CURRENT_VERSION,
+            ttl: Ttl::new("1d").unwrap(),
+            replica_placement: ReplicaPlacement::new("000").unwrap(),
+            ..Default::default()
+        };
+        let is_new = data_node.add_or_update_volume(&volume).await;
+        assert!(is_new);
+        let is_new = data_node.add_or_update_volume(&volume).await;
+        assert!(!is_new);
+
+        assert_eq!(data_node.max_volume_id(), 0);
+        assert_eq!(data_node.max_volume_count(), 1);
+        assert_eq!(data_node.active_volume_count(), 1);
+        assert_eq!(data_node.free_space(), 0);
+    }
+}

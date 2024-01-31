@@ -249,7 +249,7 @@ pub fn create_raft_router(raft_state: RaftServer) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use crate::raft::{compute_node_id, parse_raft_peer, types::RaftRequest};
+    use crate::raft::{parse_raft_peer, types::RaftRequest};
 
     #[test]
     pub fn test_parse_raft_peer() {

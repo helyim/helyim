@@ -121,7 +121,7 @@ impl Topology {
         None
     }
 
-    pub async fn has_writable_volume(&self, option: Arc<VolumeGrowOption>) -> bool {
+    pub async fn has_writable_volume(&self, option: &VolumeGrowOption) -> bool {
         let vl = self.get_volume_layout(
             option.collection.clone(),
             option.replica_placement,

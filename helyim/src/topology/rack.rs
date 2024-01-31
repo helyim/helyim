@@ -71,13 +71,13 @@ impl Rack {
         // randomly select
         let mut free_volumes = 0;
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_volumes();
+            free_volumes += data_node.free_space();
         }
 
         let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for data_node in self.data_nodes.iter() {
-            free_volumes -= data_node.free_volumes();
+            free_volumes -= data_node.free_space();
             if free_volumes == idx {
                 return Ok(data_node.clone());
             }
@@ -137,7 +137,7 @@ impl Rack {
     pub fn free_volumes(&self) -> i64 {
         let mut free_volumes = 0;
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_volumes();
+            free_volumes += data_node.free_space();
         }
         free_volumes
     }
