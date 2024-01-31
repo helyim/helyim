@@ -39,6 +39,7 @@ pub mod file_chunks;
 pub mod server;
 pub mod stream;
 pub mod util;
+pub mod write;
 
 pub use server::FilerSever;
 

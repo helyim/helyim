@@ -83,7 +83,7 @@ impl MasterClient {
             }
 
             let mut current_master_rw = self.current_master.write().unwrap();
-            *current_master_rw = FastStr::empty().into();
+            *current_master_rw = FastStr::empty();
         }
 
         Ok(())

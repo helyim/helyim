@@ -95,8 +95,7 @@ impl FilerSever {
 
         let ctx = FilerState {
             filer,
-            read_redirect,
-            disable_dir_listing,
+            options: self.options.clone(),
         };
 
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;

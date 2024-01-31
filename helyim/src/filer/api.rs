@@ -17,8 +17,10 @@ use super::{
 };
 use crate::{
     errors::Result,
+    filer::write::write_autochunk::auto_chunk,
     storage::FileId,
     util::{
+        args::FilerOptionsRef,
         file::guess_mimetype,
         http::{
             extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
@@ -31,8 +33,7 @@ use crate::{
 #[derive(Clone)]
 pub struct FilerState {
     pub filer: FilerRef,
-    pub read_redirect: bool,
-    pub disable_dir_listing: bool,
+    pub options: FilerOptionsRef,
 }
 
 pub async fn get_or_head_handler(
@@ -42,12 +43,9 @@ pub async fn get_or_head_handler(
     let mut response = Response::new(Body::empty());
     let path = extractor.uri.path();
     if let Some(mut entry) = ctx.filer.find_entry(path).await? {
-        if entry.is_directory() {
-            if ctx.disable_dir_listing {
-                *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
-                return Ok(response);
-            }
-
+        if entry.is_directory() && ctx.options.disable_dir_listing {
+            *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
+            return Ok(response);
             // todo: list dir
         }
 
@@ -80,14 +78,14 @@ pub async fn get_or_head_handler(
 
         if entry.chunks.len() == 1 {
             handle_single_chunk(&ctx, &entry, &mut response).await?;
-            return Ok(response);
+            Ok(response)
         } else {
             handle_multiple_chunks(&ctx, &extractor, &mut entry, &mut response).await?;
-            return Ok(response);
+            Ok(response)
         }
     } else {
         *response.status_mut() = StatusCode::NOT_FOUND;
-        return Ok(response);
+        Ok(response)
     }
 }
 
@@ -95,7 +93,35 @@ pub async fn post_handler(
     State(ctx): State<FilerState>,
     extractor: PostExtractor,
 ) -> Result<Response<Body>> {
-    todo!()
+    let mut response = Response::new(Body::empty());
+    let replication = extractor
+        .query
+        .replication
+        .clone()
+        .map_or(ctx.options.default_replication.clone(), |r| r);
+    let collection = extractor
+        .query
+        .collection
+        .clone()
+        .map_or(ctx.options.collection.clone(), |r| r);
+    let data_center = extractor
+        .query
+        .data_center
+        .clone()
+        .map_or(ctx.options.data_center.clone(), |r| r);
+
+    if auto_chunk(
+        &ctx,
+        &extractor,
+        &replication,
+        &collection,
+        &data_center,
+        &mut response,
+    )? {
+        return Ok(response);
+    }
+
+    Ok(response)
 }
 
 pub async fn delete_handler(
@@ -122,7 +148,7 @@ pub async fn handle_single_chunk(
             .master_client
             .lookup_file_id(&format!("{}", FileId::from(file_id)))?;
 
-        if ctx.read_redirect {
+        if ctx.options.redirect_on_read {
             response
                 .headers_mut()
                 .insert(LOCATION, HeaderValue::from_str(&url)?);
@@ -169,7 +195,7 @@ pub async fn handle_multiple_chunks(
             return Ok(());
         }
 
-        if ranges.len() == 0 {
+        if ranges.is_empty() {
             return Ok(());
         } else if ranges.len() == 1 {
             let ra = &ranges[0];
@@ -211,7 +237,7 @@ pub async fn handle_multiple_chunks(
 
 pub fn set_etag(response: &mut Response<Body>, etag: FastStr) -> Result<()> {
     if !etag.is_empty() {
-        if etag.starts_with("\"") {
+        if etag.starts_with('"') {
             response
                 .headers_mut()
                 .insert(ETAG, HeaderValue::from_str(&etag)?);

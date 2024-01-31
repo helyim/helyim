@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clap::{Args, Parser, Subcommand};
 use faststr::FastStr;
 
@@ -123,7 +125,7 @@ pub struct FilerOptions {
     #[arg(long)]
     pub disable_dir_listing: bool,
     #[arg(long, default_value_t = 1)]
-    pub max_mb: u64,
+    pub max_mb: i64,
     #[arg(long, default_value_t = 100)]
     pub dir_listing_limit: u64,
     #[arg(long, default_value(""))]
@@ -137,6 +139,8 @@ pub struct FilerOptions {
     #[arg(long, default_value_t = 8888)]
     pub port: u16,
 }
+
+pub type FilerOptionsRef = Arc<FilerOptions>;
 
 #[derive(Args, Debug, Clone)]
 pub struct LogOptions {

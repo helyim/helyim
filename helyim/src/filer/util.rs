@@ -27,11 +27,10 @@ pub fn parse_range(header_range: &HeaderValue, size: u64) -> Result<Vec<HttpRang
             return Ok(http_ranges);
         }
 
-        if header_range.starts_with("bytes=") {
-            let byte_range = &header_range[6..];
+        if let Some(byte_range) = header_range.strip_prefix("bytes=") {
             let ranges: Vec<&str> = byte_range.split(',').collect();
             ranges.into_iter().for_each(|range| {
-                let trim_range = range.replace(" ", "");
+                let trim_range = range.replace(' ', "");
                 let range_parts: Vec<&str> = trim_range.split('-').collect();
 
                 if range_parts.len() == 2 {
@@ -55,7 +54,7 @@ pub fn parse_range(header_range: &HeaderValue, size: u64) -> Result<Vec<HttpRang
     Ok(http_ranges)
 }
 
-pub fn sum_ranges_size(ranges: &Vec<HttpRange>) -> u64 {
+pub fn sum_ranges_size(ranges: &[HttpRange]) -> u64 {
     ranges.iter().fold(0, |acc, x| acc + x.length)
 }
 
@@ -73,16 +72,16 @@ mod test {
 
         let r = parse_range(&header_range, 10000)?;
 
-        let mut result = Vec::new();
-        result.push(HttpRange {
-            start: 0,
-            length: 499,
-        });
-
-        result.push(HttpRange {
-            start: 600,
-            length: 1000,
-        });
+        let result = vec![
+            HttpRange {
+                start: 0,
+                length: 499,
+            },
+            HttpRange {
+                start: 600,
+                length: 1000,
+            },
+        ];
 
         assert_eq!(result, r);
 

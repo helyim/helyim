@@ -37,6 +37,7 @@ pub struct GetOrHeadExtractor {
 pub struct PostExtractor {
     // only the last field can implement `FromRequest`
     // other fields must only implement `FromRequestParts`
+    pub method: Method,
     pub uri: Uri,
     pub headers: HeaderMap,
     #[from_request(via(Query))]
@@ -63,6 +64,10 @@ pub struct StorageQuery {
     pub ttl: Option<FastStr>,
     // last modified
     pub ts: Option<u64>,
+    pub replication: Option<FastStr>,
+    pub collection: Option<FastStr>,
+    pub data_center: Option<FastStr>,
+    pub max_mb: Option<i64>,
 }
 
 pub struct FormOrJson<T>(pub T);
