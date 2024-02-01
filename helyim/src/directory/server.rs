@@ -17,7 +17,7 @@ use helyim_proto::directory::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     client::MasterClient,
@@ -502,6 +502,10 @@ async fn update_volume_layout(
             volume_location.deleted_vids.push(volume.id);
         }
 
+        debug!(
+            "incremental sync data node: {} registration",
+            data_node.url()
+        );
         topology
             .incremental_sync_data_node_registration(
                 &heartbeat.new_volumes,
@@ -518,6 +522,7 @@ async fn update_volume_layout(
                 .await;
         }
 
+        debug!("sync data node: {} registration", data_node.url());
         let (new_volumes, deleted_volumes) = topology
             .sync_data_node_registration(&heartbeat.volumes, data_node)
             .await;
@@ -531,6 +536,7 @@ async fn update_volume_layout(
 
     if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
         // update master interval volume layouts
+        debug!("incremental sync data node: {} ec_shards", data_node.url());
         topology
             .incremental_sync_data_node_ec_shards(
                 &heartbeat.new_ec_shards,
@@ -552,6 +558,7 @@ async fn update_volume_layout(
     }
 
     if !heartbeat.ec_shards.is_empty() || heartbeat.has_no_ec_shards {
+        debug!("sync data node: {} ec_shards", data_node.url());
         let (new_shards, deleted_shards) = topology
             .sync_data_node_ec_shards(&heartbeat.ec_shards, data_node)
             .await;

@@ -21,7 +21,7 @@ pub struct VolumeLayout {
     pub readonly_volumes: DashMap<VolumeId, bool>,
     oversize_volumes: DashMap<VolumeId, bool>,
     #[serde(skip)]
-    pub locations: DashMap<VolumeId, Vec<DataNodeRef>>,
+    pub locations: Arc<DashMap<VolumeId, Vec<DataNodeRef>>>,
 }
 
 impl VolumeLayout {
@@ -33,7 +33,7 @@ impl VolumeLayout {
             writable_volumes: RwLock::new(Vec::new()),
             readonly_volumes: DashMap::new(),
             oversize_volumes: DashMap::new(),
-            locations: DashMap::new(),
+            locations: Arc::new(DashMap::new()),
         }
     }
 
@@ -226,21 +226,22 @@ impl VolumeLayout {
     }
 
     pub async fn unregister_volume(&self, v: &VolumeInfo, data_node: &DataNodeRef) {
+        let mut idx = -1;
         if let Some(mut location) = self.locations.get_mut(&v.id) {
-            let mut removed = true;
-            location.value_mut().retain(|node| {
-                if node.ip != data_node.ip || node.port != data_node.port {
-                    true
-                } else {
-                    removed = true;
-                    false
+            for (i, node) in location.value().iter().enumerate() {
+                if node.ip == data_node.ip && node.port == data_node.port {
+                    idx = i as i32;
+                    break;
                 }
-            });
-            if removed {
-                self.ensure_correct_writable(v).await;
+            }
+            if idx >= 0 {
+                location.remove(idx as usize);
             }
         }
-        self.locations.retain(|_, locations| !locations.is_empty());
+        if idx >= 0 {
+            self.ensure_correct_writable(v).await;
+            self.locations.retain(|_, locations| !locations.is_empty());
+        }
     }
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {

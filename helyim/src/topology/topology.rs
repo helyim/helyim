@@ -304,7 +304,6 @@ impl Topology {
         for collection in self.collections.iter() {
             for volume_layout in collection.volume_layouts.iter() {
                 let volume_layout = volume_layout.value().clone();
-                // TODO: avoid cloning the HashMap
                 let locations = volume_layout.locations.clone();
                 for data_nodes in locations.iter() {
                     let vid = *data_nodes.key();
@@ -534,7 +533,7 @@ pub async fn topology_vacuum_loop(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     info!("topology vacuum loop starting");
-    let mut interval = tokio::time::interval(Duration::from_secs(15));
+    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
     loop {
         tokio::select! {
             _ = interval.tick() => {
