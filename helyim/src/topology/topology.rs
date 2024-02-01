@@ -168,6 +168,7 @@ impl Topology {
         let dc = self.get_or_create_data_center(dc_name).await;
         let rack = dc.get_or_create_rack(rack_name).await;
         rack.link_data_node(data_node.clone()).await;
+        *data_node.rack.write().await = Arc::downgrade(&rack);
         info!("data node: {} relink to topology", data_node.id());
     }
 
