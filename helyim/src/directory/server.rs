@@ -17,7 +17,7 @@ use helyim_proto::directory::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     client::MasterClient,
@@ -502,10 +502,6 @@ async fn update_volume_layout(
             volume_location.deleted_vids.push(volume.id);
         }
 
-        debug!(
-            "incremental sync data node: {} registration",
-            data_node.url()
-        );
         topology
             .incremental_sync_data_node_registration(
                 &heartbeat.new_volumes,
@@ -513,16 +509,22 @@ async fn update_volume_layout(
                 data_node,
             )
             .await;
+
+        info!(
+            "incremental sync data node: {} registration, add volumes: {:?}, remove volumes: {:?}",
+            data_node.url(),
+            volume_location.new_vids,
+            volume_location.deleted_vids
+        );
     }
 
-    if !heartbeat.volumes.is_empty() || !heartbeat.has_no_volumes {
+    if !heartbeat.volumes.is_empty() || heartbeat.has_no_volumes {
         if !heartbeat.ip.is_empty() {
             topology
                 .register_data_node(&heartbeat.data_center, &heartbeat.rack, data_node)
                 .await;
         }
 
-        debug!("sync data node: {} registration", data_node.url());
         let (new_volumes, deleted_volumes) = topology
             .sync_data_node_registration(&heartbeat.volumes, data_node)
             .await;
@@ -532,11 +534,17 @@ async fn update_volume_layout(
         for volume in deleted_volumes {
             volume_location.deleted_vids.push(volume.id);
         }
+
+        info!(
+            "sync data node: {} registration, add volumes: {:?}, remove volumes: {:?}",
+            data_node.url(),
+            volume_location.new_vids,
+            volume_location.deleted_vids
+        );
     }
 
     if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
         // update master interval volume layouts
-        debug!("incremental sync data node: {} ec_shards", data_node.url());
         topology
             .incremental_sync_data_node_ec_shards(
                 &heartbeat.new_ec_shards,
@@ -555,10 +563,17 @@ async fn update_volume_layout(
             }
             volume_location.deleted_ec_vids.push(shard.id);
         }
+
+        info!(
+            "incremental sync data node: {} ec shards registration, add ec volumes: {:?}, remove \
+             ec volumes: {:?}",
+            data_node.url(),
+            volume_location.new_ec_vids,
+            volume_location.deleted_ec_vids
+        );
     }
 
     if !heartbeat.ec_shards.is_empty() || heartbeat.has_no_ec_shards {
-        debug!("sync data node: {} ec_shards", data_node.url());
         let (new_shards, deleted_shards) = topology
             .sync_data_node_ec_shards(&heartbeat.ec_shards, data_node)
             .await;
@@ -573,6 +588,12 @@ async fn update_volume_layout(
             }
             volume_location.deleted_ec_vids.push(shard.volume_id);
         }
+        info!(
+            "sync data node: {} ec_shards, add ec volumes: {:?}, remove ec volumes: {:?}",
+            data_node.url(),
+            volume_location.new_ec_vids,
+            volume_location.deleted_ec_vids
+        );
     }
 
     if !volume_location.new_vids.is_empty()

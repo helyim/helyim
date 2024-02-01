@@ -317,7 +317,7 @@ impl Store {
                 }
 
                 if !volume.expired(self.volume_size_limit()) {
-                    let super_block = volume.super_block.clone();
+                    let rp: u8 = volume.super_block.replica_placement.into();
                     let msg = VolumeInformationMessage {
                         id: *vid,
                         size: volume.data_file_size().unwrap_or(0),
@@ -326,9 +326,9 @@ impl Store {
                         delete_count: volume.deleted_count(),
                         deleted_bytes: volume.deleted_bytes(),
                         read_only: volume.no_write_or_delete(),
-                        replica_placement: Into::<u8>::into(super_block.replica_placement) as u32,
+                        replica_placement: rp as u32,
                         version: volume.version() as u32,
-                        ttl: super_block.ttl.into(),
+                        ttl: volume.super_block.ttl.into(),
                     };
                     heartbeat.volumes.push(msg);
                 } else if volume.expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES) {
@@ -352,6 +352,8 @@ impl Store {
         heartbeat.max_file_key = max_file_key;
         heartbeat.data_center = self.data_center.to_string();
         heartbeat.rack = self.rack.to_string();
+        heartbeat.has_no_volumes = heartbeat.volumes.is_empty();
+        heartbeat.has_no_ec_shards = heartbeat.ec_shards.is_empty();
 
         Ok(heartbeat)
     }
