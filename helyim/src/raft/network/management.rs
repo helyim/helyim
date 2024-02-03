@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use axum::{extract::State, Json};
+use faststr::FastStr;
 use openraft::{BasicNode, RaftMetrics};
 
 use crate::raft::{
@@ -24,8 +25,9 @@ pub async fn change_membership_handler(
 
 pub async fn init_handler(
     State(raft): State<RaftServer>,
+    Json(members): Json<HashMap<NodeId, FastStr>>,
 ) -> Json<Result<(), OpenRaftError<InitializeError>>> {
-    Json(raft.initialize().await)
+    Json(raft.initialize(members).await)
 }
 
 pub async fn metrics_handler(

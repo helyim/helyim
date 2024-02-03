@@ -2,7 +2,7 @@
 
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
-use helyim_proto::VolumeEcShardInformationMessage;
+use helyim_proto::directory::VolumeEcShardInformationMessage;
 
 use crate::{
     storage::{
@@ -85,7 +85,7 @@ impl Topology {
         (new_shards, deleted_shards)
     }
 
-    pub async fn increment_sync_data_node_ec_shards(
+    pub async fn incremental_sync_data_node_ec_shards(
         &self,
         new_ec_shards: &[VolumeEcShardInformationMessage],
         deleted_ec_shards: &[VolumeEcShardInformationMessage],
@@ -111,7 +111,7 @@ impl Topology {
         }
 
         data_node
-            .delta_update_ec_shards(&mut new_shards, &mut deleted_shards)
+            .delta_update_ec_shards(&new_shards, &deleted_shards)
             .await;
 
         for shard in new_shards.iter() {

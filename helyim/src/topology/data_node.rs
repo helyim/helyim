@@ -1,11 +1,11 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{atomic::AtomicU64, Arc, Weak},
 };
 
-use dashmap::DashMap;
+use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
 use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
@@ -17,7 +17,6 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
     topology::{node::Node, rack::Rack},
     util::grpc::volume_server_client,
@@ -32,7 +31,7 @@ pub struct DataNode {
     node: Node,
     #[serde(skip)]
     pub rack: RwLock<Weak<Rack>>,
-    volumes: DashMap<VolumeId, VolumeInfo>,
+    pub volumes: DashMap<VolumeId, VolumeInfo>,
     pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
 }
@@ -50,11 +49,11 @@ impl DataNode {
         port: u16,
         public_url: FastStr,
         max_volume_count: i64,
-    ) -> Result<DataNode> {
+    ) -> DataNode {
         let node = Node::new(id);
         node.set_max_volume_count(max_volume_count);
 
-        Ok(DataNode {
+        DataNode {
             ip,
             port,
             public_url,
@@ -64,62 +63,91 @@ impl DataNode {
             volumes: DashMap::new(),
             ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
-        })
+        }
     }
 
     pub fn url(&self) -> String {
         format!("{}:{}", self.ip, self.port)
     }
 
-    pub async fn update_volumes(&self, volume_infos: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
-        let mut volumes = HashSet::new();
-        for info in volume_infos.iter() {
-            volumes.insert(info.id);
-        }
-
-        let mut deleted_id = vec![];
-        let mut deleted = vec![];
-
-        for volume in self.volumes.iter() {
-            if !volumes.contains(volume.key()) {
-                deleted_id.push(volume.id);
-
+    pub async fn delta_update_volumes(
+        &self,
+        new_volumes: &[VolumeInfo],
+        deleted_volumes: &[VolumeInfo],
+    ) {
+        for volume in deleted_volumes {
+            if self.volumes.remove(&volume.id).is_some() {
                 self.adjust_volume_count(-1).await;
+
                 if !volume.read_only {
                     self.adjust_active_volume_count(-1).await;
                 }
             }
         }
 
+        for volume in new_volumes {
+            self.add_or_update_volume(volume).await;
+        }
+    }
+
+    pub async fn update_volumes(
+        &self,
+        volume_infos: Vec<VolumeInfo>,
+    ) -> (Vec<VolumeInfo>, Vec<VolumeInfo>) {
+        let mut actual_volume_map = HashMap::new();
+        for info in volume_infos.iter() {
+            actual_volume_map.insert(info.id, info);
+        }
+
+        let mut deleted_id = vec![];
+        let mut deleted_volumes = vec![];
+        let mut new_volumes = vec![];
+
+        for volume in self.volumes.iter() {
+            if !actual_volume_map.contains_key(volume.key()) {
+                deleted_id.push(volume.id);
+            }
+        }
+
         for info in volume_infos {
-            self.add_or_update_volume(info).await;
+            if self.add_or_update_volume(&info).await {
+                new_volumes.push(info);
+            }
         }
 
         for id in deleted_id.iter() {
             if let Some((_, volume)) = self.volumes.remove(id) {
-                deleted.push(volume);
+                self.adjust_volume_count(-1).await;
+                if !volume.read_only {
+                    self.adjust_active_volume_count(-1).await;
+                }
+                deleted_volumes.push(volume);
             }
         }
 
-        deleted
+        (new_volumes, deleted_volumes)
     }
 
     #[allow(clippy::map_entry)]
-    pub async fn add_or_update_volume(&self, v: VolumeInfo) {
+    pub async fn add_or_update_volume(&self, v: &VolumeInfo) -> bool {
+        let mut is_new = false;
         if self.volumes.contains_key(&v.id) {
-            self.volumes.insert(v.id, v);
+            self.volumes.insert(v.id, v.clone());
         } else {
             self.adjust_volume_count(1).await;
             if !v.read_only {
                 self.adjust_active_volume_count(1).await;
             }
             self.adjust_max_volume_id(v.id).await;
-            self.volumes.insert(v.id, v);
+            self.volumes.insert(v.id, v.clone());
+            is_new = true
         }
+
+        is_new
     }
 
-    pub fn get_volume(&self, vid: VolumeId) -> Option<VolumeInfo> {
-        self.volumes.get(&vid).map(|volume| volume.value().clone())
+    pub fn get_volume(&self, vid: VolumeId) -> Option<Ref<VolumeId, VolumeInfo>> {
+        self.volumes.get(&vid)
     }
 
     pub async fn rack_id(&self) -> FastStr {
@@ -137,7 +165,9 @@ impl DataNode {
     pub async fn set_rack(&self, rack: Weak<Rack>) {
         *self.rack.write().await = rack;
     }
+}
 
+impl DataNode {
     pub async fn allocate_volume(
         &self,
         request: AllocateVolumeRequest,
@@ -190,7 +220,8 @@ impl DataNode {
 }
 
 impl DataNode {
-    pub fn free_volumes(&self) -> i64 {
+    /// number of free volume slots
+    pub fn free_space(&self) -> i64 {
         self.max_volume_count() - self.volume_count()
     }
 
@@ -259,3 +290,43 @@ impl DerefMut for DataNode {
 }
 
 pub type DataNodeRef = Arc<DataNode>;
+
+#[cfg(test)]
+mod test {
+    use faststr::FastStr;
+
+    use crate::{
+        storage::{ReplicaPlacement, Ttl, VolumeInfo, CURRENT_VERSION},
+        topology::data_node::DataNode,
+    };
+
+    async fn setup() -> DataNode {
+        let id = FastStr::new("127.0.0.1:9333");
+        let ip = FastStr::new("127.0.0.1");
+        let public_url = id.clone();
+        DataNode::new(id, ip, 9333, public_url, 1).await
+    }
+
+    #[tokio::test]
+    pub async fn test_add_or_update_volume() {
+        let data_node = setup().await;
+        let volume = VolumeInfo {
+            id: 0,
+            size: 0,
+            collection: FastStr::new("default_collection"),
+            version: CURRENT_VERSION,
+            ttl: Ttl::new("1d").unwrap(),
+            replica_placement: ReplicaPlacement::new("000").unwrap(),
+            ..Default::default()
+        };
+        let is_new = data_node.add_or_update_volume(&volume).await;
+        assert!(is_new);
+        let is_new = data_node.add_or_update_volume(&volume).await;
+        assert!(!is_new);
+
+        assert_eq!(data_node.max_volume_id(), 0);
+        assert_eq!(data_node.max_volume_count(), 1);
+        assert_eq!(data_node.active_volume_count(), 1);
+        assert_eq!(data_node.free_space(), 0);
+    }
+}

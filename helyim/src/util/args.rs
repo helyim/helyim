@@ -1,8 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use faststr::FastStr;
 
-use crate::raft::types::NodeId;
-
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]
 #[command(author, version, about, long_about = None)]
@@ -40,15 +38,21 @@ pub struct MasterOptions {
     pub raft: RaftOptions,
 }
 
+impl MasterOptions {
+    pub fn check_raft_peers(&mut self) {
+        let this_node = FastStr::new(format!("{}:{}", self.ip, self.port));
+        if !self.raft.peers.contains(&this_node) {
+            self.raft.peers.push(this_node);
+        }
+    }
+}
+
 // TODO: if clap support prefix in flatten derive, the following fields will remove prefix `raft_`
 #[derive(Args, Debug, Clone)]
 pub struct RaftOptions {
-    /// local raft node id
-    #[arg(long, default_value_t = 1)]
-    pub node_id: NodeId,
     /// raft peer in cluster, if not present, treat it as leader
     #[arg(long)]
-    pub peer: Option<FastStr>,
+    pub peers: Vec<FastStr>,
 }
 
 #[derive(Args, Debug)]

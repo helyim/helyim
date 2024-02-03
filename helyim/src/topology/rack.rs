@@ -11,7 +11,6 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
     storage::{VolumeError, VolumeId},
     topology::{data_center::DataCenter, data_node::DataNode, node::Node, DataNodeRef},
 };
@@ -48,15 +47,15 @@ impl Rack {
         port: u16,
         public_url: FastStr,
         max_volume_count: i64,
-    ) -> Result<DataNodeRef> {
+    ) -> DataNodeRef {
         match self.data_nodes.get(&id) {
-            Some(data_node) => Ok(data_node.value().clone()),
+            Some(data_node) => data_node.value().clone(),
             None => {
                 let data_node = Arc::new(
-                    DataNode::new(id.clone(), ip, port, public_url, max_volume_count).await?,
+                    DataNode::new(id.clone(), ip, port, public_url, max_volume_count).await,
                 );
                 self.link_data_node(data_node.clone()).await;
-                Ok(data_node)
+                data_node
             }
         }
     }
@@ -72,13 +71,13 @@ impl Rack {
         // randomly select
         let mut free_volumes = 0;
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_volumes();
+            free_volumes += data_node.free_space();
         }
 
         let idx = rand::thread_rng().gen_range(0..free_volumes);
 
         for data_node in self.data_nodes.iter() {
-            free_volumes -= data_node.free_volumes();
+            free_volumes -= data_node.free_space();
             if free_volumes == idx {
                 return Ok(data_node.clone());
             }
@@ -106,6 +105,19 @@ impl Rack {
         }
     }
 
+    pub async fn unlink_data_node(&self, id: &str) {
+        if let Some((_, data_node)) = self.data_nodes.remove(id) {
+            self.adjust_max_volume_count(-data_node.max_volume_count())
+                .await;
+            self.adjust_volume_count(-data_node.volume_count()).await;
+            self.adjust_ec_shard_count(-data_node.ec_shard_count())
+                .await;
+            self.adjust_active_volume_count(-data_node.active_volume_count())
+                .await;
+            *data_node.rack.write().await = Weak::new();
+        }
+    }
+
     pub fn volume_count(&self) -> i64 {
         let mut count = 0;
         for data_node in self.data_nodes.iter() {
@@ -122,12 +134,12 @@ impl Rack {
         max_volumes
     }
 
-    pub fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
+    pub fn free_space(&self) -> i64 {
+        let mut free_space = 0;
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_volumes();
+            free_space += data_node.free_space();
         }
-        free_volumes
+        free_space
     }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {

@@ -43,11 +43,11 @@ impl DataCenter {
         *self.topology.write().await = topology;
     }
 
-    pub async fn get_or_create_rack(&self, id: FastStr) -> RackRef {
-        match self.racks.get(&id) {
+    pub async fn get_or_create_rack(&self, id: &str) -> RackRef {
+        match self.racks.get(id) {
             Some(rack) => rack.value().clone(),
             None => {
-                let rack = Arc::new(Rack::new(id.clone()));
+                let rack = Arc::new(Rack::new(FastStr::new(id)));
                 self.link_rack(rack.clone()).await;
                 rack
             }
@@ -56,16 +56,16 @@ impl DataCenter {
 
     pub async fn reserve_one_volume(&self) -> Result<DataNodeRef, VolumeError> {
         // randomly select one
-        let mut free_volumes = 0;
+        let mut free_space = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.free_volumes();
+            free_space += rack.free_space();
         }
 
-        let idx = rand::thread_rng().gen_range(0..free_volumes);
+        let idx = rand::thread_rng().gen_range(0..free_space);
 
         for rack in self.racks.iter() {
-            free_volumes -= rack.free_volumes();
-            if free_volumes == idx {
+            free_space -= rack.free_space();
+            if free_space == idx {
                 return rack.reserve_one_volume().await;
             }
         }
@@ -107,12 +107,12 @@ impl DataCenter {
         max_volumes
     }
 
-    pub fn free_volumes(&self) -> i64 {
-        let mut free_volumes = 0;
+    pub fn free_space(&self) -> i64 {
+        let mut free_space = 0;
         for rack in self.racks.iter() {
-            free_volumes += rack.free_volumes();
+            free_space += rack.free_space();
         }
-        free_volumes
+        free_space
     }
 
     pub async fn adjust_volume_count(&self, volume_count_delta: i64) {

@@ -63,20 +63,23 @@ You can view the cluster status by accessing `http://localhost:9333/cluster/stat
 
 ```bash
 # start master1, treat it as leader
-cargo run --release --bin helyim -- master --port 9333 \
-      --node-id 1
+cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9333 \
+      --peers 127.0.0.1:9333 \
+      --peers 127.0.0.1:9335 \
+      --peers 127.0.0.1:9337
+      
       
 # start master2, treat it as learner
-cargo run --release --bin helyim -- master --port 9335 \
-      --node-id 2 \
-      # peer could be leader
-      --peer 127.0.0.1:9333
+cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9335 \
+      --peers 127.0.0.1:9333 \
+      --peers 127.0.0.1:9335 \
+      --peers 127.0.0.1:9337
       
 # start master3, treat it as learner
-cargo run --release --bin helyim -- master --port 9337 \
-      --node-id 3 \
-      # peer could be learner
-      --peer 127.0.0.1:9335
+cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9337 \
+      --peers 127.0.0.1:9333 \
+      --peers 127.0.0.1:9335 \
+      --peers 127.0.0.1:9337
 ```
 
 ### Benchmark

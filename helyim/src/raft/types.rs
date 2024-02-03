@@ -28,7 +28,7 @@ pub type RpcError<E = openraft::error::Infallible> =
     openraft::error::RPCError<NodeId, BasicNode, OpenRaftError<E>>;
 
 pub type ClientWriteError = openraft::error::ClientWriteError<NodeId, BasicNode>;
-pub type CheckIsLeaderError = openraft::error::CheckIsLeaderError<u64, BasicNode>;
+pub type CheckIsLeaderError = openraft::error::CheckIsLeaderError<NodeId, BasicNode>;
 pub type ForwardToLeader = openraft::error::ForwardToLeader<NodeId, BasicNode>;
 pub type InitializeError = openraft::error::InitializeError<NodeId, BasicNode>;
 

@@ -30,12 +30,12 @@ pub async fn assign_handler(
     };
     let option = Arc::new(request.volume_grow_option(&ctx.options.default_replication)?);
 
-    if !ctx.topology.has_writable_volume(option.clone()).await {
-        if ctx.topology.free_volumes() <= 0 {
+    if !ctx.topology.has_writable_volume(option.as_ref()).await {
+        if ctx.topology.free_space() <= 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
-            .grow_by_type(option.clone(), ctx.topology.clone())
+            .grow_by_type(option.as_ref(), ctx.topology.as_ref())
             .await?;
     }
     let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
@@ -105,7 +105,7 @@ pub async fn cluster_status_handler(State(ctx): State<DirectoryState>) -> Json<C
     let status = ClusterStatus {
         is_leader,
         leader,
-        peers: peers.into_values().collect(),
+        peers,
     };
     Json(status)
 }

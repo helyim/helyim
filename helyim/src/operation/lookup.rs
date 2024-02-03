@@ -1,7 +1,7 @@
 use std::{num::ParseIntError, time::Duration};
 
 use faststr::FastStr;
-use helyim_proto::{
+use helyim_proto::directory::{
     lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
 use moka::sync::{Cache, CacheBuilder};

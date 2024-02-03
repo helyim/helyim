@@ -219,6 +219,7 @@ impl Volume {
                         .read(true)
                         .write(true)
                         .create(true)
+                        .truncate(true)
                         .mode(0o644)
                         .open(&name)?;
                     info!("create volume {} data file success", self.id);
@@ -260,6 +261,7 @@ impl Volume {
                 fs::OpenOptions::new()
                     .read(true)
                     .create(true)
+                    .truncate(true)
                     .write(true)
                     .mode(0o644)
                     .open(self.index_filename())?

@@ -77,8 +77,10 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
 
     let log_opts = opts.log.clone();
     match opts.command {
-        Command::Master(master) => {
+        Command::Master(mut master) => {
             log_init(level, &log_opts, "master")?;
+
+            master.check_raft_peers();
 
             info!("starting master server....");
             start_master(master).await

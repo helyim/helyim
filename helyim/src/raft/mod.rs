@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
     time::Duration,
 };
@@ -16,7 +16,7 @@ use nom::{
 };
 use openraft::{storage::Adaptor, BasicNode, Config};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{error, info, warn};
+use tracing::warn;
 
 use crate::{
     raft::{
@@ -44,6 +44,23 @@ mod network;
 mod store;
 pub mod types;
 
+fn compute_node_id(addr: &str) -> NodeId {
+    let mut node = 0;
+    for (idx, c) in addr.char_indices() {
+        node += idx * c as usize;
+    }
+    node as u64
+}
+
+fn peer_with_node_id(peers: &[FastStr]) -> HashMap<NodeId, FastStr> {
+    let mut peers_with_node_id = HashMap::new();
+    for peer in peers {
+        let node_id = compute_node_id(peer);
+        peers_with_node_id.insert(node_id, peer.clone());
+    }
+    peers_with_node_id
+}
+
 // Representation of an application state. This struct can be shared around to share
 // instances of raft, store and more.
 #[derive(Clone)]
@@ -56,14 +73,20 @@ pub struct RaftServer {
 }
 
 impl RaftServer {
-    pub async fn initialize(&self) -> Result<(), OpenRaftError<InitializeError>> {
+    pub async fn initialize(
+        &self,
+        peers: HashMap<NodeId, FastStr>,
+    ) -> Result<(), OpenRaftError<InitializeError>> {
         let mut nodes = BTreeMap::new();
-        nodes.insert(
-            self.id,
-            BasicNode {
-                addr: self.addr.clone(),
-            },
-        );
+        // this raft server should be contained in peers
+        for (node, peer) in peers.iter() {
+            nodes.insert(
+                *node,
+                BasicNode {
+                    addr: peer.to_string(),
+                },
+            );
+        }
         self.raft.initialize(nodes).await
     }
 
@@ -95,7 +118,7 @@ impl RaftServer {
 }
 
 impl RaftServer {
-    pub async fn start_node(node_id: NodeId, node_addr: &str) -> Result<Self, RaftError> {
+    pub async fn start_node(node_addr: &str) -> Result<Self, RaftError> {
         // Create a configuration for the raft instance.
         let config = Config {
             heartbeat_interval: 500,
@@ -116,6 +139,7 @@ impl RaftServer {
         let network = NetworkFactory::new(node_addr);
 
         // Create a local raft instance.
+        let node_id = compute_node_id(node_addr);
         let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine).await?;
 
         Ok(RaftServer {
@@ -127,47 +151,23 @@ impl RaftServer {
         })
     }
 
-    pub async fn start_node_with_peer(
+    pub async fn start_node_with_peers(
         &self,
-        node_id: NodeId,
         node_addr: &str,
-        peer: Option<&FastStr>,
+        peers: &[FastStr],
     ) -> Result<(), RaftError> {
-        // wait for server to startup
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        if node_addr == peers[0] {
+            // wait for server to startup
+            tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let mut members = BTreeSet::new();
-        members.insert(node_id);
+            let raft_client = RaftClient::new(node_addr.to_string());
 
-        // if only one peer, treat it as leader
-        match peer {
-            Some(peer) => {
-                let raft_client = RaftClient::new(peer.to_string());
-
-                // add current raft node as learner
-                if let Err(err) = raft_client
-                    .add_learner((node_id, node_addr.to_string()))
-                    .await
-                {
-                    error!("add learner failed, {err}");
-                }
-
-                for (node_id, _) in raft_client.metrics().await?.membership_config.nodes() {
-                    members.insert(*node_id);
-                }
-
-                if let Err(err) = raft_client.change_membership(&members).await {
-                    error!("change membership failed, {err}");
-                }
-            }
-            None => {
-                info!("initialize raft server, node: {node_id}, address: {node_addr}");
-                if let Err(err) = self.initialize().await {
-                    warn!("initialize raft server failed, {err}");
-                }
+            let peers = peer_with_node_id(peers);
+            if let Err(err) = raft_client.init(&peers).await {
+                warn!("initialize raft server failed, {err}");
+                return Ok(());
             }
         }
-
         Ok(())
     }
 

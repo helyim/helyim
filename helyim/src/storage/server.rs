@@ -6,23 +6,26 @@ use std::{
 use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
-use futures::StreamExt;
-use helyim_proto::volume::{
-    volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
-    AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
-    VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
-    VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-    VacuumVolumeCompactResponse, VolumeDeleteRequest, VolumeDeleteResponse,
-    VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest,
-    VolumeEcShardReadResponse, VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse,
-    VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest,
-    VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest, VolumeEcShardsMountResponse,
-    VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest,
-    VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse,
-    VolumeInfo, VolumeMarkReadonlyRequest, VolumeMarkReadonlyResponse,
+use helyim_proto::{
+    directory::HeartbeatRequest,
+    volume::{
+        volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
+        AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
+        VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
+        VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
+        VacuumVolumeCompactResponse, VolumeDeleteRequest, VolumeDeleteResponse,
+        VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest,
+        VolumeEcShardReadResponse, VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse,
+        VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest,
+        VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest, VolumeEcShardsMountResponse,
+        VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest,
+        VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
+        VolumeEcShardsUnmountResponse, VolumeInfo, VolumeMarkReadonlyRequest,
+        VolumeMarkReadonlyResponse,
+    },
 };
 use tokio::time::sleep;
-use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
+use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info, warn};
@@ -50,6 +53,7 @@ use crate::{
     },
     util::{
         args::VolumeOptions,
+        chan::{delta_volume_channel, DeltaVolumeInfoReceiver},
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
@@ -77,19 +81,32 @@ impl VolumeServer {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
         let options = Arc::new(volume_opts);
-        let store = Arc::new(Store::new(options.clone(), needle_map_type).await?);
+
+        let (delta_volume_tx, delta_volume_rx) = delta_volume_channel();
+        let store = Arc::new(Store::new(options.clone(), needle_map_type, delta_volume_tx).await?);
 
         let addr = format!("{}:{}", options.ip, grpc_port(options.port)).parse()?;
+
+        // get leader from master
+        let cluster_status = list_master(&options.master_server).await?;
 
         let storage = VolumeServer {
             options,
             needle_map_type,
             read_redirect,
-            current_master: FastStr::empty(),
-            seed_master_nodes: Vec::new(),
+            current_master: cluster_status.leader,
+            seed_master_nodes: cluster_status.peers.into_values().collect(),
             store: store.clone(),
             shutdown,
         };
+
+        rt_spawn(Self::heartbeat(
+            store.clone(),
+            storage.seed_master_nodes.clone(),
+            storage.options.pulse,
+            delta_volume_rx,
+            storage.shutdown.new_receiver(),
+        ));
 
         rt_spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");
@@ -122,8 +139,6 @@ impl VolumeServer {
         let read_redirect = self.read_redirect;
         let pulse = self.options.pulse;
 
-        self.update_masters().await?;
-
         let ctx = StorageState {
             store,
             needle_map_type,
@@ -131,14 +146,6 @@ impl VolumeServer {
             pulse,
             looker: Arc::new(Looker::new()),
         };
-
-        rt_spawn(Self::heartbeat(
-            self.store.clone(),
-            self.seed_master_nodes.clone(),
-            pulse,
-            self.shutdown.new_receiver(),
-        ));
-
         // http server
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
@@ -150,20 +157,11 @@ impl VolumeServer {
 }
 
 impl VolumeServer {
-    async fn update_masters(&mut self) -> StdResult<(), VolumeError> {
-        let cluster_status = list_master(&self.options.master_server).await?;
-        self.current_master = FastStr::new(cluster_status.leader);
-        self.seed_master_nodes = cluster_status.peers;
-
-        Ok(())
-    }
-}
-
-impl VolumeServer {
     async fn heartbeat(
         store: StoreRef,
         seed_masters: Vec<FastStr>,
         pulse: u64,
+        delta_volume_rx: DeltaVolumeInfoReceiver,
         mut shutdown: async_broadcast::Receiver<()>,
     ) {
         let mut new_leader = FastStr::empty();
@@ -174,30 +172,32 @@ impl VolumeServer {
                     continue;
                 }
                 store.set_current_master(master.clone()).await;
+                let delta_volume = delta_volume_rx.clone();
                 tokio::select! {
                     ret = VolumeServer::do_heartbeat(
                         master,
                         store.clone(),
                         pulse,
+                        delta_volume,
                         shutdown.clone(),
                     ) => {
-                            match ret {
-                                Err(VolumeError::LeaderChanged(new, old)) => {
-                                    if !new.is_empty() {
-                                        new_leader = new;
-                                    }
+                        match ret {
+                            Err(VolumeError::LeaderChanged(new, old)) => {
+                                if !new.is_empty() {
+                                    new_leader = new;
                                 }
-                                Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
-                                    warn!("heartbeat to {master} error: {err}");
-                                    sleep(Duration::from_secs(pulse)).await;
-                                    new_leader = FastStr::empty();
-                                    store.set_current_master(FastStr::empty()).await;
-                                }
-                                Err(err) => {
-                                    error!("heartbeat but error occur: {err}");
-                                }
-                                _ => {}
+                            }
+                            Err(err @ (VolumeError::StartHeartbeat | VolumeError::SendHeartbeat(_))) => {
+                                warn!("heartbeat to {master} error: {err}");
+                                new_leader = FastStr::empty();
+                                store.set_current_master(FastStr::empty()).await;
+                            }
+                            Err(err) => {
+                                error!("heartbeat but error occur: {err}");
+                            }
+                            _ => continue
                         }
+                        sleep(Duration::from_secs(pulse)).await;
                     }
                     _ = shutdown.recv() => {
                         info!("stopping heartbeat.");
@@ -212,6 +212,7 @@ impl VolumeServer {
         master: &FastStr,
         store: StoreRef,
         pulse: u64,
+        delta_volume: DeltaVolumeInfoReceiver,
         mut shutdown_rx: async_broadcast::Receiver<()>,
     ) -> StdResult<(), VolumeError> {
         let mut interval = tokio::time::interval(Duration::from_secs(pulse));
@@ -227,6 +228,34 @@ impl VolumeServer {
                         }
 
                         yield store_ref.collect_erasure_coding_heartbeat().await;
+                    }
+                    Ok(message) = delta_volume.new_volumes_rx.recv() => {
+                        info!("volume server {}:{} adds volume {}", store_ref.ip, store_ref.port, message.id);
+
+                        let mut heartbeat = HeartbeatRequest::default();
+                        heartbeat.new_volumes.push(message);
+                        yield heartbeat;
+                    }
+                    Ok(message) = delta_volume.deleted_volumes_rx.recv() => {
+                        info!("volume server {}:{} adds volume {}", store_ref.ip, store_ref.port, message.id);
+
+                        let mut heartbeat = HeartbeatRequest::default();
+                        heartbeat.deleted_volumes.push(message);
+                        yield heartbeat;
+                    }
+                    Ok(message) = delta_volume.new_ec_shards_rx.recv() => {
+                        info!("volume server {}:{} adds ec shard {}", store_ref.ip, store_ref.port, message.id);
+
+                        let mut heartbeat = HeartbeatRequest::default();
+                        heartbeat.new_ec_shards.push(message);
+                        yield heartbeat;
+                    }
+                    Ok(message) = delta_volume.deleted_ec_shards_rx.recv() => {
+                        info!("volume server {}:{} deletes ec shard {}", store_ref.ip, store_ref.port, message.id);
+
+                        let mut heartbeat = HeartbeatRequest::default();
+                        heartbeat.deleted_ec_shards.push(message);
+                        yield heartbeat;
                     }
                     // to avoid server side got `channel closed` error
                     _ = shutdown_rx.recv() => {

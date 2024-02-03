@@ -21,7 +21,7 @@ pub struct VolumeLayout {
     pub readonly_volumes: DashMap<VolumeId, bool>,
     oversize_volumes: DashMap<VolumeId, bool>,
     #[serde(skip)]
-    pub locations: DashMap<VolumeId, Vec<DataNodeRef>>,
+    pub locations: Arc<DashMap<VolumeId, Vec<DataNodeRef>>>,
 }
 
 impl VolumeLayout {
@@ -33,11 +33,11 @@ impl VolumeLayout {
             writable_volumes: RwLock::new(Vec::new()),
             readonly_volumes: DashMap::new(),
             oversize_volumes: DashMap::new(),
-            locations: DashMap::new(),
+            locations: Arc::new(DashMap::new()),
         }
     }
 
-    pub async fn active_volume_count(&self, option: Arc<VolumeGrowOption>) -> i64 {
+    pub async fn active_volume_count(&self, option: &VolumeGrowOption) -> i64 {
         if option.data_center.is_empty() {
             return self.writable_volumes.read().await.len() as i64;
         }
@@ -120,11 +120,11 @@ impl VolumeLayout {
         locations.push(dn);
     }
 
-    pub async fn register_volume(&self, v: &VolumeInfo, dn: DataNodeRef) {
+    pub async fn register_volume(&self, v: &VolumeInfo, dn: &DataNodeRef) {
         // release write lock
         {
             let mut locations = self.locations.entry(v.id).or_default();
-            VolumeLayout::set_node(&mut locations, dn).await;
+            VolumeLayout::set_node(&mut locations, dn.clone()).await;
         }
 
         let locations = self.locations.get(&v.id).unwrap();
@@ -133,7 +133,7 @@ impl VolumeLayout {
             match volume {
                 Some(v) => {
                     if v.read_only {
-                        self.remove_from_writable(v.id).await;
+                        self.remove_from_writable(&v.id).await;
                         self.readonly_volumes.insert(v.id, true);
                         return;
                     } else {
@@ -141,7 +141,7 @@ impl VolumeLayout {
                     }
                 }
                 None => {
-                    self.remove_from_writable(v.id).await;
+                    self.remove_from_writable(&v.id).await;
                     self.readonly_volumes.remove(&v.id);
                     return;
                 }
@@ -159,7 +159,7 @@ impl VolumeLayout {
                     self.set_volume_writable(v.id).await;
                 }
             } else {
-                self.remove_from_writable(v.id).await;
+                self.remove_from_writable(&v.id).await;
             }
         }
     }
@@ -191,6 +191,18 @@ impl VolumeLayout {
         false
     }
 
+    pub async fn set_volume_unavailable(&self, vid: &VolumeId, data_node: &DataNodeRef) -> bool {
+        if let Some(mut locations) = self.locations.get_mut(vid) {
+            locations
+                .value_mut()
+                .retain(|node| node.ip != data_node.ip || node.port != data_node.port);
+            if locations.len() < self.rp.copy_count() {
+                return self.remove_from_writable(vid).await;
+            }
+        }
+        false
+    }
+
     pub async fn set_volume_writable(&self, vid: VolumeId) -> bool {
         if self.writable_volumes.read().await.contains(&vid) {
             return false;
@@ -199,20 +211,37 @@ impl VolumeLayout {
         true
     }
 
-    pub async fn remove_from_writable(&self, vid: VolumeId) {
+    pub async fn remove_from_writable(&self, vid: &VolumeId) -> bool {
         let mut idx = -1;
         for (i, id) in self.writable_volumes.read().await.iter().enumerate() {
-            if *id == vid {
+            if id == vid {
                 idx = i as i32;
             }
         }
-        if idx > 0 {
+        if idx >= 0 {
             self.writable_volumes.write().await.remove(idx as usize);
+            return true;
         }
+        false
     }
 
-    pub async fn unregister_volume(&self, v: &VolumeInfo) {
-        self.remove_from_writable(v.id).await;
+    pub async fn unregister_volume(&self, v: &VolumeInfo, data_node: &DataNodeRef) {
+        let mut idx = -1;
+        if let Some(mut location) = self.locations.get_mut(&v.id) {
+            for (i, node) in location.value().iter().enumerate() {
+                if node.ip == data_node.ip && node.port == data_node.port {
+                    idx = i as i32;
+                    break;
+                }
+            }
+            if idx >= 0 {
+                location.remove(idx as usize);
+            }
+        }
+        if idx >= 0 {
+            self.ensure_correct_writable(v).await;
+            self.locations.retain(|_, locations| !locations.is_empty());
+        }
     }
 
     pub fn lookup(&self, vid: VolumeId) -> Option<Vec<DataNodeRef>> {

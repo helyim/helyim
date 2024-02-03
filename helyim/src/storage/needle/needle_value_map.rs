@@ -94,7 +94,7 @@ impl NeedleValueMap for SortedIndexMap {
     }
 
     fn delete(&self, key: NeedleId) -> Option<NeedleValue> {
-        self.map.write().remove(&key)
+        self.map.write().shift_remove(&key)
     }
 
     fn get(&self, key: NeedleId) -> Option<NeedleValue> {
