@@ -71,7 +71,9 @@ impl MasterClient {
         let client_name = self.name.clone();
         let request_stream = stream! {
             loop {
-                yield keep_connected_request(&client_name);
+                yield KeepConnectedRequest {
+                    name: client_name.to_string(),
+                };
                 interval.tick().await;
             }
         };
@@ -118,12 +120,6 @@ impl MasterClient {
                 Ok(FastStr::empty())
             }
         }
-    }
-}
-
-pub fn keep_connected_request(name: &str) -> KeepConnectedRequest {
-    KeepConnectedRequest {
-        name: name.to_string(),
     }
 }
 
