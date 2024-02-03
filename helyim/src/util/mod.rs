@@ -3,6 +3,8 @@ use faststr::FastStr;
 
 pub mod args;
 
+pub mod chan;
+
 pub mod file;
 
 pub mod grpc;

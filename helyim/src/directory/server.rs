@@ -17,7 +17,7 @@ use helyim_proto::directory::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     client::MasterClient,
@@ -510,12 +510,15 @@ async fn update_volume_layout(
             )
             .await;
 
-        debug!(
-            "incremental sync data node: {} registration, add volumes: {:?}, remove volumes: {:?}",
-            data_node.url(),
-            volume_location.new_vids,
-            volume_location.deleted_vids
-        );
+        if !volume_location.new_vids.is_empty() || !volume_location.deleted_vids.is_empty() {
+            info!(
+                "incremental sync data node: {} registration, add volumes: {:?}, remove volumes: \
+                 {:?}",
+                data_node.url(),
+                volume_location.new_vids,
+                volume_location.deleted_vids
+            );
+        }
     }
 
     if !heartbeat.volumes.is_empty() || heartbeat.has_no_volumes {
@@ -535,12 +538,14 @@ async fn update_volume_layout(
             volume_location.deleted_vids.push(volume.id);
         }
 
-        debug!(
-            "sync data node: {} registration, add volumes: {:?}, remove volumes: {:?}",
-            data_node.url(),
-            volume_location.new_vids,
-            volume_location.deleted_vids
-        );
+        if !volume_location.new_vids.is_empty() || !volume_location.deleted_vids.is_empty() {
+            info!(
+                "sync data node: {} registration, add volumes: {:?}, remove volumes: {:?}",
+                data_node.url(),
+                volume_location.new_vids,
+                volume_location.deleted_vids
+            );
+        }
     }
 
     if !heartbeat.new_ec_shards.is_empty() || !heartbeat.deleted_ec_shards.is_empty() {
@@ -564,13 +569,15 @@ async fn update_volume_layout(
             volume_location.deleted_ec_vids.push(shard.id);
         }
 
-        debug!(
-            "incremental sync data node: {} ec shards registration, add ec volumes: {:?}, remove \
-             ec volumes: {:?}",
-            data_node.url(),
-            volume_location.new_ec_vids,
-            volume_location.deleted_ec_vids
-        );
+        if !volume_location.new_ec_vids.is_empty() || !volume_location.deleted_ec_vids.is_empty() {
+            info!(
+                "incremental sync data node: {} ec shards registration, add ec volumes: {:?}, \
+                 remove ec volumes: {:?}",
+                data_node.url(),
+                volume_location.new_ec_vids,
+                volume_location.deleted_ec_vids
+            );
+        }
     }
 
     if !heartbeat.ec_shards.is_empty() || heartbeat.has_no_ec_shards {
@@ -588,12 +595,15 @@ async fn update_volume_layout(
             }
             volume_location.deleted_ec_vids.push(shard.volume_id);
         }
-        debug!(
-            "sync data node: {} ec_shards, add ec volumes: {:?}, remove ec volumes: {:?}",
-            data_node.url(),
-            volume_location.new_ec_vids,
-            volume_location.deleted_ec_vids
-        );
+
+        if !volume_location.new_ec_vids.is_empty() || !volume_location.deleted_ec_vids.is_empty() {
+            info!(
+                "sync data node: {} ec_shards, add ec volumes: {:?}, remove ec volumes: {:?}",
+                data_node.url(),
+                volume_location.new_ec_vids,
+                volume_location.deleted_ec_vids
+            );
+        }
     }
 
     if !volume_location.new_vids.is_empty()

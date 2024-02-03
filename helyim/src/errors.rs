@@ -78,6 +78,8 @@ pub enum Error {
     Hyper(#[from] hyper::Error),
     #[error("Axum http error: {0}")]
     AxumHttp(#[from] axum::http::Error),
+    #[error("Reqwest error: {0}")]
+    Reqwest(#[from] reqwest::Error),
 
     // tonic
     #[error("Tonic status: {0}")]

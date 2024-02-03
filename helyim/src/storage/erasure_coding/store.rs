@@ -75,13 +75,13 @@ impl Store {
         for location in self.locations.iter() {
             match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
-                    if let Some(tx) = self.new_ec_shards_tx.as_ref() {
-                        tx.unbounded_send(VolumeEcShardInformationMessage {
+                    self.delta_volume_tx
+                        .add_ec_shard(VolumeEcShardInformationMessage {
                             id: vid,
                             collection: collection.to_string(),
                             ec_index_bits: add_shard_id(0, shard_id),
-                        })?;
-                    }
+                        })
+                        .await;
                     return Ok(());
                 }
                 Err(EcVolumeError::Io(err)) => {
@@ -114,14 +114,13 @@ impl Store {
         if let Some(shard) = self.find_ec_shard(vid, shard_id).await {
             for location in self.locations.iter() {
                 if location.unload_ec_shard(vid, shard_id).await {
-                    if let Some(tx) = self.deleted_ec_shards_tx.as_ref() {
-                        tx.unbounded_send(VolumeEcShardInformationMessage {
+                    self.delta_volume_tx
+                        .delete_ec_shard(VolumeEcShardInformationMessage {
                             id: vid,
                             collection: shard.collection.to_string(),
                             ec_index_bits: add_shard_id(0, shard_id),
-                        })?;
-                        return Ok(());
-                    }
+                        })
+                        .await;
                 }
             }
         }

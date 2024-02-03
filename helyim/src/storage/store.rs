@@ -8,10 +8,8 @@ use std::{
 
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
-use futures::channel::mpsc::UnboundedSender;
 use helyim_proto::directory::{
-    HeartbeatRequest, VolumeEcShardInformationMessage, VolumeInformationMessage,
-    VolumeShortInformationMessage,
+    HeartbeatRequest, VolumeInformationMessage, VolumeShortInformationMessage,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -26,7 +24,7 @@ use crate::{
         volume::Volume,
         ReplicaPlacement, Ttl, VolumeError, VolumeId,
     },
-    util::args::VolumeOptions,
+    util::{args::VolumeOptions, chan::DeltaVolumeInfoSender},
 };
 
 const MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES: u64 = 10;
@@ -45,16 +43,17 @@ pub struct Store {
     pub volume_size_limit: AtomicU64,
     pub needle_map_type: NeedleMapType,
 
-    pub new_volumes_tx: Option<UnboundedSender<VolumeShortInformationMessage>>,
-    pub deleted_volumes_tx: Option<UnboundedSender<VolumeShortInformationMessage>>,
-    pub new_ec_shards_tx: Option<UnboundedSender<VolumeEcShardInformationMessage>>,
-    pub deleted_ec_shards_tx: Option<UnboundedSender<VolumeEcShardInformationMessage>>,
+    pub delta_volume_tx: DeltaVolumeInfoSender,
 
     pub current_master: RwLock<FastStr>,
 }
 
 impl Store {
-    pub async fn new(options: Arc<VolumeOptions>, needle_map_type: NeedleMapType) -> Result<Store> {
+    pub async fn new(
+        options: Arc<VolumeOptions>,
+        needle_map_type: NeedleMapType,
+        delta_volume_tx: DeltaVolumeInfoSender,
+    ) -> Result<Store> {
         let mut locations = vec![];
 
         let folders = options.paths();
@@ -79,10 +78,7 @@ impl Store {
             rack: FastStr::empty(),
             connected: false,
             volume_size_limit: AtomicU64::new(0),
-            new_volumes_tx: None,
-            deleted_volumes_tx: None,
-            new_ec_shards_tx: None,
-            deleted_ec_shards_tx: None,
+            delta_volume_tx,
             current_master: RwLock::new(FastStr::empty()),
         })
     }
@@ -187,17 +183,16 @@ impl Store {
 
         for location in self.locations.iter() {
             if location.delete_volume(vid).is_ok() {
-                let message = VolumeShortInformationMessage {
-                    id: *volume.key(),
-                    collection: volume.collection.to_string(),
-                    replica_placement: Into::<u8>::into(volume.super_block.replica_placement)
-                        as u32,
-                    version: volume.version() as u32,
-                    ttl: volume.super_block.ttl.to_u32(),
-                };
-                if let Some(deleted_volume_tx) = self.deleted_volumes_tx.as_ref() {
-                    deleted_volume_tx.unbounded_send(message)?;
-                }
+                self.delta_volume_tx
+                    .delete_volume(VolumeShortInformationMessage {
+                        id: *volume.key(),
+                        collection: volume.collection.to_string(),
+                        replica_placement: Into::<u8>::into(volume.super_block.replica_placement)
+                            as u32,
+                        version: volume.version() as u32,
+                        ttl: volume.super_block.ttl.to_u32(),
+                    })
+                    .await;
                 return Ok(());
             }
         }
@@ -263,16 +258,15 @@ impl Store {
         let version = volume.version();
         location.add_volume(vid, volume);
 
-        if let Some(new_volume_tx) = self.new_volumes_tx.as_ref() {
-            let message = VolumeShortInformationMessage {
+        self.delta_volume_tx
+            .add_volume(VolumeShortInformationMessage {
                 id: vid,
                 collection: collection.to_string(),
                 replica_placement: Into::<u8>::into(replica_placement) as u32,
                 version: version as u32,
                 ttl: ttl.to_u32(),
-            };
-            new_volume_tx.unbounded_send(message)?;
-        }
+            })
+            .await;
         Ok(())
     }
 
