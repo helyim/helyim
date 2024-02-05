@@ -1,9 +1,10 @@
 use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
+    filer::FilerSever,
     storage::{NeedleMapType, VolumeServer},
     util::{
-        args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
+        args::{Command, FilerOptions, LogOptions, MasterOptions, Opts, VolumeOptions},
         sys::shutdown_signal,
     },
 };
@@ -23,6 +24,16 @@ async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::err
 async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut server =
         VolumeServer::new(NeedleMapType::NeedleMapInMemory, volume_opts, false).await?;
+
+    server.start().await?;
+    shutdown_signal().await;
+    server.stop().await?;
+
+    Ok(())
+}
+
+async fn start_filer(filer_opt: FilerOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let mut server = FilerSever::new(filer_opt).await?;
 
     server.start().await?;
     shutdown_signal().await;
@@ -94,6 +105,12 @@ async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
 
             info!("starting volume....");
             start_volume(volume).await
+        }
+        Command::Filer(filer) => {
+            log_init(level, &log_opts, "filer")?;
+
+            info!("starting filer server....");
+            start_filer(filer).await
         }
     }
 }

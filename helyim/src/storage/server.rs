@@ -10,18 +10,18 @@ use helyim_proto::{
     directory::HeartbeatRequest,
     volume::{
         volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
-        AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
-        VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
-        VacuumVolumeCommitRequest, VacuumVolumeCommitResponse, VacuumVolumeCompactRequest,
-        VacuumVolumeCompactResponse, VolumeDeleteRequest, VolumeDeleteResponse,
-        VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse, VolumeEcShardReadRequest,
-        VolumeEcShardReadResponse, VolumeEcShardsCopyRequest, VolumeEcShardsCopyResponse,
-        VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse, VolumeEcShardsGenerateRequest,
-        VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest, VolumeEcShardsMountResponse,
-        VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse, VolumeEcShardsToVolumeRequest,
-        VolumeEcShardsToVolumeResponse, VolumeEcShardsUnmountRequest,
-        VolumeEcShardsUnmountResponse, VolumeInfo, VolumeMarkReadonlyRequest,
-        VolumeMarkReadonlyResponse,
+        AllocateVolumeRequest, AllocateVolumeResponse, BatchDeleteRequest, BatchDeleteResponse,
+        VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
+        VacuumVolumeCleanupResponse, VacuumVolumeCommitRequest, VacuumVolumeCommitResponse,
+        VacuumVolumeCompactRequest, VacuumVolumeCompactResponse, VolumeDeleteRequest,
+        VolumeDeleteResponse, VolumeEcBlobDeleteRequest, VolumeEcBlobDeleteResponse,
+        VolumeEcShardReadRequest, VolumeEcShardReadResponse, VolumeEcShardsCopyRequest,
+        VolumeEcShardsCopyResponse, VolumeEcShardsDeleteRequest, VolumeEcShardsDeleteResponse,
+        VolumeEcShardsGenerateRequest, VolumeEcShardsGenerateResponse, VolumeEcShardsMountRequest,
+        VolumeEcShardsMountResponse, VolumeEcShardsRebuildRequest, VolumeEcShardsRebuildResponse,
+        VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse,
+        VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse, VolumeInfo,
+        VolumeMarkReadonlyRequest, VolumeMarkReadonlyResponse,
     },
 };
 use tokio::time::sleep;
@@ -57,6 +57,7 @@ use crate::{
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
+        parser::parse_host_port,
         sys::exit,
     },
 };
@@ -269,7 +270,11 @@ impl VolumeServer {
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();
-                info!("heartbeat client starting up success, will heartbeat to {master}");
+
+                let (_ip, port) = parse_host_port(master)?;
+                let grpc_port = grpc_port(port);
+                info!("heartbeat client starting up success, will heartbeat to {grpc_port}");
+
                 while let Some(response) = stream.next().await {
                     match response {
                         Ok(response) => {
@@ -721,5 +726,12 @@ impl HelyimVolumeServer for StorageGrpcServer {
                 request.volume_id
             ))),
         }
+    }
+
+    async fn batch_delete(
+        &self,
+        request: Request<BatchDeleteRequest>,
+    ) -> StdResult<Response<BatchDeleteResponse>, Status> {
+        todo!()
     }
 }

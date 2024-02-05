@@ -1,4 +1,6 @@
 #![allow(unused_attributes)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::mutable_key_type)]
 #![allow(clippy::module_inception)]
@@ -6,9 +8,9 @@
 
 pub mod client;
 pub mod directory;
+pub mod filer;
 
 pub mod errors;
-mod filer;
 mod images;
 mod operation;
 mod proto;

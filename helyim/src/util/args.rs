@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clap::{Args, Parser, Subcommand};
 use faststr::FastStr;
 
@@ -15,6 +17,7 @@ pub struct Opts {
 pub enum Command {
     Master(MasterOptions),
     Volume(VolumeOptions),
+    Filer(FilerOptions),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -111,6 +114,37 @@ impl VolumeOptions {
             .collect()
     }
 }
+
+// just
+#[derive(Args, Debug)]
+pub struct FilerOptions {
+    #[arg(long, default_value("127.0.0.1:9333"))]
+    pub master_server: Vec<FastStr>,
+    #[arg(long)]
+    pub collection: FastStr,
+    #[arg(long)]
+    pub default_replication: FastStr,
+    #[arg(long, default_value_t = false)]
+    pub redirect_on_read: bool,
+    #[arg(long)]
+    pub disable_dir_listing: bool,
+    #[arg(long, default_value_t = 1)]
+    pub max_mb: i64,
+    #[arg(long, default_value_t = 100)]
+    pub dir_listing_limit: u64,
+    #[arg(long, default_value(""))]
+    pub data_center: FastStr,
+    // #[arg(long)]
+    // pub default_level_db_dir: FastStr,
+    #[arg(long, default_value_t = false)]
+    pub disable_http: bool,
+    #[arg(long, default_value("127.0.0.1"))]
+    pub ip: FastStr,
+    #[arg(long, default_value_t = 8888)]
+    pub port: u16,
+}
+
+pub type FilerOptionsRef = Arc<FilerOptions>;
 
 #[derive(Args, Debug, Clone)]
 pub struct LogOptions {

@@ -1,4 +1,7 @@
-use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, time::SystemTime};
+use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, path::Path, time::SystemTime};
+
+use faststr::FastStr;
+use mime_guess::mime;
 
 pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)>, std::io::Error> {
     match metadata(filename) {
@@ -31,6 +34,48 @@ pub fn file_exists(filename: &str) -> Result<bool, std::io::Error> {
             }
         }
     }
+}
+
+pub fn file_name(path: &str) -> String {
+    let path = Path::new(path);
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap()
+}
+
+pub fn dir_and_name(path: &str) -> (String, String) {
+    let path = Path::new(path);
+    let dir = path.parent().map_or("/".to_string(), |path| {
+        path.as_os_str().to_string_lossy().to_string()
+    });
+    let file_name = path
+        .file_name()
+        .map_or("".to_string(), |name| name.to_string_lossy().to_string());
+
+    (dir, file_name)
+}
+
+pub fn new_full_path(dir: &str, filename: &str) -> String {
+    let path = Path::new(dir);
+    path.join(filename)
+        .as_os_str()
+        .to_string_lossy()
+        .to_string()
+}
+
+pub fn guess_mimetype(filename: &str) -> FastStr {
+    let mut guess_mtype = String::new();
+    if let Some(idx) = filename.find('.') {
+        let ext = &filename[idx..];
+        let m = mime_guess::from_ext(ext).first_or_octet_stream();
+        if m.type_() != mime::APPLICATION || m.subtype() != mime::OCTET_STREAM {
+            guess_mtype.push_str(m.type_().as_str());
+            guess_mtype.push('/');
+            guess_mtype.push_str(m.subtype().as_str());
+        }
+    }
+
+    guess_mtype.into()
 }
 
 #[cfg(test)]
