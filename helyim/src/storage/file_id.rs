@@ -1,5 +1,7 @@
 use std::fmt::{Display, Formatter};
 
+use helyim_proto::filer::FileId as Pb_FileId;
+
 use super::VolumeId;
 use crate::storage::NeedleId;
 
@@ -23,5 +25,15 @@ impl FileId {
 impl Display for FileId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{},{:x}{:08x}", self.volume_id, self.key, self.hash)
+    }
+}
+
+impl From<&Pb_FileId> for FileId {
+    fn from(value: &Pb_FileId) -> Self {
+        Self {
+            volume_id: value.volume_id,
+            key: value.file_key,
+            hash: value.cookie,
+        }
     }
 }
