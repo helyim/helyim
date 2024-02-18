@@ -49,7 +49,7 @@ parking_lot = "0.12"
 pprof = "0.13"
 prost = "0.12"
 rand = "0.8"
-reed-solomon-erasure = { git = "https://github.com/helyim/reed-solomon-erasure", branch = "deps" }
+reed-solomon-erasure = { git = "https://github.com/helyim/reed-solomon-erasure", branch = "main" }
 regex = "1"
 reqwest = "0.11"
 rustix = "0.38"
