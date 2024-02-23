@@ -502,6 +502,8 @@ impl DerefMut for Topology {
 pub enum TopologyError {
     #[error("{0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
 
     #[error("This raft cluster has no leader")]
     NoLeader,

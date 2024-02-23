@@ -4,12 +4,12 @@ use std::{
 };
 
 use axum::{
+    body::Body,
     extract::State,
-    headers::{HeaderName, HeaderValue},
     http::{
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
-            IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+            HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
+            CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
         },
         Response, StatusCode,
     },
@@ -21,7 +21,6 @@ use futures::stream::once;
 use helyim_proto::volume::{
     VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
 };
-use hyper::Body;
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -201,7 +200,7 @@ async fn replicate_write(
     }
 
     let params = vec![("type", "replicate")];
-    let data = bincode::serialize(&needle)?;
+    let data = Bytes::from(bincode::serialize(&needle)?);
 
     let mut volume_locations = ctx
         .looker
@@ -216,18 +215,17 @@ async fn replicate_write(
                 }
                 s.spawn(async {
                     let url = format!("http://{}{}", location.url, path);
-                    if let Err(err) =
-                        util::http::post(&url, &params, &data)
-                            .await
-                            .and_then(|body| {
-                                let value: Value = serde_json::from_slice(&body)?;
-                                if let Some(err) = value["error"].as_str() {
-                                    if !err.is_empty() {
-                                        return Err(anyhow!("write {} err: {err}", location.url));
-                                    }
+                    if let Err(err) = util::http::post(&url, &params, data.clone())
+                        .await
+                        .and_then(|body| {
+                            let value: Value = serde_json::from_slice(&body)?;
+                            if let Some(err) = value["error"].as_str() {
+                                if !err.is_empty() {
+                                    return Err(anyhow!("write {} err: {err}", location.url));
                                 }
-                                Ok(())
-                            })
+                            }
+                            Ok(())
+                        })
                     {
                         error!("replicate write failed, error: {err}");
                     }
