@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::{BufReader, Read},
     os::unix::fs::FileExt,
-    result::Result,
     sync::Arc,
 };
 
