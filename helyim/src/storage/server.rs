@@ -24,7 +24,7 @@ use helyim_proto::{
         VolumeMarkReadonlyResponse,
     },
 };
-use tokio::time::sleep;
+use tokio::{net::TcpListener, time::sleep};
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
@@ -344,22 +344,21 @@ async fn start_volume_server(
         ))
         .with_state(ctx);
 
-    match hyper::Server::try_bind(&addr) {
-        Ok(builder) => {
-            let server = builder.serve(app.into_make_service());
-            let graceful = server.with_graceful_shutdown(async {
-                let _ = shutdown.recv().await;
-            });
-            info!("volume api server starting up. binding addr: {addr}");
-            match graceful.await {
-                Ok(()) => info!("volume api server shutting down gracefully."),
-                Err(e) => error!("volume api server stop failed, {}", e),
+    info!("volume api server is starting up. binding addr: {addr}");
+    match TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if let Err(err) = axum::serve(listener, app.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown.recv().await;
+                    info!("volume api server shutting down gracefully.");
+                })
+                .await
+            {
+                error!("starting volume api server failed, error: {err}");
+                exit();
             }
         }
-        Err(err) => {
-            error!("starting volume api server failed, error: {err}");
-            exit();
-        }
+        Err(err) => error!("binding volume api address {addr} failed, error: {err}"),
     }
 }
 

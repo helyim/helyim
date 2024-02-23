@@ -14,6 +14,7 @@ use helyim_proto::directory::{
     HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest, Location, LookupEcVolumeRequest,
     LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse, VolumeLocation,
 };
+use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
@@ -167,22 +168,21 @@ async fn start_directory_server(
 
     let app = http_router.merge(Router::new().nest("/raft", raft_router));
 
-    match hyper::Server::try_bind(&addr) {
-        Ok(builder) => {
-            let server = builder.serve(app.into_make_service());
-            let graceful = server.with_graceful_shutdown(async {
-                let _ = shutdown.recv().await;
-            });
-            info!("directory api server starting up. binding addr: {addr}");
-            match graceful.await {
-                Ok(()) => info!("directory api server shutting down gracefully."),
-                Err(e) => error!("directory api server stop failed, {}", e),
+    info!("directory api server is starting up. binding addr: {addr}");
+    match TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if let Err(err) = axum::serve(listener, app.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown.recv().await;
+                    info!("directory api server shutting down gracefully.");
+                })
+                .await
+            {
+                error!("starting directory api server failed, error: {err}");
+                exit();
             }
         }
-        Err(err) => {
-            error!("starting directory api server failed, error: {err}");
-            exit();
-        }
+        Err(err) => error!("binding directory api address {addr} failed, error: {err}"),
     }
 }
 

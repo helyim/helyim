@@ -1,4 +1,4 @@
-use std::{fs::File, os::unix::fs::FileExt, result::Result};
+use std::{fs::File, os::unix::fs::FileExt};
 
 use crate::storage::{
     needle::NEEDLE_INDEX_SIZE,

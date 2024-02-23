@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Display, Formatter},
-    result::Result,
-};
+use std::fmt::{Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 

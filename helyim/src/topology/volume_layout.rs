@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::{mapref::one::RefMut, DashMap};
-use rand::{self, Rng};
+use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 

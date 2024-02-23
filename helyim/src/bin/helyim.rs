@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use clap::Parser;
 use helyim::{
     directory::{DirectoryServer, Sequencer, SequencerType},
@@ -17,6 +19,8 @@ async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::err
     directory.start().await?;
     shutdown_signal().await;
     directory.stop().await?;
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }
 
@@ -28,6 +32,7 @@ async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::err
     shutdown_signal().await;
     server.stop().await?;
 
+    tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }
 

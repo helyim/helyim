@@ -1,18 +1,20 @@
-use std::{result::Result as StdResult, str::FromStr, time::Duration};
+use std::{result::Result as StdResult, str::FromStr};
 
 use axum::{
+    body::Body,
     extract::{FromRequest, Query},
-    headers::{HeaderMap, Host},
-    http::{header::CONTENT_TYPE, HeaderName, HeaderValue, StatusCode},
+    http::{header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::IntoResponse,
-    Form, Json, RequestExt, TypedHeader,
+    Form, Json, RequestExt,
 };
+use axum_extra::{extract::TypedHeader, headers::Host};
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
-use hyper::{client::HttpConnector, Body, Client, Method, Request, Response, Uri};
-use once_cell::sync::Lazy;
+use hyper::{body::Incoming, Method, Request, Response, Uri};
+use hyper_util::rt::TokioIo;
 use serde::{de::DeserializeOwned, Deserialize};
+use tokio::net::TcpStream;
 use tracing::{error, info};
 
 use crate::{
@@ -20,12 +22,6 @@ use crate::{
     storage::VolumeId,
     topology::{TopologyError, TopologyRef},
 };
-
-pub(super) static HYPER_CLIENT: Lazy<Client<HttpConnector, Body>> = Lazy::new(|| {
-    Client::builder()
-        .pool_idle_timeout(Duration::from_secs(30))
-        .build_http()
-});
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {
@@ -80,10 +76,10 @@ pub struct ErasureCodingQuery {
 pub struct FormOrJson<T>(pub T);
 
 #[async_trait::async_trait]
-impl<T> FromRequest<DirectoryState, Body> for FormOrJson<T>
+impl<T> FromRequest<DirectoryState> for FormOrJson<T>
 where
-    Json<T>: FromRequest<DirectoryState, Body>,
-    Form<T>: FromRequest<DirectoryState, Body>,
+    Json<T>: FromRequest<DirectoryState>,
+    Form<T>: FromRequest<DirectoryState>,
     T: DeserializeOwned + 'static,
 {
     type Rejection = axum::response::Response;
@@ -144,7 +140,7 @@ where
 async fn proxy_to_leader(
     mut req: Request<Body>,
     topology: &TopologyRef,
-) -> Result<Response<Body>, TopologyError> {
+) -> Result<Response<Incoming>, TopologyError> {
     return match topology.current_leader_address().await {
         Some(addr) => {
             let path = req.uri().path();
@@ -160,7 +156,17 @@ async fn proxy_to_leader(
             match Uri::try_from(uri) {
                 Ok(uri) => {
                     *req.uri_mut() = uri;
-                    let mut response = HYPER_CLIENT.request(req).await?;
+
+                    let stream = TcpStream::connect(&*addr).await?;
+                    let io = TokioIo::new(stream);
+                    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+                    tokio::task::spawn(async move {
+                        if let Err(err) = conn.await {
+                            println!("Connection failed: {:?}", err);
+                        }
+                    });
+
+                    let mut response = sender.send_request(req).await?;
                     response.headers_mut().insert(
                         HeaderName::from_str("HTTP_X_FORWARDED_FOR")?,
                         HeaderValue::from_str(&addr)?,

@@ -1,4 +1,4 @@
-use std::{result::Result, sync::Arc};
+use std::sync::Arc;
 
 use axum::{extract::State, Json};
 use faststr::FastStr;
