@@ -14,7 +14,7 @@ use nom::{
     character::complete::{char, digit1},
     sequence::pair,
 };
-use openraft::{storage::Adaptor, BasicNode, Config};
+use openraft::{BasicNode, Config};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::warn;
 
@@ -29,7 +29,7 @@ use crate::{
             raft::{append_entries_handler, install_snapshot_handler, vote_handler},
             NetworkFactory,
         },
-        store::Store,
+        store::{LogStore, StateMachineStore},
         types::{
             ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError, Raft,
             RaftError, RaftRequest,
@@ -68,7 +68,8 @@ pub struct RaftServer {
     pub id: NodeId,
     pub addr: String,
     pub raft: Raft,
-    pub store: Arc<Store>,
+    pub log_store: LogStore,
+    pub state_machine_store: Arc<StateMachineStore>,
     pub config: Arc<Config>,
 }
 
@@ -129,10 +130,10 @@ impl RaftServer {
 
         let config = Arc::new(config.validate().unwrap());
 
-        // Create a instance of where the Raft data will be stored.
-        let store = Arc::new(Store::default());
+        let log_store = LogStore::default();
 
-        let (log_store, state_machine) = Adaptor::new(store.clone());
+        // Create a instance of where the Raft data will be stored.
+        let state_machine_store = Arc::new(StateMachineStore::default());
 
         // Create the network layer that will connect and communicate the raft instances and
         // will be used in conjunction with the store created above.
@@ -140,13 +141,21 @@ impl RaftServer {
 
         // Create a local raft instance.
         let node_id = compute_node_id(node_addr);
-        let raft = Raft::new(node_id, config.clone(), network, log_store, state_machine).await?;
+        let raft = Raft::new(
+            node_id,
+            config.clone(),
+            network,
+            log_store.clone(),
+            state_machine_store.clone(),
+        )
+        .await?;
 
         Ok(RaftServer {
             id: node_id,
             addr: node_addr.to_string(),
             raft,
-            store,
+            log_store,
+            state_machine_store,
             config,
         })
     }
@@ -172,7 +181,7 @@ impl RaftServer {
     }
 
     pub async fn set_topology(&self, topology: &TopologyRef) {
-        self.store
+        self.state_machine_store
             .state_machine
             .write()
             .await

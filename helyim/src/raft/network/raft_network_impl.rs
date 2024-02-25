@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
-use async_trait::async_trait;
 use openraft::{
     error::{InstallSnapshotError, RemoteError, Unreachable},
-    network::{RaftNetwork, RaftNetworkFactory},
+    network::{RPCOption, RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, VoteRequest, VoteResponse,
@@ -85,7 +84,6 @@ impl NetworkFactory {
     }
 }
 
-#[async_trait]
 impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
     type Network = NetworkConnection;
 
@@ -106,11 +104,11 @@ pub struct NetworkConnection {
     error_count: u64,
 }
 
-#[async_trait]
 impl RaftNetwork<TypeConfig> for NetworkConnection {
-    async fn send_append_entries(
+    async fn append_entries(
         &mut self,
         req: AppendEntriesRequest<TypeConfig>,
+        _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RpcError> {
         let append_entries = self
             .owner
@@ -128,18 +126,20 @@ impl RaftNetwork<TypeConfig> for NetworkConnection {
         append_entries
     }
 
-    async fn send_install_snapshot(
+    async fn install_snapshot(
         &mut self,
         req: InstallSnapshotRequest<TypeConfig>,
+        _option: RPCOption,
     ) -> Result<InstallSnapshotResponse<NodeId>, RpcError<InstallSnapshotError>> {
         self.owner
             .send_rpc(self.target, &self.target_node, "raft-snapshot", req)
             .await
     }
 
-    async fn send_vote(
+    async fn vote(
         &mut self,
         req: VoteRequest<NodeId>,
+        _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RpcError> {
         self.owner
             .send_rpc(self.target, &self.target_node, "raft-vote", req)

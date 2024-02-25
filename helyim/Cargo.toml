@@ -45,7 +45,7 @@ mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
 multer.workspace = true
 nom.workspace = true
-openraft = { workspace = true, features = ["serde"] }
+openraft = { workspace = true, features = ["serde", "storage-v2"] }
 once_cell.workspace = true
 parking_lot.workspace = true
 rand.workspace = true

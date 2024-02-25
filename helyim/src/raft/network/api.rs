@@ -27,7 +27,7 @@ pub async fn set_max_volume_id_handler(
 
 pub async fn max_volume_id_handler(State(raft): State<RaftServer>) -> Json<u32> {
     let response = raft
-        .store
+        .state_machine_store
         .state_machine
         .read()
         .await
