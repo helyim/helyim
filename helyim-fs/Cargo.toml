@@ -1,0 +1,15 @@
+[package]
+name = "helyim-fs"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = { workspace = true, features = ["serde"] }
+thiserror.workspace = true
+monoio.workspace = true

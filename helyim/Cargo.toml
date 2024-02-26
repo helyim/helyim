@@ -33,6 +33,7 @@ dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true
+helyim-fs = { path = "../helyim-fs" }
 helyim-proto = { path = "../proto" }
 hyper = { workspace = true, features = ["full"] }
 hyper-util.workspace = true
@@ -43,6 +44,8 @@ libflate.workspace = true
 lru.workspace = true
 mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
+monoio = { workspace = true, features = [] }
+monoio-compat = { workspace = true, features = ["hyper"] }
 multer.workspace = true
 nom.workspace = true
 openraft = { workspace = true, features = ["serde", "storage-v2"] }
