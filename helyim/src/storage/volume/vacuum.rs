@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     fs,
     fs::File,
-    io::{Seek, SeekFrom},
     os::unix::fs::{FileExt, OpenOptionsExt},
     sync::Arc,
 };
@@ -204,7 +203,8 @@ impl Volume {
                         ..Default::default()
                     };
                     let version = self.version();
-                    fake_del_needle.try_append(&new_data_file, offset, version)?;
+                    let buf = fake_del_needle.try_append(version)?;
+                    new_data_file.write_all_at(&buf, offset)?;
                     (&mut index_entry_buf[8..12]).put_u32(0);
                 }
 
@@ -270,7 +270,8 @@ impl Volume {
                         compact_nm.set(needle.id, nv)?;
 
                         let offset = append_needle_at(dst.metadata()?.len());
-                        needle.try_append(&dst, offset, self.version())?;
+                        let buf = needle.try_append(self.version())?;
+                        dst.write_all_at(&buf, offset)?;
                         new_offset += needle.disk_size();
                     }
                 }
@@ -330,9 +331,10 @@ impl Volume {
                 let mut needle = Needle::default();
                 let version = self.version();
 
-                needle.read_data(
-                    self.data_file()
-                        .map_err(|err| NeedleError::Box(err.into()))?,
+                let data_file = self.std_data_file()
+                    .map_err(|err| NeedleError::Box(err.into()))?;
+                needle.read_data_sync(
+                    &data_file,
                     offset,
                     size,
                     version,
@@ -352,7 +354,8 @@ impl Volume {
                     compact_nm
                         .set(needle.id, nv)
                         .map_err(|err| NeedleError::Box(err.into()))?;
-                    needle.try_append(&compact_data_file, new_offset, version)?;
+                    let buf = needle.try_append(version)?;
+                    compact_data_file.write_all_at(&buf, new_offset)?;
                     new_offset += needle.disk_size();
                 }
 

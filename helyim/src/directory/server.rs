@@ -7,6 +7,11 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     Stream, StreamExt,
 };
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use monoio::io::IntoPollIo;
+use monoio::net::TcpListener;
+use monoio_compat::hyper::{MonoioIo, MonoioTimer};
 use helyim_proto::directory::{
     helyim_server::{Helyim, HelyimServer},
     lookup_ec_volume_response::EcShardIdLocation,
@@ -14,9 +19,9 @@ use helyim_proto::directory::{
     HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest, Location, LookupEcVolumeRequest,
     LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse, VolumeLocation,
 };
-use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tonic::codegen::Service;
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
@@ -169,18 +174,35 @@ async fn start_directory_server(
     let app = http_router.merge(Router::new().nest("/raft", raft_router));
 
     info!("directory api server is starting up. binding addr: {addr}");
-    match TcpListener::bind(addr).await {
+    match TcpListener::bind(addr) {
         Ok(listener) => {
-            if let Err(err) = axum::serve(listener, app.into_make_service())
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown.recv().await;
-                    info!("directory api server shutting down gracefully.");
-                })
-                .await
-            {
-                error!("starting directory api server failed, error: {err}");
-                exit();
+            loop {
+                let (socket, _remote_addr) = listener.accept().await.unwrap();
+                let stream_poll = MonoioIo::new(socket.into_poll_io().unwrap());
+                let tower_service = app.clone();
+                monoio::spawn(async move {
+                    let hyper_service = hyper::service::service_fn(move |request: axum::extract::Request<Incoming>| {
+                        tower_service.clone().call(request)
+                    });
+                    if let Err(err) = http1::Builder::new()
+                        .timer(MonoioTimer)
+                        .serve_connection(stream_poll, hyper_service)
+                        .await
+                    {
+                        println!("Error serving connection: {:?}", err);
+                    }
+                });
             }
+            // if let Err(err) = axum::serve(listener, app.into_make_service())
+            //     .with_graceful_shutdown(async move {
+            //         let _ = shutdown.recv().await;
+            //         info!("directory api server shutting down gracefully.");
+            //     })
+            //     .await
+            // {
+            //     error!("starting directory api server failed, error: {err}");
+            //     exit();
+            // }
         }
         Err(err) => error!("binding directory api address {addr} failed, error: {err}"),
     }

@@ -57,6 +57,7 @@ regex.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+slab = "0.4"
 sonyflake.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }

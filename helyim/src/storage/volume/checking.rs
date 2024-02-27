@@ -1,7 +1,6 @@
 use std::{fs::File, os::unix::fs::FileExt};
 
 use crate::storage::{
-    needle,
     needle::NEEDLE_INDEX_SIZE,
     read_index_entry,
     types::{Offset, Size},
@@ -9,6 +8,7 @@ use crate::storage::{
     volume::Volume,
     Needle, NeedleId, VolumeError,
 };
+use crate::storage::volume::FILES;
 
 pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, VolumeError> {
     let meta = index_file.metadata()?;
@@ -33,7 +33,7 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.data_file()?, version, key, offset, size)
+    verify_needle_integrity(volume.data_file_handle()?, version, key, offset, size)
 }
 
 pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, VolumeError> {
@@ -43,13 +43,15 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
 }
 
 fn verify_needle_integrity(
-    data_file: &helyim_fs::File,
+    file_handle: usize,
     version: Version,
     key: NeedleId,
     offset: Offset,
     size: Size,
 ) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
+
+    let data_file = &FILES[file_handle];
     needle.read_data_sync(&data_file.to_std()?, offset, size, version)?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(

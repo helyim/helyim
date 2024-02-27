@@ -63,10 +63,18 @@ fn log_init(
     Ok(())
 }
 
-#[tokio::main]
-#[cfg(not(all(target_os = "linux", feature = "iouring")))]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    main_inner().await
+// #[tokio::main]
+// #[cfg(not(all(target_os = "linux", feature = "iouring")))]
+// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//     main_inner().await
+// }
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
+    rt.block_on(main_inner())
 }
 
 #[cfg(all(target_os = "linux", feature = "iouring"))]

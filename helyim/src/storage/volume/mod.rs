@@ -2,7 +2,7 @@ use std::{
     fmt::Display,
     fs::{self, metadata},
     io::ErrorKind,
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    os::unix::fs::{OpenOptionsExt},
     path::Path,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -10,6 +10,7 @@ use std::{
     },
     time::SystemTimeError,
 };
+use std::os::unix::fs::FileExt;
 
 use axum::{
     http::StatusCode,
@@ -20,8 +21,8 @@ use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use helyim_fs::File;
 use parking_lot::RwLock;
-use rustix::fs::ftruncate;
 use serde_json::json;
+use slab::Slab;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -63,6 +64,8 @@ pub const DATA_FILE_SUFFIX: &str = "dat";
 pub const COMPACT_DATA_FILE_SUFFIX: &str = "cpd";
 pub const IDX_FILE_SUFFIX: &str = "idx";
 pub const COMPACT_IDX_FILE_SUFFIX: &str = "cpx";
+
+pub const FILES: Slab<File> = Slab::new();
 
 #[derive(Debug)]
 pub struct SuperBlock {
@@ -126,7 +129,7 @@ pub struct Volume {
     dir: FastStr,
     pub collection: FastStr,
 
-    data_file: Option<File>,
+    data_file: Option<usize>,
     data_file_lock: RwLock<()>,
 
     needle_mapper: Option<NeedleMapper>,
@@ -243,7 +246,9 @@ impl Volume {
                 .open(&name)?
         };
 
-        self.data_file = Some(File::from_std(file, name)?);
+        let data_file = File::from_std(file, name)?;
+        let handle = FILES.insert(data_file);
+        self.data_file = Some(handle);
 
         if has_super_block {
             let super_block = self.read_super_block()?;
@@ -300,22 +305,27 @@ impl Volume {
         let version = self.version();
 
         {
-            let _lock = self.data_file_lock.write();
-            let file = self.data_file()?;
+            // let _lock = self.data_file_lock.write();
 
-            let offset = append_needle_at(file.metadata()?.len());
-
+            let file_handle = self.data_file_handle()?;
+            let offset;
             match needle.try_append(version) {
                 Ok(buf) => {
-                    let (write_all, _) = file.write_all_at(buf, offset).await;
+                    let (write_all, off) = monoio::spawn(async move {
+                        let file = &FILES[file_handle];
+                        let offset = append_needle_at(file.metadata().unwrap().len());
+                        let (write_all, _) = file.write_all_at(buf, offset).await;
+                        (write_all, offset)
+                    }).await;
                     write_all?;
+                    offset = off;
                 }
                 Err(err) => {
                     error!(
                         "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
                         needle.id
                     );
-                    ftruncate(file, offset)?;
+                    // ftruncate(file.to_std()?, offset)?;
                     return Err(err.into());
                 }
             }
@@ -340,7 +350,7 @@ impl Volume {
         }
 
         {
-            let _lock = self.data_file_lock.write();
+            // let _lock = self.data_file_lock.write();
             let mut nv = match self.get_index(needle.id)? {
                 Some(nv) => nv,
                 None => return Ok(0),
@@ -348,12 +358,15 @@ impl Volume {
             nv.offset = Offset(0);
 
             let version = self.version();
-            let file = self.data_file()?;
+            let file_handle = self.data_file_handle()?;
 
-            let offset = append_needle_at(file.metadata()?.len());
             let buf = needle.try_append(version)?;
+            let (write_all, _) = monoio::spawn(async move{
+                let file = &FILES[file_handle];
+                let offset = append_needle_at(file.metadata().unwrap().len());
+                file.write_all_at(buf, offset).await
+            }).await;
 
-            let (write_all, _) = file.write_all_at(buf, offset).await;
             write_all?;
 
             self.delete_index(needle.id)?;
@@ -363,7 +376,7 @@ impl Volume {
     }
 
     pub async fn read_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
-        let _lock = self.data_file_lock.read();
+        // let _lock = self.data_file_lock.read();
 
         match self.get_index(needle.id)? {
             Some(nv) => {
@@ -373,9 +386,9 @@ impl Volume {
 
                 let version = self.version();
 
-                let data_file = self.data_file()?;
+                let file_handle = self.data_file_handle()?;
                 needle
-                    .read_data(data_file, nv.offset, nv.size, version)
+                    .read_data(file_handle, nv.offset, nv.size, version)
                     .await?;
 
                 let data_size = needle.data_size();
@@ -446,13 +459,24 @@ impl Volume {
 
     pub fn data_file_size(&self) -> Result<u64, VolumeError> {
         let _lock = self.data_file_lock.read();
-        let file = self.data_file()?;
+        let file_handle = self.data_file_handle()?;
+        let file = &FILES[file_handle];
         Ok(file.metadata()?.len())
     }
 
-    pub fn data_file(&self) -> Result<&File, VolumeError> {
+    pub fn std_data_file(&self) -> Result<fs::File, VolumeError> {
         match self.data_file.as_ref() {
-            Some(data_file) => Ok(data_file),
+            Some(data_file) => {
+                let file = &FILES[*data_file];
+                Ok(file.to_std()?)
+            },
+            None => Err(VolumeError::NotLoad(self.id)),
+        }
+    }
+
+    pub fn data_file_handle(&self) -> Result<usize, VolumeError> {
+        match self.data_file.as_ref() {
+            Some(data_file) => Ok(*data_file),
             None => Err(VolumeError::NotLoad(self.id)),
         }
     }
@@ -517,7 +541,7 @@ impl Volume {
 impl Volume {
     fn write_super_block(&self) -> Result<(), VolumeError> {
         let bytes = self.super_block.as_bytes();
-        let file = self.data_file()?;
+        let file = self.std_data_file()?;
         if file.metadata()?.len() != 0 {
             return Ok(());
         }
@@ -532,7 +556,7 @@ impl Volume {
 
     fn read_super_block(&self) -> Result<SuperBlock, VolumeError> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
-        let file = self.data_file()?;
+        let file = self.std_data_file()?;
         file.read_exact_at(&mut buf, 0)?;
         SuperBlock::parse(buf)
     }
@@ -808,13 +832,13 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
 
-    let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
+    let data_file = volume.std_data_file()?;
+    let (mut needle, mut rest) = read_needle_header(&data_file, version, offset)?;
 
-    let data_file = volume.data_file()?;
     loop {
         if read_needle_body {
             if let Err(err) =
-                needle.read_needle_body(data_file, offset + NEEDLE_ENTRY_SIZE as u64, rest, version)
+                needle.read_needle_body(&data_file, offset + NEEDLE_ENTRY_SIZE as u64, rest, version)
             {
                 error!("cannot read needle body when scanning volume file, {err}");
             }
@@ -835,7 +859,7 @@ where
         offset += (NEEDLE_ENTRY_SIZE + rest) as u64;
 
         info!("new entry offset: {offset}");
-        match read_needle_header(data_file, version, offset) {
+        match read_needle_header(&data_file, version, offset) {
             Ok((n, body_len)) => {
                 needle = n;
                 rest = body_len;

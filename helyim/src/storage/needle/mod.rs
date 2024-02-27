@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use std::fmt::{Display, Formatter};
+use std::os::unix::fs::FileExt;
 
 use bytes::{Buf, BufMut, Bytes};
-use helyim_fs::File;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -26,6 +26,7 @@ pub mod sync;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
 
 use crate::storage::ttl::TtlError;
+use crate::storage::volume::FILES;
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;
@@ -148,15 +149,18 @@ impl Display for Needle {
 }
 
 pub async fn read_needle_blob(
-    file: &File,
+    file: usize,
     offset: Offset,
     size: Size,
 ) -> Result<Bytes, NeedleError> {
     let size = size.actual_size();
     let offset = offset.actual_offset();
 
-    let buf = vec![0; size as usize];
-    let (read_exact, buf) = file.read_exact_at(buf, offset).await;
+    let (read_exact, buf) = monoio::spawn(async move{
+        let file = &FILES[file];
+        let buf = vec![0; size as usize];
+        file.read_exact_at(buf, offset).await
+    }).await;
     read_exact?;
     Ok(Bytes::from(buf))
 }
@@ -201,7 +205,7 @@ impl Needle {
 
     pub fn read_needle_body(
         &mut self,
-        data_file: &File,
+        data_file: &std::fs::File,
         offset: u64,
         body_len: u32,
         version: Version,
@@ -357,12 +361,12 @@ impl Needle {
 
     pub async fn read_data(
         &mut self,
-        file: &File,
+        file_handle: usize,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> Result<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size).await?;
+        let bytes = read_needle_blob(file_handle, offset, size).await?;
         self.read_bytes(bytes, offset, size, version)
     }
 
@@ -502,7 +506,7 @@ fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie), NeedleError> {
 }
 
 pub fn read_needle_header(
-    file: &File,
+    file: &std::fs::File,
     version: Version,
     offset: u64,
 ) -> Result<(Needle, u32), NeedleError> {

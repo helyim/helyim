@@ -7,7 +7,7 @@ use dashmap::{
 use faststr::FastStr;
 use futures::future::join_all;
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
-use tokio::task::JoinHandle;
+use monoio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
@@ -78,7 +78,7 @@ impl DiskLocation {
         }
 
         for join in join_all(handles).await {
-            let (vid, volume) = join??;
+            let (vid, volume) = join?;
             self.volumes.insert(vid, volume);
         }
 

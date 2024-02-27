@@ -6,6 +6,11 @@ use std::{
 use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use monoio::io::IntoPollIo;
+use monoio::net::TcpListener;
+use monoio_compat::hyper::{MonoioIo, MonoioTimer};
 use helyim_proto::{
     directory::HeartbeatRequest,
     volume::{
@@ -24,9 +29,10 @@ use helyim_proto::{
         VolumeMarkReadonlyResponse,
     },
 };
-use tokio::{net::TcpListener, time::sleep};
+use tokio::{time::sleep};
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tonic::codegen::Service;
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info, warn};
 
@@ -345,18 +351,35 @@ async fn start_volume_server(
         .with_state(ctx);
 
     info!("volume api server is starting up. binding addr: {addr}");
-    match TcpListener::bind(addr).await {
+    match TcpListener::bind(addr) {
         Ok(listener) => {
-            if let Err(err) = axum::serve(listener, app.into_make_service())
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown.recv().await;
-                    info!("volume api server shutting down gracefully.");
-                })
-                .await
-            {
-                error!("starting volume api server failed, error: {err}");
-                exit();
+            loop {
+                let (socket, _remote_addr) = listener.accept().await.unwrap();
+                let stream_poll = MonoioIo::new(socket.into_poll_io().unwrap());
+                let tower_service = app.clone();
+                monoio::spawn(async move {
+                    let hyper_service = hyper::service::service_fn(move |request: axum::extract::Request<Incoming>| {
+                        tower_service.clone().call(request)
+                    });
+                    if let Err(err) = http1::Builder::new()
+                        .timer(MonoioTimer)
+                        .serve_connection(stream_poll, hyper_service)
+                        .await
+                    {
+                        println!("Error serving connection: {:?}", err);
+                    }
+                });
             }
+            // if let Err(err) = axum::serve(listener, app.into_make_service())
+            //     .with_graceful_shutdown(async move {
+            //         let _ = shutdown.recv().await;
+            //         info!("volume api server shutting down gracefully.");
+            //     })
+            //     .await
+            // {
+            //     error!("starting volume api server failed, error: {err}");
+            //     exit();
+            // }
         }
         Err(err) => error!("binding volume api address {addr} failed, error: {err}"),
     }

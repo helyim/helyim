@@ -484,7 +484,7 @@ impl Store {
         // prevent reconstruct thread from staying alive indefinitely
         drop(tx);
 
-        let (data, is_deleted) = reconstruct.await?;
+        let (data, is_deleted) = reconstruct.await;
         if let Some(Some(data)) = data?.get(shard_id_to_recover as usize) {
             buf.copy_from_slice(data);
         }

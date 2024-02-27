@@ -15,6 +15,7 @@ use axum::{
     },
     Json,
 };
+use axum_macros::debug_handler;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::stream::once;
@@ -77,6 +78,7 @@ pub async fn status_handler(State(ctx): State<StorageState>) -> Result<Json<Valu
     Ok(Json(stat))
 }
 
+#[debug_handler]
 pub async fn delete_handler(
     State(ctx): State<StorageState>,
     extractor: DeleteExtractor,
@@ -374,6 +376,7 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
     Ok(resp)
 }
 
+#[debug_handler]
 pub async fn get_or_head_handler(
     State(ctx): State<StorageState>,
     extractor: GetOrHeadExtractor,
