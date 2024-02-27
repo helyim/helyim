@@ -24,6 +24,14 @@ impl File {
         Ok(file)
     }
 
+    pub fn from_std<P: AsRef<Path>>(file: std::fs::File, path: P) -> Result<Self> {
+        let file = monoio::fs::File::from_std(file)?;
+        Ok(Self {
+            file,
+            name: path.as_ref().to_path_buf(),
+        })
+    }
+
     pub fn metadata(&self) -> Result<Metadata> {
         std::fs::metadata(&self.name)
     }

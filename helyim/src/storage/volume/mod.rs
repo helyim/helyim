@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    fs::{self, metadata, File},
+    fs::{self, metadata},
     io::ErrorKind,
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
@@ -18,6 +18,7 @@ use axum::{
 };
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
+use helyim_fs::File;
 use parking_lot::RwLock;
 use rustix::fs::ftruncate;
 use serde_json::json;
@@ -242,7 +243,7 @@ impl Volume {
                 .open(&name)?
         };
 
-        self.data_file = Some(file);
+        self.data_file = Some(File::from_std(file, name)?);
 
         if has_super_block {
             let super_block = self.read_super_block()?;
@@ -290,7 +291,7 @@ impl Volume {
         Ok(())
     }
 
-    pub fn write_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
+    pub async fn write_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let volume_id = self.id;
         if self.readonly() {
             return Err(VolumeError::Readonly(volume_id));
@@ -302,14 +303,21 @@ impl Volume {
             let _lock = self.data_file_lock.write();
             let file = self.data_file()?;
 
-            let offset = append_needle_at(file)?;
-            if let Err(err) = needle.append(file, offset, version) {
-                error!(
-                    "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
-                    needle.id
-                );
-                ftruncate(file, offset)?;
-                return Err(err.into());
+            let offset = append_needle_at(file.metadata()?.len());
+
+            match needle.try_append(version) {
+                Ok(buf) => {
+                    let (write_all, _) = file.write_all_at(buf, offset).await;
+                    write_all?;
+                }
+                Err(err) => {
+                    error!(
+                        "volume {volume_id}: write needle {} error: {err}, will do ftruncate.",
+                        needle.id
+                    );
+                    ftruncate(file, offset)?;
+                    return Err(err.into());
+                }
             }
 
             let nv = NeedleValue {
@@ -326,7 +334,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn delete_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
+    pub async fn delete_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         if self.readonly() {
             return Err(VolumeError::Readonly(self.id));
         }
@@ -342,8 +350,11 @@ impl Volume {
             let version = self.version();
             let file = self.data_file()?;
 
-            let offset = append_needle_at(file)?;
-            needle.append(file, offset, version)?;
+            let offset = append_needle_at(file.metadata()?.len());
+            let buf = needle.try_append(version)?;
+
+            let (write_all, _) = file.write_all_at(buf, offset).await;
+            write_all?;
 
             self.delete_index(needle.id)?;
         }
@@ -351,7 +362,7 @@ impl Volume {
         Ok(needle.data_size())
     }
 
-    pub fn read_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
+    pub async fn read_needle(&self, needle: &mut Needle) -> Result<usize, VolumeError> {
         let _lock = self.data_file_lock.read();
 
         match self.get_index(needle.id)? {
@@ -363,7 +374,9 @@ impl Volume {
                 let version = self.version();
 
                 let data_file = self.data_file()?;
-                needle.read_data(data_file, nv.offset, nv.size, version)?;
+                needle
+                    .read_data(data_file, nv.offset, nv.size, version)
+                    .await?;
 
                 let data_size = needle.data_size();
                 if !needle.has_ttl() {
@@ -769,12 +782,11 @@ fn load_volume_without_index(
     Ok(volume)
 }
 
-fn append_needle_at(file: &File) -> std::io::Result<u64> {
-    let mut offset = file.metadata()?.len();
+fn append_needle_at(mut offset: u64) -> u64 {
     if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
         offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
     }
-    Ok(offset)
+    offset
 }
 
 pub fn scan_volume_file<VSB, VN>(
@@ -861,7 +873,7 @@ pub mod tests {
         FileId, Needle, ReplicaPlacement, Ttl,
     };
 
-    pub fn setup(dir: FastStr) -> Volume {
+    pub async fn setup(dir: FastStr) -> Volume {
         let volume = Volume::new(
             dir,
             FastStr::empty(),
@@ -885,20 +897,20 @@ pub mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(&mut needle).unwrap();
+            volume.write_needle(&mut needle).await.unwrap();
         }
 
         volume
     }
 
-    #[test]
-    pub fn test_scan_volume_file() {
+    #[tokio::test]
+    pub async fn test_scan_volume_file() {
         let dir = Builder::new()
             .prefix("scan_volume_file")
             .tempdir_in(".")
             .unwrap();
         let dir = FastStr::new(dir.path().to_str().unwrap());
-        let volume = setup(dir.clone());
+        let volume = setup(dir.clone()).await;
 
         scan_volume_file(
             dir.clone(),

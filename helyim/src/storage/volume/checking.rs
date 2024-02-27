@@ -1,6 +1,7 @@
 use std::{fs::File, os::unix::fs::FileExt};
 
 use crate::storage::{
+    needle,
     needle::NEEDLE_INDEX_SIZE,
     read_index_entry,
     types::{Offset, Size},
@@ -42,14 +43,14 @@ pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<
 }
 
 fn verify_needle_integrity(
-    data_file: &File,
+    data_file: &helyim_fs::File,
     version: Version,
     key: NeedleId,
     offset: Offset,
     size: Size,
 ) -> Result<(), VolumeError> {
     let mut needle = Needle::default();
-    needle.read_data(data_file, offset, size, version)?;
+    needle.read_data_sync(&data_file.to_std()?, offset, size, version)?;
     if needle.id != key {
         return Err(VolumeError::DataIntegrity(format!(
             "index key {key} does not match needle's id {}",
@@ -72,8 +73,8 @@ mod tests {
         FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
     };
 
-    #[test]
-    pub fn test_check_volume_data_integrity() {
+    #[tokio::test]
+    pub async fn test_check_volume_data_integrity() {
         let dir = Builder::new()
             .prefix("check_volume_data_integrity")
             .tempdir_in(".")
@@ -102,7 +103,7 @@ mod tests {
             needle
                 .parse_path(&format!("{:x}{:08x}", fid.key, fid.hash))
                 .unwrap();
-            volume.write_needle(&mut needle).unwrap();
+            volume.write_needle(&mut needle).await.unwrap();
         }
 
         let index_file = std::fs::OpenOptions::new()

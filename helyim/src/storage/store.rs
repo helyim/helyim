@@ -143,7 +143,7 @@ impl Store {
                     return Err(VolumeError::Readonly(vid));
                 }
                 if MAX_POSSIBLE_VOLUME_SIZE >= volume.content_size() + Size(0).actual_size() {
-                    return volume.delete_needle(needle);
+                    return volume.delete_needle(needle).await;
                 }
                 Err(VolumeError::VolumeSizeLimit(
                     self.volume_size_limit(),
@@ -156,7 +156,7 @@ impl Store {
 
     pub async fn read_volume_needle(&self, vid: VolumeId, needle: &mut Needle) -> Result<usize> {
         match self.find_volume(vid) {
-            Some(volume) => Ok(volume.read_needle(needle)?),
+            Some(volume) => Ok(volume.read_needle(needle).await?),
             None => Err(VolumeError::NotFound(vid).into()),
         }
     }
@@ -168,7 +168,7 @@ impl Store {
                     return Err(VolumeError::Readonly(vid).into());
                 }
 
-                Ok(volume.write_needle(needle)?)
+                Ok(volume.write_needle(needle).await?)
             }
             None => Err(VolumeError::NotFound(vid).into()),
         }

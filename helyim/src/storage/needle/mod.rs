@@ -1,12 +1,9 @@
 #![allow(dead_code)]
 
-use std::{
-    fmt::{Display, Formatter},
-    fs::File,
-    os::unix::fs::FileExt,
-};
+use std::fmt::{Display, Formatter};
 
 use bytes::{Buf, BufMut, Bytes};
+use helyim_fs::File;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -24,6 +21,8 @@ mod needle_map;
 pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMapper};
 
 mod needle_value_map;
+pub mod sync;
+
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
 
 use crate::storage::ttl::TtlError;
@@ -148,12 +147,17 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> Result<Bytes, NeedleError> {
+pub async fn read_needle_blob(
+    file: &File,
+    offset: Offset,
+    size: Size,
+) -> Result<Bytes, NeedleError> {
     let size = size.actual_size();
-    let mut buf = vec![0; size as usize];
-
     let offset = offset.actual_offset();
-    file.read_exact_at(&mut buf, offset)?;
+
+    let buf = vec![0; size as usize];
+    let (read_exact, buf) = file.read_exact_at(buf, offset).await;
+    read_exact?;
     Ok(Bytes::from(buf))
 }
 
@@ -264,12 +268,7 @@ impl Needle {
         Ok(())
     }
 
-    pub fn append<W: FileExt>(
-        &mut self,
-        w: &W,
-        offset: u64,
-        version: Version,
-    ) -> Result<(), NeedleError> {
+    pub fn try_append(&mut self, version: Version) -> Result<Vec<u8>, NeedleError> {
         if version != CURRENT_VERSION {
             return Err(NeedleError::UnsupportedVersion(version));
         }
@@ -322,9 +321,8 @@ impl Needle {
 
         let padding = self.size.padding_len();
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all_at(&buf, offset)?;
 
-        Ok(())
+        Ok(buf)
     }
 
     pub fn read_bytes(
@@ -357,14 +355,14 @@ impl Needle {
         Ok(())
     }
 
-    pub fn read_data(
+    pub async fn read_data(
         &mut self,
         file: &File,
         offset: Offset,
         size: Size,
         version: Version,
     ) -> Result<(), NeedleError> {
-        let bytes = read_needle_blob(file, offset, size)?;
+        let bytes = read_needle_blob(file, offset, size).await?;
         self.read_bytes(bytes, offset, size, version)
     }
 

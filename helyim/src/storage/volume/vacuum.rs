@@ -17,8 +17,8 @@ use tracing::{debug, error, info};
 use crate::{
     storage::{
         needle::{
-            read_index_entry, read_needle_blob, walk_index_file, NeedleMapper, NEEDLE_INDEX_SIZE,
-            NEEDLE_PADDING_SIZE,
+            read_index_entry, sync::read_needle_blob_sync, walk_index_file, NeedleMapper,
+            NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE,
         },
         volume::{
             append_needle_at,
@@ -191,18 +191,10 @@ impl Volume {
                 (&mut index_entry_buf[8..12]).put_u32(value.offset.0);
                 (&mut index_entry_buf[12..16]).put_i32(value.size.0);
 
-                let mut offset = new_data_file.metadata()?.len();
-                if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
-                    offset =
-                        offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
-
-                    // There is no requirement to add a read lock since there is already a write
-                    // lock in place.
-                    offset = self.data_file()?.seek(SeekFrom::Start(offset))?;
-                }
-
+                let mut offset = append_needle_at(new_data_file.metadata()?.len());
                 if value.offset != 0 && value.size != 0 {
-                    let needle_bytes = read_needle_blob(&old_data_file, value.offset, value.size)?;
+                    let needle_bytes =
+                        read_needle_blob_sync(&old_data_file, value.offset, value.size)?;
                     new_data_file.write_all_at(&needle_bytes, offset)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
@@ -212,7 +204,7 @@ impl Volume {
                         ..Default::default()
                     };
                     let version = self.version();
-                    fake_del_needle.append(&new_data_file, offset, version)?;
+                    fake_del_needle.try_append(&new_data_file, offset, version)?;
                     (&mut index_entry_buf[8..12]).put_u32(0);
                 }
 
@@ -277,8 +269,8 @@ impl Volume {
                         };
                         compact_nm.set(needle.id, nv)?;
 
-                        let offset = append_needle_at(&dst)?;
-                        needle.append(&dst, offset, self.version())?;
+                        let offset = append_needle_at(dst.metadata()?.len());
+                        needle.try_append(&dst, offset, self.version())?;
                         new_offset += needle.disk_size();
                     }
                 }
@@ -360,7 +352,7 @@ impl Volume {
                     compact_nm
                         .set(needle.id, nv)
                         .map_err(|err| NeedleError::Box(err.into()))?;
-                    needle.append(&compact_data_file, new_offset, version)?;
+                    needle.try_append(&compact_data_file, new_offset, version)?;
                     new_offset += needle.disk_size();
                 }
 
