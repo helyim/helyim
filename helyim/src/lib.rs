@@ -3,6 +3,7 @@
 #![allow(clippy::mutable_key_type)]
 #![allow(clippy::module_inception)]
 #![deny(unused_qualifications)]
+#![deny(missing_docs)]
 
 pub mod client;
 pub mod directory;
