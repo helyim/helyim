@@ -1,6 +1,3 @@
-//! Provide `LogStore`, which is a in-memory implementation of `RaftLogStore` for demostration
-//! purpose only.
-
 use std::{collections::BTreeMap, fmt::Debug, ops::RangeBounds, sync::Arc};
 
 use openraft::{
@@ -102,7 +99,7 @@ impl<C: RaftTypeConfig> LogStoreInner<C> {
     async fn append<I>(
         &mut self,
         entries: I,
-        callback: LogFlushed<C::NodeId>,
+        callback: LogFlushed<C>,
     ) -> Result<(), StorageError<C::NodeId>>
     where
         I: IntoIterator<Item = C::Entry>,
@@ -216,7 +213,7 @@ mod impl_log_store {
         async fn append<I>(
             &mut self,
             entries: I,
-            callback: LogFlushed<C::NodeId>,
+            callback: LogFlushed<C>,
         ) -> Result<(), StorageError<C::NodeId>>
         where
             I: IntoIterator<Item = C::Entry>,
