@@ -16,7 +16,7 @@ use axum::{
     Json,
 };
 use bytes::Bytes;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use futures::stream::once;
 use helyim_proto::volume::{
     VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
@@ -414,11 +414,8 @@ pub async fn get_or_head_handler(
 
     // TODO: ignore datetime parsing error
     if needle.last_modified != 0 {
-        let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_millis(needle.last_modified as i64)
-                .expect("invalid or out-of-range datetime"),
-            Utc,
-        );
+        let datetime: DateTime<Utc> = DateTime::from_timestamp_millis(needle.last_modified as i64)
+            .expect("invalid or out-of-range datetime");
         let last_modified = datetime.format(HTTP_DATE_FORMAT).to_string();
         response.headers_mut().insert(
             LAST_MODIFIED,
