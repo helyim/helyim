@@ -1,6 +1,7 @@
 # Helyim
 
------
+[![Coverage Status](https://codecov.io/gh/iamazy/helyim/branch/test/graph/badge.svg)](https://codecov.io/gh/iamazy/helyim)
+
 [seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
 
 ### Features
