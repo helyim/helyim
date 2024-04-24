@@ -323,8 +323,10 @@ mod tests {
         assert_eq!(active_count, 0);
 
         let data_node = Arc::new(data_node());
-        let mut volume_info = VolumeInfo::default();
-        volume_info.version = CURRENT_VERSION;
+        let volume_info = VolumeInfo {
+            version: CURRENT_VERSION,
+            ..Default::default()
+        };
 
         vl.register_volume(&volume_info, &data_node).await;
         assert!(vl.lookup(volume_info.id).is_some());
@@ -361,8 +363,10 @@ mod tests {
         assert!(pick_for_write.is_err());
 
         let data_node = Arc::new(data_node());
-        let mut volume_info = VolumeInfo::default();
-        volume_info.version = CURRENT_VERSION;
+        let volume_info = VolumeInfo {
+            version: CURRENT_VERSION,
+            ..Default::default()
+        };
         vl.register_volume(&volume_info, &data_node).await;
 
         let (vid, data_nodes) = vl.pick_for_write(&option).await.unwrap();
