@@ -43,7 +43,7 @@ impl std::fmt::Display for DataNode {
 }
 
 impl DataNode {
-    pub async fn new(
+    pub fn new(
         id: FastStr,
         ip: FastStr,
         port: u16,
@@ -300,16 +300,16 @@ mod test {
         topology::data_node::DataNode,
     };
 
-    async fn setup() -> DataNode {
+    fn setup() -> DataNode {
         let id = FastStr::new("127.0.0.1:9333");
         let ip = FastStr::new("127.0.0.1");
         let public_url = id.clone();
-        DataNode::new(id, ip, 9333, public_url, 1).await
+        DataNode::new(id, ip, 9333, public_url, 1)
     }
 
     #[tokio::test]
     pub async fn test_add_or_update_volume() {
-        let data_node = setup().await;
+        let data_node = setup();
         let volume = VolumeInfo {
             id: 0,
             size: 0,

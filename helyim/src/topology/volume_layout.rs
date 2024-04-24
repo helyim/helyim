@@ -79,7 +79,6 @@ impl VolumeLayout {
         }
 
         let mut counter = 0;
-
         let mut volume_id = 0;
         let mut location_list = None;
 
@@ -250,3 +249,128 @@ impl VolumeLayout {
 }
 
 pub type VolumeLayoutRef = Arc<VolumeLayout>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use faststr::FastStr;
+
+    use crate::{
+        storage::{ReplicaPlacement, VolumeInfo, CURRENT_VERSION},
+        topology::{
+            data_node::DataNode, volume_grow::VolumeGrowOption, volume_layout::VolumeLayout,
+        },
+    };
+
+    fn setup() -> VolumeLayout {
+        let rp = ReplicaPlacement::new("000").unwrap();
+        VolumeLayout::new(rp, None, 10240)
+    }
+
+    fn data_node() -> DataNode {
+        let id = FastStr::new("127.0.0.1:9333");
+        let ip = FastStr::new("127.0.0.1");
+        let public_url = id.clone();
+        let data_node = DataNode::new(id, ip, 9333, public_url, 1);
+        data_node.volumes.insert(0, VolumeInfo::default());
+        data_node
+    }
+
+    #[tokio::test]
+    async fn test_register_volume() {
+        let vl = setup();
+        let option = VolumeGrowOption::default();
+
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 0);
+
+        let data_node = Arc::new(data_node());
+        let mut volume_info = VolumeInfo::default();
+
+        // current volume_info.version = 0
+        vl.register_volume(&volume_info, &data_node).await;
+        assert_eq!(vl.locations.len(), 1);
+
+        {
+            let data_node_ref = vl.locations.get(&volume_info.id).unwrap();
+            assert_eq!(data_node_ref.len(), 1);
+        }
+
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 0);
+
+        // set volume_info.version = 2
+        volume_info.version = CURRENT_VERSION;
+        vl.register_volume(&volume_info, &data_node).await;
+        assert_eq!(vl.locations.len(), 1);
+
+        {
+            let data_node_ref = vl.locations.get(&volume_info.id).unwrap();
+            assert_eq!(data_node_ref.len(), 1);
+        }
+
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_unregister_volume() {
+        let vl = setup();
+        let option = VolumeGrowOption::default();
+
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 0);
+
+        let data_node = Arc::new(data_node());
+        let mut volume_info = VolumeInfo::default();
+        volume_info.version = CURRENT_VERSION;
+
+        vl.register_volume(&volume_info, &data_node).await;
+        assert!(vl.lookup(volume_info.id).is_some());
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 1);
+
+        vl.unregister_volume(&volume_info, &data_node).await;
+        assert!(vl.lookup(volume_info.id).is_none());
+        assert_eq!(vl.locations.len(), 0);
+        let active_count = vl.active_volume_count(&option).await;
+        assert_eq!(active_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_set_or_remove_from_writable() {
+        let vl = setup();
+        let volume_info = VolumeInfo::default();
+
+        assert_eq!(vl.writable_volumes.read().await.len(), 0);
+
+        vl.set_volume_writable(volume_info.id).await;
+        assert_eq!(vl.writable_volumes.read().await.len(), 1);
+
+        vl.remove_from_writable(&volume_info.id).await;
+        assert_eq!(vl.writable_volumes.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_pick_for_write() {
+        let vl = setup();
+        let mut option = VolumeGrowOption::default();
+
+        let pick_for_write = vl.pick_for_write(&option).await;
+        assert!(pick_for_write.is_err());
+
+        let data_node = Arc::new(data_node());
+        let mut volume_info = VolumeInfo::default();
+        volume_info.version = CURRENT_VERSION;
+        vl.register_volume(&volume_info, &data_node).await;
+
+        let (vid, data_nodes) = vl.pick_for_write(&option).await.unwrap();
+        assert_eq!(vid, volume_info.id);
+        assert_eq!(data_nodes.len(), 1);
+
+        option.data_center = FastStr::new("default");
+        let pick_for_write = vl.pick_for_write(&option).await;
+        assert!(pick_for_write.is_err());
+    }
+}

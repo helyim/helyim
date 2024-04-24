@@ -51,9 +51,13 @@ impl Rack {
         match self.data_nodes.get(&id) {
             Some(data_node) => data_node.value().clone(),
             None => {
-                let data_node = Arc::new(
-                    DataNode::new(id.clone(), ip, port, public_url, max_volume_count).await,
-                );
+                let data_node = Arc::new(DataNode::new(
+                    id.clone(),
+                    ip,
+                    port,
+                    public_url,
+                    max_volume_count,
+                ));
                 self.link_data_node(data_node.clone()).await;
                 data_node
             }
