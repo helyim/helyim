@@ -26,4 +26,4 @@ jobs:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
           slug: helyim/helyim
-          exclude: benchmark,proto
+          codecov_yml_path: codecov.yml
