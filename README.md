@@ -1,5 +1,9 @@
 # Helyim
 
+[![CI](https://github.com/helyim/helyim/actions/workflows/build.yaml/badge.svg)](https://github.com/helyim/helyim/actions/workflows/build.yaml)
+[![codecov](https://codecov.io/gh/iamazy/helyim/graph/badge.svg?token=8CV64ZGRQL)](https://codecov.io/gh/iamazy/helyim)
+![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
+
 [seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
 
 ### Features
