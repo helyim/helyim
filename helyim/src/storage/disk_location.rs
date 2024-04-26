@@ -117,15 +117,36 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeErro
         ));
     }
 
-    let name = path.file_name().unwrap().to_str().unwrap();
-    let name = &name[..name.len() - 4];
+    if let Some(filename) = path.file_name() {
+        if let Some(name) = filename.to_str() {
+            let name = &name[..name.len() - 4];
 
-    let (collection, id) =
-        pair(take_till(|c| c == '_'), opt(char('_')))(name).map(|(input, (left, opt_char))| {
-            match opt_char {
-                Some(_) => (left, input),
-                None => (input, left),
-            }
-        })?;
-    Ok((id.parse()?, collection))
+            let (collection, id) = pair(take_till(|c| c == '_'), opt(char('_')))(name).map(
+                |(input, (left, opt_char))| match opt_char {
+                    Some(_) => (left, input),
+                    None => (input, left),
+                },
+            )?;
+            return Ok((id.parse()?, collection));
+        }
+    }
+    Err(anyhow!(
+        "invalid data file: {}",
+        path.to_str().unwrap_or_default()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::storage::disk_location::parse_volume_id_from_path;
+
+    #[test]
+    pub fn test_parse_volume_id_from_path() {
+        let path = Path::new("/home/helyim/collection1_1.dat");
+        let (vid, collection) = parse_volume_id_from_path(&path).unwrap();
+        assert_eq!(vid, 1);
+        assert_eq!(collection, "collection1");
+    }
 }
