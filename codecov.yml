@@ -29,6 +29,6 @@ flag_management:
 
 # Ref: https://docs.codecov.com/docs/ignoring-paths
 ignore:
-  - benchmark/**
-  - proto/**
-  - helyim/benches/**
+  - benchmark
+  - proto
+  - helyim/benches
