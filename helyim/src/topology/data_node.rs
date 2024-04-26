@@ -362,20 +362,15 @@ mod test {
         let data_node = setup();
         let update_volumes = vec![volume_info(0), volume_info(1), volume_info(2)];
 
-        let (new_volumes, deleted_volumes) = data_node
-            .update_volumes(update_volumes)
-            .await;
+        let (new_volumes, deleted_volumes) = data_node.update_volumes(update_volumes).await;
         assert_eq!(data_node.volumes.len(), 3);
         assert_eq!(data_node.volume_count(), 3);
         assert_eq!(data_node.active_volume_count(), 3);
         assert_eq!(new_volumes.len(), 3);
         assert_eq!(deleted_volumes.len(), 0);
 
-
         let update_volumes = vec![volume_info(0), volume_info(2)];
-        let (new_volumes, deleted_volumes) = data_node
-            .update_volumes(update_volumes)
-            .await;
+        let (new_volumes, deleted_volumes) = data_node.update_volumes(update_volumes).await;
         assert_eq!(data_node.volumes.len(), 2);
         assert_eq!(data_node.volume_count(), 2);
         assert_eq!(data_node.active_volume_count(), 2);
