@@ -138,7 +138,7 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeErro
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::Path};
 
     use crate::storage::disk_location::parse_volume_id_from_path;
 
@@ -153,5 +153,18 @@ mod tests {
         let (vid, collection) = parse_volume_id_from_path(path).unwrap();
         assert_eq!(vid, 1);
         assert_eq!(collection, "");
+
+        let path = Path::new("/home/😊/1.dat");
+        let (vid, collection) = parse_volume_id_from_path(path).unwrap();
+        assert_eq!(vid, 1);
+        assert_eq!(collection, "");
+
+        let path = Path::new("/tmp");
+        let parse = parse_volume_id_from_path(path);
+        assert!(parse.is_err());
+
+        let path = Path::new(OsStr::from_bytes(&[0xC3, 0x28, 0x20, 0xC2, 0x29]));
+        let parse = parse_volume_id_from_path(path);
+        assert!(parse.is_err());
     }
 }
