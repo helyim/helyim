@@ -75,3 +75,44 @@ impl Display for ReplicaPlacement {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::ReplicaPlacement;
+
+    #[test]
+    pub fn test_replica_placement() {
+        let rp = ReplicaPlacement::new("000").unwrap();
+        assert_eq!(rp.copy_count(), 1);
+        assert_eq!(rp.diff_data_center_count, 0);
+        assert_eq!(rp.diff_rack_count, 0);
+        assert_eq!(rp.same_rack_count, 0);
+
+        let rp = ReplicaPlacement::new("001").unwrap();
+        assert_eq!(rp.copy_count(), 2);
+        assert_eq!(rp.diff_data_center_count, 0);
+        assert_eq!(rp.diff_rack_count, 0);
+        assert_eq!(rp.same_rack_count, 1);
+
+        let rp = ReplicaPlacement::new("010").unwrap();
+        assert_eq!(rp.copy_count(), 2);
+        assert_eq!(rp.diff_data_center_count, 0);
+        assert_eq!(rp.diff_rack_count, 1);
+        assert_eq!(rp.same_rack_count, 0);
+
+        let rp = ReplicaPlacement::new("100").unwrap();
+        assert_eq!(rp.copy_count(), 2);
+        assert_eq!(rp.diff_data_center_count, 1);
+        assert_eq!(rp.diff_rack_count, 0);
+        assert_eq!(rp.same_rack_count, 0);
+
+        let rp = ReplicaPlacement::from_u8(211).unwrap();
+        assert_eq!(rp.copy_count(), 5);
+        assert_eq!(rp.diff_data_center_count, 2);
+        assert_eq!(rp.diff_rack_count, 1);
+        assert_eq!(rp.same_rack_count, 1);
+
+        let rp: u8 = rp.into();
+        assert_eq!(rp, 211);
+    }
+}

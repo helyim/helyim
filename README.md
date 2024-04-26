@@ -1,6 +1,9 @@
 # Helyim
 
------
+[![CI](https://github.com/helyim/helyim/actions/workflows/build.yaml/badge.svg)](https://github.com/helyim/helyim/actions/workflows/build.yaml)
+[![codecov](https://codecov.io/github/helyim/helyim/graph/badge.svg?token=QRH8H0O6P5)](https://codecov.io/github/helyim/helyim)
+![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
+
 [seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
 
 ### Features
@@ -56,26 +59,25 @@ curl -X DELETE http://127.0.0.1:8080/6,16b7578a5
 
 ### Failover Master Server
 
-In order to make concise for parameters, when initiating a Raft node, only allow specifying up to 2 addresses simultaneously.
- `node-id` represents the current node id and `peer` denotes the cluster member.
+When initiating a Raft cluster, it is necessary to specify the same node sequence when starting the Leader and Follower instances.
 
 You can view the cluster status by accessing `http://localhost:9333/cluster/status`.
 
 ```bash
-# start master1, treat it as leader
+# start master1
 cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9333 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
       --peers 127.0.0.1:9337
       
       
-# start master2, treat it as learner
+# start master2
 cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9335 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
       --peers 127.0.0.1:9337
       
-# start master3, treat it as learner
+# start master3
 cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9337 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
