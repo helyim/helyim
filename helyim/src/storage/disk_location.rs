@@ -148,5 +148,10 @@ mod tests {
         let (vid, collection) = parse_volume_id_from_path(path).unwrap();
         assert_eq!(vid, 1);
         assert_eq!(collection, "collection1");
+
+        let path = Path::new("/home/helyim/1.dat");
+        let (vid, collection) = parse_volume_id_from_path(path).unwrap();
+        assert_eq!(vid, 1);
+        assert_eq!(collection, "");
     }
 }
