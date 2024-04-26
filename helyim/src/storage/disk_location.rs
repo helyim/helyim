@@ -145,7 +145,7 @@ mod tests {
     #[test]
     pub fn test_parse_volume_id_from_path() {
         let path = Path::new("/home/helyim/collection1_1.dat");
-        let (vid, collection) = parse_volume_id_from_path(&path).unwrap();
+        let (vid, collection) = parse_volume_id_from_path(path).unwrap();
         assert_eq!(vid, 1);
         assert_eq!(collection, "collection1");
     }
