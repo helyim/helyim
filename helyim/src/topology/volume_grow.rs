@@ -34,27 +34,24 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: &Topology,
     ) -> Result<Vec<DataNodeRef>, VolumeError> {
-        let rp = option.replica_placement;
-
         let mut ret = vec![];
 
         let data_centers = &topology.data_centers;
-        let (main_data_node, other_centers) =
-            find_main_data_center(data_centers, option, &rp).await?;
+        let (main_data_node, other_centers) = find_main_data_center(data_centers, option).await?;
         for dc in other_centers {
             let node = dc.reserve_one_volume().await?;
             ret.push(node);
         }
 
         let racks = &main_data_node.racks;
-        let (main_rack, other_racks) = find_main_rack(racks, option, &rp).await?;
+        let (main_rack, other_racks) = find_main_rack(racks, option).await?;
         for rack in other_racks {
             let node = rack.reserve_one_volume().await?;
             ret.push(node);
         }
 
         let data_nodes = &main_rack.data_nodes;
-        let (main_dn, other_nodes) = find_main_node(data_nodes, option, &rp).await?;
+        let (main_dn, other_nodes) = find_main_node(data_nodes, option).await?;
 
         ret.push(main_dn);
         for nd in other_nodes {
@@ -149,9 +146,9 @@ pub struct VolumeGrowOption {
 async fn find_main_data_center(
     data_centers: &DashMap<FastStr, DataCenterRef>,
     option: &VolumeGrowOption,
-    rp: &ReplicaPlacement,
 ) -> Result<(DataCenterRef, Vec<DataCenterRef>), VolumeError> {
     let mut candidates = vec![];
+    let rp = option.replica_placement;
 
     for data_center in data_centers.iter() {
         if !option.data_center.is_empty() && data_center.id() != option.data_center {
@@ -212,9 +209,9 @@ async fn find_main_data_center(
 async fn find_main_rack(
     racks: &DashMap<FastStr, RackRef>,
     option: &VolumeGrowOption,
-    rp: &ReplicaPlacement,
 ) -> Result<(RackRef, Vec<RackRef>), VolumeError> {
     let mut candidates = vec![];
+    let rp = option.replica_placement;
 
     for rack in racks.iter() {
         if !option.rack.is_empty() && option.rack != rack.id {
@@ -268,9 +265,9 @@ async fn find_main_rack(
 async fn find_main_node(
     data_nodes: &DashMap<FastStr, DataNodeRef>,
     option: &VolumeGrowOption,
-    rp: &ReplicaPlacement,
 ) -> Result<(DataNodeRef, Vec<DataNodeRef>), VolumeError> {
     let mut candidates = vec![];
+    let rp = option.replica_placement;
 
     for node in data_nodes.iter() {
         let node_id = node.key();

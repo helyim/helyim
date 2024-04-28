@@ -135,7 +135,7 @@ impl Topology {
     pub async fn pick_for_write(
         &self,
         count: u64,
-        option: Arc<VolumeGrowOption>,
+        option: &VolumeGrowOption,
     ) -> StdResult<(FileId, u64, DataNodeRef), VolumeError> {
         let file_id = self
             .sequencer
@@ -148,7 +148,7 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
+            let (vid, nodes) = layout.pick_for_write(option).await?;
             (vid, nodes[0].clone())
         };
 

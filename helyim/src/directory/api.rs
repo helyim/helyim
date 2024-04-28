@@ -28,17 +28,17 @@ pub async fn assign_handler(
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = Arc::new(request.volume_grow_option(&ctx.options.default_replication)?);
+    let option = request.volume_grow_option(&ctx.options.default_replication)?;
 
-    if !ctx.topology.has_writable_volume(option.as_ref()).await {
+    if !ctx.topology.has_writable_volume(&option).await {
         if ctx.topology.free_space() <= 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
         ctx.volume_grow
-            .grow_by_type(option.as_ref(), ctx.topology.as_ref())
+            .grow_by_type(&option, ctx.topology.as_ref())
             .await?;
     }
-    let (fid, count, node) = ctx.topology.pick_for_write(count, option).await?;
+    let (fid, count, node) = ctx.topology.pick_for_write(count, &option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
         url: node.url(),
