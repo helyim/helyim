@@ -203,3 +203,42 @@ impl DerefMut for Rack {
 }
 
 pub type RackRef = Arc<Rack>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use faststr::FastStr;
+
+    use crate::topology::rack::Rack;
+
+    #[tokio::test]
+    pub async fn test_get_or_create_data_node() {
+        let rack = Rack::new(FastStr::new("default"));
+
+        let id = FastStr::new("127.0.0.1:9333");
+        let node = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .await;
+
+        let _node1 = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id, 1)
+            .await;
+
+        assert_eq!(Arc::strong_count(&node), 3);
+    }
+
+    #[tokio::test]
+    pub async fn test_reserve_one_volume() {
+        let rack = Rack::new(FastStr::new("default"));
+
+        let id = FastStr::new("127.0.0.1:9333");
+        let node = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .await;
+
+        let _node1 = rack.reserve_one_volume().await.unwrap();
+
+        assert_eq!(Arc::strong_count(&node), 3);
+    }
+}
