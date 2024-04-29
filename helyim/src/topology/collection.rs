@@ -110,12 +110,14 @@ mod tests {
         let volume_opt = collection.lookup(0).await;
         let volume1_opt = vl.lookup(0);
 
-        assert!(matches!(volume_opt, None));
-        assert!(matches!(volume1_opt, None));
+        assert!(volume_opt.is_none());
+        assert!(volume1_opt.is_none());
 
         let data_node = Arc::new(data_node());
-        let mut volume_info = VolumeInfo::default();
-        volume_info.version = CURRENT_VERSION;
+        let volume_info = VolumeInfo {
+            version: CURRENT_VERSION,
+            ..Default::default()
+        };
 
         vl.register_volume(&volume_info, &data_node).await;
 
