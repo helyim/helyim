@@ -167,7 +167,6 @@ impl DataNode {
     }
 }
 
-#[cfg(not(tarpaulin_include))]
 impl DataNode {
     pub async fn allocate_volume(
         &self,
