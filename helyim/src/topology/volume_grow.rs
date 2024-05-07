@@ -304,3 +304,81 @@ async fn find_main_node(
 
     Ok((main_dn, rest_nodes))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use dashmap::DashMap;
+    use faststr::FastStr;
+
+    use crate::{
+        storage::{VolumeId, VolumeInfo},
+        topology::{
+            data_node::DataNode,
+            volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
+            DataNodeRef,
+        },
+    };
+
+    fn data_node(volume_id: VolumeId, ip: &str, port: u16) -> DataNodeRef {
+        let id = FastStr::new(format!("{ip}:{port}"));
+        let ip = FastStr::new(ip);
+        let public_url = id.clone();
+        let data_node = DataNode::new(id, ip, port, public_url, 1);
+        data_node.volumes.insert(volume_id, VolumeInfo::default());
+        Arc::new(data_node)
+    }
+
+    #[test]
+    pub fn test_find_volume_count() {
+        let vg = VolumeGrowth {};
+        assert_eq!(vg.find_volume_count(1), 7);
+        assert_eq!(vg.find_volume_count(2), 6);
+        assert_eq!(vg.find_volume_count(3), 3);
+        assert_eq!(vg.find_volume_count(4), 1);
+        assert_eq!(vg.find_volume_count(5), 1);
+    }
+
+    #[tokio::test]
+    pub async fn test_find_main_node() {
+        let data_nodes = DashMap::new();
+        data_nodes.insert(
+            FastStr::new("127.0.0.1:9333"),
+            data_node(0, "127.0.0.1", 9333),
+        );
+        data_nodes.insert(
+            FastStr::new("127.0.0.2:9333"),
+            data_node(1, "127.0.0.2", 9333),
+        );
+        data_nodes.insert(
+            FastStr::new("127.0.0.3:9333"),
+            data_node(2, "127.0.0.3", 9333),
+        );
+
+        let option = VolumeGrowOption::default();
+
+        let mut data_node1_cnt = 0;
+        let mut data_node2_cnt = 0;
+        let mut data_node3_cnt = 0;
+
+        for _ in 0..1000_000 {
+            let (main_node, _rest_nodes) = find_main_node(&data_nodes, &option).await.unwrap();
+            if main_node.ip == "127.0.0.1" {
+                data_node1_cnt += 1;
+            } else if main_node.ip == "127.0.0.2" {
+                data_node2_cnt += 1;
+            } else if main_node.ip == "127.0.0.3" {
+                data_node3_cnt += 1;
+            } else {
+                panic!("should not be here.");
+            }
+        }
+
+        println!("node1: {data_node1_cnt}, node2: {data_node2_cnt}, node3: {data_node3_cnt}");
+
+        assert_eq!(data_node1_cnt / 1000, 333);
+        assert_eq!(data_node2_cnt / 1000, 333);
+        assert_eq!(data_node3_cnt / 1000, 333);
+    }
+}
