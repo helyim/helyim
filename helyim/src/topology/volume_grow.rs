@@ -362,7 +362,7 @@ mod tests {
         let mut data_node2_cnt = 0;
         let mut data_node3_cnt = 0;
 
-        for _ in 0..1000_000 {
+        for _ in 0..1_000_000 {
             let (main_node, _rest_nodes) = find_main_node(&data_nodes, &option).await.unwrap();
             if main_node.ip == "127.0.0.1" {
                 data_node1_cnt += 1;
