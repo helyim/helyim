@@ -426,7 +426,7 @@ impl Topology {
         locations
     }
 
-    fn link_data_center(&self, data_center: Arc<DataCenter>) {
+    pub fn link_data_center(&self, data_center: Arc<DataCenter>) {
         if !self.data_centers.contains_key(data_center.id()) {
             self.adjust_max_volume_count(data_center.max_volume_count());
             self.adjust_max_volume_id(data_center.max_volume_id());

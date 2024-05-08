@@ -307,17 +307,22 @@ async fn find_main_node(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Arc};
 
     use dashmap::DashMap;
     use faststr::FastStr;
+    use serde::Deserialize;
 
     use crate::{
-        storage::{VolumeId, VolumeInfo},
+        directory::Sequencer,
+        sequence::MemorySequencer,
+        storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
         topology::{
+            data_center::DataCenter,
             data_node::DataNode,
+            rack::Rack,
             volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
-            DataNodeRef,
+            DataNodeRef, Topology,
         },
     };
 
@@ -380,5 +385,133 @@ mod tests {
         // assert_eq!(data_node1_cnt / 1000, 333);
         // assert_eq!(data_node2_cnt / 1000, 333);
         // assert_eq!(data_node3_cnt / 1000, 333);
+    }
+
+    const TOPO_LAYOUT: &str = r#"
+    {
+      "dc1":{
+        "rack1":{
+          "server111":{
+            "volumes":[
+              {"id":1, "size":12312},
+              {"id":2, "size":12312},
+              {"id":3, "size":12312}
+            ],
+            "limit":3
+          },
+          "server112":{
+            "volumes":[
+              {"id":4, "size":12312},
+              {"id":5, "size":12312},
+              {"id":6, "size":12312}
+            ],
+            "limit":10
+          }
+        },
+        "rack2":{
+          "server121":{
+            "volumes":[
+              {"id":4, "size":12312},
+              {"id":5, "size":12312},
+              {"id":6, "size":12312}
+            ],
+            "limit":4
+          },
+          "server122":{
+            "volumes":[],
+            "limit":4
+          },
+          "server123":{
+            "volumes":[
+              {"id":2, "size":12312},
+              {"id":3, "size":12312},
+              {"id":4, "size":12312}
+            ],
+            "limit":5
+          }
+        }
+      },
+      "dc2":{
+      },
+      "dc3":{
+        "rack2":{
+          "server321":{
+            "volumes":[
+              {"id":1, "size":12312},
+              {"id":3, "size":12312},
+              {"id":5, "size":12312}
+            ],
+            "limit":4
+          }
+        }
+      }
+    }"#;
+
+    #[derive(Deserialize, Debug)]
+    struct ServerLayout {
+        volumes: Vec<VolumeLayout>,
+        limit: i64,
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct VolumeLayout {
+        id: u32,
+        size: u64,
+    }
+
+    async fn setup_topo() -> Topology {
+        let data: HashMap<String, HashMap<String, HashMap<String, ServerLayout>>> =
+            serde_json::from_str(TOPO_LAYOUT).unwrap();
+        let topo = Topology::new(Sequencer::Memory(MemorySequencer::new()), 32 * 1024, 5);
+        for (k, v) in data {
+            let dc = Arc::new(DataCenter::new(FastStr::new(k)));
+            topo.link_data_center(dc.clone());
+
+            for (k, v) in v {
+                let rack = Arc::new(Rack::new(FastStr::new(k)));
+                dc.link_rack(rack.clone()).await;
+
+                for (k, v) in v {
+                    let data_node = Arc::new(DataNode::new(
+                        FastStr::new(k),
+                        FastStr::empty(),
+                        0,
+                        FastStr::empty(),
+                        0,
+                    ));
+                    rack.link_data_node(data_node.clone()).await;
+
+                    for vl in v.volumes {
+                        let mut vi = VolumeInfo::default();
+                        vi.id = vl.id;
+                        vi.size = vl.size;
+                        vi.version = CURRENT_VERSION;
+
+                        data_node.add_or_update_volume(&vi).await;
+                    }
+                    data_node.adjust_max_volume_count(v.limit).await;
+                }
+            }
+        }
+        topo
+    }
+
+    #[tokio::test]
+    pub async fn test_find_empty_slots() {
+        let topo = setup_topo().await;
+        let vg = VolumeGrowth {};
+        let rp = ReplicaPlacement::new("002").unwrap();
+
+        let vgo = VolumeGrowOption {
+            replica_placement: rp,
+            data_center: FastStr::new("dc1"),
+            ..Default::default()
+        };
+
+        let servers = vg.find_empty_slots(&vgo, &topo).await.unwrap();
+
+        for server in servers {
+            println!("assigned node: {}", server.id);
+        }
     }
 }
