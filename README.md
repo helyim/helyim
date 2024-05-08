@@ -1,7 +1,7 @@
 <div align="center">
     <h1>Helyim</h1>
     <h4>
-        <a href="https://github.com/seaweedfs/seaweedfs">seaweedfs</a> implemented in pure Rust. Please ⭐ on <a href="https://github.com/datafuselabs/openraft">github</a>!
+        <a href="https://github.com/seaweedfs/seaweedfs">seaweedfs</a> implemented in pure Rust. Please ⭐ on <a href="https://github.com/helyim/helyim">github</a>!
     </h4>
 
 [![Crates.io](https://img.shields.io/crates/v/helyim.svg)](https://crates.io/crates/helyim)
