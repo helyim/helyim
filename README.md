@@ -1,10 +1,15 @@
-# Helyim
+<div align="center">
+    <h1>Helyim</h1>
+    <h4>
+        <a href="https://github.com/seaweedfs/seaweedfs">seaweedfs</a> implemented in pure Rust. Please ⭐ on <a href="https://github.com/datafuselabs/openraft">github</a>!
+    </h4>
 
+[![Crates.io](https://img.shields.io/crates/v/helyim.svg)](https://crates.io/crates/helyim)
 [![CI](https://github.com/helyim/helyim/actions/workflows/build.yaml/badge.svg)](https://github.com/helyim/helyim/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/github/helyim/helyim/graph/badge.svg?token=QRH8H0O6P5)](https://codecov.io/github/helyim/helyim)
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 
-[seaweedfs](https://github.com/seaweedfs/seaweedfs) implemented in pure Rust.
+</div>
 
 ### Features
 
