@@ -482,11 +482,12 @@ mod tests {
                     rack.link_data_node(data_node.clone()).await;
 
                     for vl in v.volumes {
-                        let mut vi = VolumeInfo::default();
-                        vi.id = vl.id;
-                        vi.size = vl.size;
-                        vi.version = CURRENT_VERSION;
-
+                        let vi = VolumeInfo {
+                            id: vl.id,
+                            size: vl.size,
+                            version: CURRENT_VERSION,
+                            ..Default::default()
+                        };
                         data_node.add_or_update_volume(&vi).await;
                     }
                     data_node.adjust_max_volume_count(v.limit).await;
