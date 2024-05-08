@@ -6,13 +6,13 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
+documentation.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "../README.md"
 description = """
 proto for helyim
 """
-documentation = "https://github.com/helyim/helyim"
-readme = "../README.md"
-categories = ["protobuf", "rpc"]
-keywords = ["helyim", "seaweedfs", "object storage", "rust", "protobuf"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
