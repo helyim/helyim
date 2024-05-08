@@ -38,17 +38,9 @@ impl VolumeGrowth {
 
         let data_centers = &topology.data_centers;
         let (main_data_node, other_centers) = find_main_data_center(data_centers, option).await?;
-        for dc in other_centers {
-            let node = dc.reserve_one_volume().await?;
-            ret.push(node);
-        }
 
         let racks = &main_data_node.racks;
         let (main_rack, other_racks) = find_main_rack(racks, option).await?;
-        for rack in other_racks {
-            let node = rack.reserve_one_volume().await?;
-            ret.push(node);
-        }
 
         let data_nodes = &main_rack.data_nodes;
         let (main_dn, other_nodes) = find_main_node(data_nodes, option).await?;
@@ -56,6 +48,16 @@ impl VolumeGrowth {
         ret.push(main_dn);
         for nd in other_nodes {
             ret.push(nd.clone());
+        }
+
+        for rack in other_racks {
+            let node = rack.reserve_one_volume().await?;
+            ret.push(node);
+        }
+
+        for dc in other_centers {
+            let node = dc.reserve_one_volume().await?;
+            ret.push(node);
         }
 
         Ok(ret)
@@ -285,19 +287,30 @@ async fn find_main_node(
         ));
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
-    let main_dn = candidates.remove(first_idx);
+    let main_dn = candidates[first_idx].clone();
     debug!("picked main data node: {}", main_dn.id());
 
     let mut rest_nodes = Vec::with_capacity(rp.same_rack_count as usize);
+    candidates = vec![];
+
+    for node in data_nodes.iter() {
+        if node.id == main_dn.id {
+            continue;
+        }
+        if node.free_space() <= 0 {
+            continue;
+        }
+        candidates.push(node.clone());
+    }
 
     let mut rng = rand::thread_rng();
     for (i, data_node) in candidates.iter().enumerate() {
         if i < rest_nodes.len() {
-            rest_nodes.insert(i, data_node.clone());
+            rest_nodes[i] = data_node.clone();
         } else {
             let r = rng.gen_range(0..(i + 1));
             if r < rest_nodes.len() {
-                rest_nodes.insert(r, data_node.clone());
+                rest_nodes[r] = data_node.clone();
             }
         }
     }
