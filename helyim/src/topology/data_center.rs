@@ -5,7 +5,6 @@ use std::{
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -54,19 +53,17 @@ impl DataCenter {
         }
     }
 
-    pub async fn reserve_one_volume(&self) -> Result<DataNodeRef, VolumeError> {
-        // randomly select one
-        let mut free_space = 0;
+    pub async fn reserve_one_volume(&self, mut random: i64) -> Result<DataNodeRef, VolumeError> {
         for rack in self.racks.iter() {
-            free_space += rack.free_space();
-        }
-
-        let idx = rand::thread_rng().gen_range(0..free_space);
-
-        for rack in self.racks.iter() {
-            free_space -= rack.free_space();
-            if free_space == idx {
-                return rack.reserve_one_volume().await;
+            let free_space = rack.free_space();
+            if free_space <= 0 {
+                continue;
+            }
+            if random >= free_space {
+                random -= free_space;
+            } else {
+                let node = rack.reserve_one_volume(random).await?;
+                return Ok(node);
             }
         }
 
