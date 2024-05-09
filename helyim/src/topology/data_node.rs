@@ -296,7 +296,7 @@ mod test {
     use faststr::FastStr;
 
     use crate::{
-        storage::{ReplicaPlacement, Ttl, VolumeInfo, CURRENT_VERSION},
+        storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
         topology::data_node::DataNode,
     };
 
@@ -307,18 +307,23 @@ mod test {
         DataNode::new(id, ip, 9333, public_url, 1)
     }
 
-    #[tokio::test]
-    pub async fn test_add_or_update_volume() {
-        let data_node = setup();
-        let volume = VolumeInfo {
-            id: 0,
+    fn volume_info(id: VolumeId) -> VolumeInfo {
+        VolumeInfo {
+            id,
             size: 0,
             collection: FastStr::new("default_collection"),
             version: CURRENT_VERSION,
             ttl: Ttl::new("1d").unwrap(),
             replica_placement: ReplicaPlacement::new("000").unwrap(),
+            read_only: false,
             ..Default::default()
-        };
+        }
+    }
+
+    #[tokio::test]
+    pub async fn test_add_or_update_volume() {
+        let data_node = setup();
+        let volume = volume_info(0);
         let is_new = data_node.add_or_update_volume(&volume).await;
         assert!(is_new);
         let is_new = data_node.add_or_update_volume(&volume).await;
@@ -328,5 +333,47 @@ mod test {
         assert_eq!(data_node.max_volume_count(), 1);
         assert_eq!(data_node.active_volume_count(), 1);
         assert_eq!(data_node.free_space(), 0);
+    }
+
+    #[tokio::test]
+    pub async fn test_delta_update_volume() {
+        let data_node = setup();
+        let new_volumes = vec![volume_info(0), volume_info(1), volume_info(2)];
+        let deleted_volumes = vec![];
+
+        data_node
+            .delta_update_volumes(&new_volumes, &deleted_volumes)
+            .await;
+        assert_eq!(data_node.volumes.len(), 3);
+        assert_eq!(data_node.volume_count(), 3);
+        assert_eq!(data_node.active_volume_count(), 3);
+
+        data_node
+            .delta_update_volumes(&deleted_volumes, &new_volumes)
+            .await;
+        assert_eq!(data_node.volumes.len(), 0);
+        assert_eq!(data_node.volume_count(), 0);
+        assert_eq!(data_node.active_volume_count(), 0);
+    }
+
+    #[tokio::test]
+    pub async fn test_update_volume() {
+        let data_node = setup();
+        let update_volumes = vec![volume_info(0), volume_info(1), volume_info(2)];
+
+        let (new_volumes, deleted_volumes) = data_node.update_volumes(update_volumes).await;
+        assert_eq!(data_node.volumes.len(), 3);
+        assert_eq!(data_node.volume_count(), 3);
+        assert_eq!(data_node.active_volume_count(), 3);
+        assert_eq!(new_volumes.len(), 3);
+        assert_eq!(deleted_volumes.len(), 0);
+
+        let update_volumes = vec![volume_info(0), volume_info(2)];
+        let (new_volumes, deleted_volumes) = data_node.update_volumes(update_volumes).await;
+        assert_eq!(data_node.volumes.len(), 2);
+        assert_eq!(data_node.volume_count(), 2);
+        assert_eq!(data_node.active_volume_count(), 2);
+        assert_eq!(new_volumes.len(), 0);
+        assert_eq!(deleted_volumes.len(), 1);
     }
 }

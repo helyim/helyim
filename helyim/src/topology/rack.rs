@@ -6,7 +6,6 @@ use std::{
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -71,18 +70,15 @@ impl Rack {
         }
     }
 
-    pub async fn reserve_one_volume(&self) -> StdResult<DataNodeRef, VolumeError> {
-        // randomly select
-        let mut free_volumes = 0;
+    pub async fn reserve_one_volume(&self, mut random: i64) -> StdResult<DataNodeRef, VolumeError> {
         for data_node in self.data_nodes.iter() {
-            free_volumes += data_node.free_space();
-        }
-
-        let idx = rand::thread_rng().gen_range(0..free_volumes);
-
-        for data_node in self.data_nodes.iter() {
-            free_volumes -= data_node.free_space();
-            if free_volumes == idx {
+            let free_space = data_node.free_space();
+            if free_space <= 0 {
+                continue;
+            }
+            if random >= free_space {
+                random -= free_space;
+            } else {
                 return Ok(data_node.clone());
             }
         }
@@ -203,3 +199,44 @@ impl DerefMut for Rack {
 }
 
 pub type RackRef = Arc<Rack>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use faststr::FastStr;
+    use rand::Rng;
+
+    use crate::topology::rack::Rack;
+
+    #[tokio::test]
+    pub async fn test_get_or_create_data_node() {
+        let rack = Rack::new(FastStr::new("default"));
+
+        let id = FastStr::new("127.0.0.1:9333");
+        let node = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .await;
+
+        let _node1 = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id, 1)
+            .await;
+
+        assert_eq!(Arc::strong_count(&node), 3);
+    }
+
+    #[tokio::test]
+    pub async fn test_reserve_one_volume() {
+        let rack = Rack::new(FastStr::new("default"));
+
+        let id = FastStr::new("127.0.0.1:9333");
+        let node = rack
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .await;
+
+        let random = rand::thread_rng().gen_range(0..rack.free_space());
+        let _node1 = rack.reserve_one_volume(random).await.unwrap();
+
+        assert_eq!(Arc::strong_count(&node), 3);
+    }
+}

@@ -6,13 +6,13 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
+documentation.workspace = true
+categories.workspace = true
+keywords.workspace = true
+readme = "../README.md"
 description = """
 helyim is a object storage written by Rust.
 """
-documentation = "https://github.com/helyim/helyim"
-readme = "README.md"
-categories = ["object storage"]
-keywords = ["helyim", "seaweedfs", "object storage", "s3", "rust"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -33,7 +33,7 @@ dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true
-helyim-proto = { path = "../proto" }
+helyim-proto = { path = "../proto", version = "0.1.0" }
 hyper = { workspace = true, features = ["full"] }
 hyper-util.workspace = true
 indexmap.workspace = true

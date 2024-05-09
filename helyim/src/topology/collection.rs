@@ -61,3 +61,70 @@ impl Collection {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use faststr::FastStr;
+
+    use crate::{
+        storage::{ReplicaPlacement, Ttl, VolumeInfo, CURRENT_VERSION},
+        topology::{collection::Collection, data_node::DataNode},
+    };
+
+    fn data_node() -> DataNode {
+        let id = FastStr::new("127.0.0.1:9333");
+        let ip = FastStr::new("127.0.0.1");
+        let public_url = id.clone();
+        let data_node = DataNode::new(id, ip, 9333, public_url, 1);
+        data_node.volumes.insert(0, VolumeInfo::default());
+        data_node
+    }
+
+    #[test]
+    pub fn test_get_or_create_volume_layout() {
+        let collection = Collection::new(FastStr::new("default"), 1024);
+
+        let rp = ReplicaPlacement::new("000").unwrap();
+        let ttl = Ttl::new("1d").unwrap();
+        let vl = collection.get_or_create_volume_layout(rp, Some(ttl));
+        let _vl1 = collection.get_or_create_volume_layout(rp, Some(ttl));
+
+        assert_eq!(Arc::strong_count(&vl), 3);
+
+        let vl = collection.get_or_create_volume_layout(rp, None);
+        let _vl1 = collection.get_or_create_volume_layout(rp, None);
+
+        assert_eq!(Arc::strong_count(&vl), 3);
+    }
+
+    #[tokio::test]
+    pub async fn test_lookup() {
+        let collection = Collection::new(FastStr::new("default"), 1024);
+
+        let rp = ReplicaPlacement::new("000").unwrap();
+        let ttl = Ttl::new("1d").unwrap();
+        let vl = collection.get_or_create_volume_layout(rp, Some(ttl));
+
+        let volume_opt = collection.lookup(0).await;
+        let volume1_opt = vl.lookup(0);
+
+        assert!(volume_opt.is_none());
+        assert!(volume1_opt.is_none());
+
+        let data_node = Arc::new(data_node());
+        let volume_info = VolumeInfo {
+            version: CURRENT_VERSION,
+            ..Default::default()
+        };
+
+        vl.register_volume(&volume_info, &data_node).await;
+
+        let volume_opt = collection.lookup(0).await;
+        let volume1_opt = vl.lookup(0);
+
+        assert!(volume_opt.is_some());
+        assert!(volume1_opt.is_some());
+    }
+}

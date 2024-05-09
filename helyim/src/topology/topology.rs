@@ -135,7 +135,7 @@ impl Topology {
     pub async fn pick_for_write(
         &self,
         count: u64,
-        option: Arc<VolumeGrowOption>,
+        option: &VolumeGrowOption,
     ) -> StdResult<(FileId, u64, DataNodeRef), VolumeError> {
         let file_id = self
             .sequencer
@@ -148,7 +148,7 @@ impl Topology {
                 option.replica_placement,
                 option.ttl,
             );
-            let (vid, nodes) = layout.pick_for_write(option.as_ref()).await?;
+            let (vid, nodes) = layout.pick_for_write(option).await?;
             (vid, nodes[0].clone())
         };
 
@@ -426,7 +426,7 @@ impl Topology {
         locations
     }
 
-    fn link_data_center(&self, data_center: Arc<DataCenter>) {
+    pub fn link_data_center(&self, data_center: Arc<DataCenter>) {
         if !self.data_centers.contains_key(data_center.id()) {
             self.adjust_max_volume_count(data_center.max_volume_count());
             self.adjust_max_volume_id(data_center.max_volume_id());
