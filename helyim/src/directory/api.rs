@@ -109,3 +109,129 @@ pub async fn cluster_status_handler(State(ctx): State<DirectoryState>) -> Json<C
     };
     Json(status)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+        time::Duration,
+    };
+
+    use axum::{body::Body, extract::DefaultBodyLimit, http::Request, routing::get, Router};
+    use faststr::FastStr;
+    use http_body_util::BodyExt as _;
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
+    use tracing::{info_span, Instrument};
+    use turmoil::Builder;
+
+    use crate::{
+        directory::{
+            api::{assign_handler, cluster_status_handler, dir_status_handler, lookup_handler},
+            DirectoryState,
+        },
+        topology::volume_grow::VolumeGrowth,
+        util::{
+            args::{MasterOptions, RaftOptions},
+            connector,
+            http::default_handler,
+        },
+    };
+
+    #[test]
+    pub fn test_master_api() {
+        let addr = (IpAddr::from(Ipv4Addr::UNSPECIFIED), 9333);
+
+        let mut sim = Builder::new().build();
+
+        let topo = crate::topology::tests::setup_topo();
+        let topo = Arc::new(topo);
+        let options = MasterOptions {
+            ip: FastStr::new("127.0.0.1"),
+            port: 9333,
+            meta_path: FastStr::new("./"),
+            pulse: 5,
+            volume_size_limit_mb: 30000,
+            default_replication: FastStr::new("000"),
+            raft: RaftOptions { peers: vec![] },
+        };
+        let options = Arc::new(options);
+
+        let ctx = DirectoryState {
+            topology: topo,
+            volume_grow: VolumeGrowth {},
+            options,
+        };
+
+        let http_router = Router::new()
+            .route("/dir/assign", get(assign_handler).post(assign_handler))
+            .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
+            .route(
+                "/dir/status",
+                get(dir_status_handler).post(dir_status_handler),
+            )
+            .route(
+                "/cluster/status",
+                get(cluster_status_handler).post(cluster_status_handler),
+            )
+            .fallback(default_handler)
+            .layer((
+                CompressionLayer::new(),
+                DefaultBodyLimit::max(1024 * 1024),
+                TimeoutLayer::new(Duration::from_secs(10)),
+            ))
+            .with_state(ctx);
+
+        sim.host("server", move || {
+            let router = http_router.clone();
+            async move {
+                let listener = turmoil::net::TcpListener::bind(addr).await?;
+                loop {
+                    let (tcp_stream, _remote_addr) = listener.accept().await?;
+                    let tcp_stream = hyper_util::rt::TokioIo::new(tcp_stream);
+
+                    let hyper_service =
+                        hyper_util::service::TowerToHyperService::new(router.clone());
+
+                    let result = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                        .serve_connection_with_upgrades(tcp_stream, hyper_service)
+                        .await;
+                    if result.is_err() {
+                        // This error only appears when the client doesn't send a request and
+                        // terminate the connection.
+                        //
+                        // If client sends one request then terminate connection whenever, it
+                        // doesn't appear.
+                        break;
+                    }
+                }
+
+                Ok(())
+            }
+            .instrument(info_span!("server"))
+        });
+
+        sim.client(
+            "client",
+            async move {
+                let client = Client::builder(TokioExecutor::new()).build(connector::connector());
+
+                let mut request = Request::new(Body::empty());
+                *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/assign");
+                let res = client.request(request).await?;
+
+                let (parts, body) = res.into_parts();
+                let body = body.collect().await?.to_bytes();
+                let res = hyper::Response::from_parts(parts, body);
+
+                println!("Got response: {:?}", res);
+
+                Ok(())
+            }
+            .instrument(info_span!("client")),
+        );
+
+        sim.run().unwrap();
+    }
+}

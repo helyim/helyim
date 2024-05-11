@@ -10,6 +10,8 @@ mod node;
 mod rack;
 
 mod topology;
+#[cfg(test)]
+pub(crate) use topology::tests;
 pub use topology::{topology_vacuum_loop, Topology, TopologyError, TopologyRef};
 
 pub mod volume_grow;

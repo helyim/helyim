@@ -72,10 +72,15 @@ reqwest = { version = "0.11", features = ["json"] }
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 helyim-benchmark = { path = "../benchmark" }
+http-body-util.workspace = true
+hyper-util = { workspace = true, features = ["client", "client-legacy", "service", "tokio"] }
+pin-project-lite.workspace = true
 pprof = { workspace = true, features = ["flamegraph", "criterion", "frame-pointer"] }
 reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tower.workspace = true
+turmoil.workspace = true
 
 [features]
 default = []
