@@ -555,3 +555,69 @@ pub async fn topology_vacuum_loop(
 }
 
 pub type TopologyRef = Arc<Topology>;
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::{collections::HashMap, fs::File, sync::Arc};
+
+    use faststr::FastStr;
+    use serde::Deserialize;
+
+    use crate::{
+        directory::Sequencer,
+        sequence::MemorySequencer,
+        storage::{VolumeInfo, CURRENT_VERSION},
+        topology::{data_center::DataCenter, data_node::DataNode, rack::Rack, Topology},
+    };
+
+    #[derive(Deserialize, Debug)]
+    struct ServerLayout {
+        volumes: Vec<VolumeLayout>,
+        limit: i64,
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct VolumeLayout {
+        id: u32,
+        size: u64,
+    }
+
+    pub async fn setup_topo() -> Topology {
+        let file = File::open("../tests/topo.json").unwrap();
+        let data: HashMap<String, HashMap<String, HashMap<String, ServerLayout>>> =
+            serde_json::from_reader(file).unwrap();
+        let topo = Topology::new(Sequencer::Memory(MemorySequencer::new()), 32 * 1024, 5);
+        for (k, v) in data {
+            let dc = Arc::new(DataCenter::new(FastStr::new(k)));
+            topo.link_data_center(dc.clone());
+
+            for (k, v) in v {
+                let rack = Arc::new(Rack::new(FastStr::new(k)));
+                dc.link_rack(rack.clone()).await;
+
+                for (k, v) in v {
+                    let data_node = Arc::new(DataNode::new(
+                        FastStr::new(k),
+                        FastStr::empty(),
+                        0,
+                        FastStr::empty(),
+                        0,
+                    ));
+                    rack.link_data_node(data_node.clone()).await;
+
+                    for vl in v.volumes {
+                        let vi = VolumeInfo {
+                            id: vl.id,
+                            size: vl.size,
+                            version: CURRENT_VERSION,
+                            ..Default::default()
+                        };
+                        data_node.add_or_update_volume(&vi).await;
+                    }
+                    data_node.adjust_max_volume_count(v.limit).await;
+                }
+            }
+        }
+        topo
+    }
+}
