@@ -122,6 +122,7 @@ mod tests {
     use faststr::FastStr;
     use http_body_util::BodyExt as _;
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    use serde_json::Value;
     use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
     use tracing::{info_span, Instrument};
     use turmoil::Builder;
@@ -131,6 +132,7 @@ mod tests {
             api::{assign_handler, cluster_status_handler, dir_status_handler, lookup_handler},
             DirectoryState,
         },
+        operation::{lookup::Lookup, Assignment},
         topology::volume_grow::VolumeGrowth,
         util::{
             args::{MasterOptions, RaftOptions},
@@ -220,15 +222,39 @@ mod tests {
             async move {
                 let client = Client::builder(TokioExecutor::new()).build(connector::connector());
 
-                let mut request = Request::new(Body::empty());
-                *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/assign");
-                let res = client.request(request).await?;
+                {
+                    let mut request = Request::new(Body::empty());
+                    *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/assign");
+                    let res = client.request(request).await?;
 
-                let (parts, body) = res.into_parts();
-                let body = body.collect().await?.to_bytes();
-                let res = hyper::Response::from_parts(parts, body);
+                    let (parts, body) = res.into_parts();
+                    let body = body.collect().await?.to_bytes();
+                    let res = hyper::Response::from_parts(parts, body);
+                    let _: Assignment = serde_json::from_slice(res.body()).unwrap();
+                }
 
-                println!("Got response: {:?}", res);
+                {
+                    let mut request = Request::new(Body::empty());
+                    *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/status");
+                    let res = client.request(request).await?;
+
+                    let (parts, body) = res.into_parts();
+                    let body = body.collect().await?.to_bytes();
+                    let res = hyper::Response::from_parts(parts, body);
+                    let _: Value = serde_json::from_slice(res.body()).unwrap();
+                }
+
+                {
+                    let mut request = Request::new(Body::empty());
+                    *request.uri_mut() =
+                        hyper::Uri::from_static("http://server:9333/dir/lookup?volumeId=1");
+                    let res = client.request(request).await?;
+
+                    let (parts, body) = res.into_parts();
+                    let body = body.collect().await?.to_bytes();
+                    let res = hyper::Response::from_parts(parts, body);
+                    let _: Lookup = serde_json::from_slice(res.body()).unwrap();
+                }
 
                 Ok(())
             }
