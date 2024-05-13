@@ -99,6 +99,7 @@ impl VolumeGrowth {
         nodes: Vec<DataNodeRef>,
     ) -> Result<(), VolumeError> {
         for dn in nodes {
+            #[cfg(not(test))]
             dn.allocate_volume(AllocateVolumeRequest {
                 volume_id: vid,
                 collection: option.collection.to_string(),

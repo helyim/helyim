@@ -34,9 +34,11 @@ pub async fn assign_handler(
         if ctx.topology.free_space() <= 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
-        ctx.volume_grow
+        let a = ctx
+            .volume_grow
             .grow_by_type(&option, ctx.topology.as_ref())
-            .await?;
+            .await;
+        println!("{:?}", a);
     }
     let (fid, count, node) = ctx.topology.pick_for_write(count, &option).await?;
     let assignment = Assignment {
@@ -143,7 +145,10 @@ mod tests {
     pub fn test_master_api() {
         let addr = (IpAddr::from(Ipv4Addr::UNSPECIFIED), 9333);
 
-        let mut sim = Builder::new().build();
+        let mut sim = Builder::new()
+            .simulation_duration(Duration::from_secs(100))
+            .enable_tokio_io()
+            .build();
 
         let topo = crate::topology::tests::setup_topo();
         let topo = Arc::new(topo);

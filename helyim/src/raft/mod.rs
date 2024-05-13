@@ -180,12 +180,12 @@ impl RaftServer {
         Ok(())
     }
 
-    pub async fn set_topology(&self, topology: &TopologyRef) {
+    pub async fn set_topology(&self, topology: TopologyRef) {
         self.state_machine_store
             .state_machine
             .write()
             .await
-            .set_topology(topology.clone());
+            .set_topology(topology);
     }
 
     pub async fn current_leader(&self) -> Option<NodeId> {

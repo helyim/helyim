@@ -114,7 +114,7 @@ impl DirectoryServer {
         let raft_node_addr = format!("{}:{}", self.options.ip, self.options.port);
         // start raft node and control cluster with `raft_client`
         let raft_server = RaftServer::start_node(&raft_node_addr).await?;
-        raft_server.set_topology(&self.topology.clone()).await;
+        raft_server.set_topology(self.topology.clone()).await;
         self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
