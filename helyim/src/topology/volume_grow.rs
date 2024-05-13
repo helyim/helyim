@@ -421,16 +421,16 @@ mod tests {
     pub async fn test_find_main_node() {
         let data_nodes = DashMap::new();
         data_nodes.insert(
-            FastStr::new("127.0.0.1:9333"),
-            data_node(0, "127.0.0.1", 9333),
+            FastStr::new("127.0.0.1:8080"),
+            data_node(0, "127.0.0.1", 8080),
         );
         data_nodes.insert(
-            FastStr::new("127.0.0.2:9333"),
-            data_node(1, "127.0.0.2", 9333),
+            FastStr::new("127.0.0.2:8080"),
+            data_node(1, "127.0.0.2", 8080),
         );
         data_nodes.insert(
-            FastStr::new("127.0.0.3:9333"),
-            data_node(2, "127.0.0.3", 9333),
+            FastStr::new("127.0.0.3:8080"),
+            data_node(2, "127.0.0.3", 8080),
         );
 
         let option = VolumeGrowOption::default();

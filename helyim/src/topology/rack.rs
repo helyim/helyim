@@ -213,13 +213,13 @@ mod tests {
     pub async fn test_get_or_create_data_node() {
         let rack = Rack::new(FastStr::new("default"));
 
-        let id = FastStr::new("127.0.0.1:9333");
+        let id = FastStr::new("127.0.0.1:8080");
         let node = rack
-            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 8080, id.clone(), 1)
             .await;
 
         let _node1 = rack
-            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id, 1)
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 8080, id, 1)
             .await;
 
         assert_eq!(Arc::strong_count(&node), 3);
@@ -229,9 +229,9 @@ mod tests {
     pub async fn test_reserve_one_volume() {
         let rack = Rack::new(FastStr::new("default"));
 
-        let id = FastStr::new("127.0.0.1:9333");
+        let id = FastStr::new("127.0.0.1:8080");
         let node = rack
-            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 9333, id.clone(), 1)
+            .get_or_create_data_node(id.clone(), FastStr::new("127.0.0.1"), 8080, id.clone(), 1)
             .await;
 
         let random = rand::thread_rng().gen_range(0..rack.free_space());
