@@ -1,6 +1,5 @@
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_proto::volume::AllocateVolumeRequest;
 use rand::Rng;
 use tracing::{debug, error};
 
@@ -100,7 +99,7 @@ impl VolumeGrowth {
     ) -> Result<(), VolumeError> {
         for dn in nodes {
             #[cfg(not(test))]
-            dn.allocate_volume(AllocateVolumeRequest {
+            dn.allocate_volume(helyim_proto::volume::AllocateVolumeRequest {
                 volume_id: vid,
                 collection: option.collection.to_string(),
                 replication: option.replica_placement.to_string(),
