@@ -34,11 +34,9 @@ pub async fn assign_handler(
         if ctx.topology.free_space() <= 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
-        let a = ctx
-            .volume_grow
+        ctx.volume_grow
             .grow_by_type(&option, ctx.topology.as_ref())
-            .await;
-        println!("{:?}", a);
+            .await?;
     }
     let (fid, count, node) = ctx.topology.pick_for_write(count, &option).await?;
     let assignment = Assignment {
