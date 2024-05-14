@@ -86,9 +86,9 @@ where
 
     async fn from_request(
         req: Request<Body>,
-        _state: &DirectoryState,
+        state: &DirectoryState,
     ) -> StdResult<Self, Self::Rejection> {
-        let topology = &_state.topology;
+        let topology = &state.topology;
         if !topology.is_leader().await {
             return Err(proxy_to_leader(req, topology).await.into_response());
         }
