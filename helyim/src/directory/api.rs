@@ -156,7 +156,6 @@ mod tests {
             .build();
 
         let topo = crate::topology::tests::setup_topo();
-        let topo = Arc::new(topo);
         let options = MasterOptions {
             ip: FastStr::new("127.0.0.1"),
             port: 9333,
@@ -266,6 +265,7 @@ mod tests {
         let (parts, body) = res.into_parts();
         let body = body.collect().await.unwrap().to_bytes();
         let res = hyper::Response::from_parts(parts, body);
+
         serde_json::from_slice::<T>(res.body()).unwrap()
     }
 }

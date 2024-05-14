@@ -166,9 +166,6 @@ impl RaftServer {
         peers: &[FastStr],
     ) -> Result<(), RaftError> {
         if node_addr == peers[0] {
-            // wait for server to startup
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
             let raft_client = RaftClient::new(node_addr.to_string());
 
             let peers = peer_with_node_id(peers);

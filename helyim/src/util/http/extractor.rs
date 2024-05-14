@@ -88,12 +88,9 @@ where
         req: Request<Body>,
         _state: &DirectoryState,
     ) -> StdResult<Self, Self::Rejection> {
-        #[cfg(not(test))]
-        {
-            let topology = &_state.topology;
-            if !topology.is_leader().await {
-                return Err(proxy_to_leader(req, topology).await.into_response());
-            }
+        let topology = &_state.topology;
+        if !topology.is_leader().await {
+            return Err(proxy_to_leader(req, topology).await.into_response());
         }
 
         match req.method() {

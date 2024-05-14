@@ -381,7 +381,15 @@ impl Topology {
     pub async fn is_leader(&self) -> bool {
         match self.raft.read().await.as_ref() {
             Some(raft) => raft.is_leader().await,
-            None => false,
+            None => {
+                cfg_if::cfg_if! {
+                    if #[cfg(test)] {
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
         }
     }
 

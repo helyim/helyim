@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use faststr::FastStr;
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
+    executor::block_on,
     Stream, StreamExt,
 };
 use helyim_proto::directory::{
@@ -127,7 +128,7 @@ impl DirectoryServer {
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
-        rt_spawn(start_directory_server(ctx, addr, shutdown_rx, raft_router));
+        block_on(start_directory_server(ctx, addr, shutdown_rx, raft_router));
 
         raft_server
             .start_node_with_peers(&raft_node_addr, &self.options.raft.peers)
