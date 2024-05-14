@@ -156,6 +156,8 @@ mod tests {
             .build();
 
         let topo = crate::topology::tests::setup_topo();
+        let topo = Arc::new(topo);
+
         let options = MasterOptions {
             ip: FastStr::new("127.0.0.1"),
             port: 9333,
