@@ -229,7 +229,6 @@ mod tests {
 
                 let _: Assignment =
                     http_request(&client, "http://server:9333/dir/assign", Method::GET).await;
-                // let _: Assignment = http_request(&client, "http://server:9333/dir/assign", Method::POST).await;
 
                 let _: Value =
                     http_request(&client, "http://server:9333/dir/status", Method::GET).await;
@@ -240,12 +239,6 @@ mod tests {
                     &client,
                     "http://server:9333/dir/lookup?volumeId=1",
                     Method::GET,
-                )
-                .await;
-                let _: Lookup = http_request(
-                    &client,
-                    "http://server:9333/dir/lookup?volumeId=1",
-                    Method::POST,
                 )
                 .await;
 
@@ -273,7 +266,6 @@ mod tests {
         let (parts, body) = res.into_parts();
         let body = body.collect().await.unwrap().to_bytes();
         let res = hyper::Response::from_parts(parts, body);
-        println!("{:?}", res);
         serde_json::from_slice::<T>(res.body()).unwrap()
     }
 }
