@@ -121,7 +121,12 @@ mod tests {
     use axum::{body::Body, extract::DefaultBodyLimit, http::Request, routing::get, Router};
     use faststr::FastStr;
     use http_body_util::BodyExt as _;
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    use hyper::Method;
+    use hyper_util::{
+        client::legacy::{connect::Connect, Client},
+        rt::TokioExecutor,
+    };
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
     use tracing::{info_span, Instrument};
@@ -222,39 +227,27 @@ mod tests {
             async move {
                 let client = Client::builder(TokioExecutor::new()).build(connector::connector());
 
-                {
-                    let mut request = Request::new(Body::empty());
-                    *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/assign");
-                    let res = client.request(request).await?;
+                let _: Assignment =
+                    http_request(&client, "http://server:9333/dir/assign", Method::GET).await;
+                // let _: Assignment = http_request(&client, "http://server:9333/dir/assign", Method::POST).await;
 
-                    let (parts, body) = res.into_parts();
-                    let body = body.collect().await?.to_bytes();
-                    let res = hyper::Response::from_parts(parts, body);
-                    let _: Assignment = serde_json::from_slice(res.body()).unwrap();
-                }
+                let _: Value =
+                    http_request(&client, "http://server:9333/dir/status", Method::GET).await;
+                let _: Value =
+                    http_request(&client, "http://server:9333/dir/status", Method::POST).await;
 
-                {
-                    let mut request = Request::new(Body::empty());
-                    *request.uri_mut() = hyper::Uri::from_static("http://server:9333/dir/status");
-                    let res = client.request(request).await?;
-
-                    let (parts, body) = res.into_parts();
-                    let body = body.collect().await?.to_bytes();
-                    let res = hyper::Response::from_parts(parts, body);
-                    let _: Value = serde_json::from_slice(res.body()).unwrap();
-                }
-
-                {
-                    let mut request = Request::new(Body::empty());
-                    *request.uri_mut() =
-                        hyper::Uri::from_static("http://server:9333/dir/lookup?volumeId=1");
-                    let res = client.request(request).await?;
-
-                    let (parts, body) = res.into_parts();
-                    let body = body.collect().await?.to_bytes();
-                    let res = hyper::Response::from_parts(parts, body);
-                    let _: Lookup = serde_json::from_slice(res.body()).unwrap();
-                }
+                let _: Lookup = http_request(
+                    &client,
+                    "http://server:9333/dir/lookup?volumeId=1",
+                    Method::GET,
+                )
+                .await;
+                let _: Lookup = http_request(
+                    &client,
+                    "http://server:9333/dir/lookup?volumeId=1",
+                    Method::POST,
+                )
+                .await;
 
                 Ok(())
             }
@@ -262,5 +255,25 @@ mod tests {
         );
 
         sim.run().unwrap();
+    }
+
+    async fn http_request<C, T: Serialize + for<'a> Deserialize<'a>>(
+        client: &Client<C, Body>,
+        uri: &'static str,
+        method: Method,
+    ) -> T
+    where
+        C: Connect + Clone + Send + Sync + 'static,
+    {
+        let mut request = Request::new(Body::empty());
+        *request.method_mut() = method;
+        *request.uri_mut() = hyper::Uri::from_static(uri);
+        let res = client.request(request).await.unwrap();
+
+        let (parts, body) = res.into_parts();
+        let body = body.collect().await.unwrap().to_bytes();
+        let res = hyper::Response::from_parts(parts, body);
+        println!("{:?}", res);
+        serde_json::from_slice::<T>(res.body()).unwrap()
     }
 }
