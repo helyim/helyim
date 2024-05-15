@@ -16,7 +16,7 @@ use nom::{
 };
 use openraft::{BasicNode, Config};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     raft::{
@@ -166,6 +166,11 @@ impl RaftServer {
         peers: &[FastStr],
     ) -> Result<(), RaftError> {
         if node_addr == peers[0] {
+            // wait for server to startup
+            // FIXME: This line cannot be removed for the time being, as `axum::serve` is blocking.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            info!("start node with peers: {node_addr}");
             let raft_client = RaftClient::new(node_addr.to_string());
 
             let peers = peer_with_node_id(peers);
