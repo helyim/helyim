@@ -98,18 +98,15 @@ impl VolumeGrowth {
         nodes: Vec<DataNodeRef>,
     ) -> Result<(), VolumeError> {
         for dn in nodes {
-            cfg_if::cfg_if! {
-                if #[cfg(not(test))] {
-                    dn.allocate_volume(helyim_proto::volume::AllocateVolumeRequest {
-                        volume_id: vid,
-                        collection: option.collection.to_string(),
-                        replication: option.replica_placement.to_string(),
-                        ttl: option.ttl.to_string(),
-                        preallocate: option.preallocate,
-                    })
-                    .await?;
-                }
-            }
+            #[cfg(not(test))]
+            dn.allocate_volume(helyim_proto::volume::AllocateVolumeRequest {
+                volume_id: vid,
+                collection: option.collection.to_string(),
+                replication: option.replica_placement.to_string(),
+                ttl: option.ttl.to_string(),
+                preallocate: option.preallocate,
+            })
+            .await?;
 
             let volume_info = VolumeInfo {
                 id: vid,

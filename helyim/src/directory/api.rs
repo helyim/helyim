@@ -118,7 +118,7 @@ mod tests {
         time::Duration,
     };
 
-    use axum::{body::Body, extract::DefaultBodyLimit, http::Request, routing::get, Router};
+    use axum::{body::Body, http::Request, routing::get, Router};
     use faststr::FastStr;
     use http_body_util::BodyExt as _;
     use hyper::Method;
@@ -128,7 +128,6 @@ mod tests {
     };
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
-    use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
     use tracing::{info_span, Instrument};
     use turmoil::Builder;
 
@@ -187,11 +186,6 @@ mod tests {
                 get(cluster_status_handler).post(cluster_status_handler),
             )
             .fallback(default_handler)
-            .layer((
-                CompressionLayer::new(),
-                DefaultBodyLimit::max(1024 * 1024),
-                TimeoutLayer::new(Duration::from_secs(10)),
-            ))
             .with_state(ctx);
 
         sim.host("server", move || {
