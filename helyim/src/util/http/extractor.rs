@@ -142,8 +142,7 @@ pub async fn require_leader(
     if !topology.is_leader().await {
         return proxy_to_leader(request, topology).await.into_response();
     }
-    let response = next.run(request).await;
-    response
+    next.run(request).await
 }
 
 async fn proxy_to_leader(
