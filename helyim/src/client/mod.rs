@@ -49,9 +49,7 @@ impl MasterClient {
     }
 
     async fn try_all_masters(&self) -> Result<(), ClientError> {
-        let masters = self.masters.clone();
-
-        for master in masters.iter() {
+        for master in self.masters.iter() {
             let mut next_hinted_leader = self.try_connect_to_master(master).await?;
             while !next_hinted_leader.is_empty() {
                 next_hinted_leader = self.try_connect_to_master(&next_hinted_leader).await?;
@@ -109,7 +107,7 @@ impl MasterClient {
                         }
                         Err(err) => {
                             error!("{} failed to received from {master}", self.name);
-                            return Err(ClientError::KeepConnected(master.clone(), err));
+                            return Err(ClientError::KeepConnected(master, err));
                         }
                     }
                 }
@@ -117,7 +115,7 @@ impl MasterClient {
             }
             Err(status) => {
                 warn!("keep connected to {master} error: {}", status.message());
-                Ok(FastStr::empty())
+                Err(ClientError::KeepConnected(master, status))
             }
         }
     }

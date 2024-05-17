@@ -98,6 +98,7 @@ impl VolumeGrowth {
         nodes: Vec<DataNodeRef>,
     ) -> Result<(), VolumeError> {
         for dn in nodes {
+            // FIXME: the follow macro maybe removed after tonic support hyper 1.0
             #[cfg(not(test))]
             dn.allocate_volume(helyim_proto::volume::AllocateVolumeRequest {
                 volume_id: vid,
