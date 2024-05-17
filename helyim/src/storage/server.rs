@@ -37,9 +37,12 @@ use crate::{
     rt_spawn,
     storage::{
         api::{
-            delete_handler, generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
-            get_or_head_handler, post_handler, rebuild_missing_ec_shards_handler, status_handler,
-            StorageState,
+            delete_handler,
+            erasure_coding::{
+                generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
+                rebuild_missing_ec_shards_handler,
+            },
+            get_or_head_handler, post_handler, status_handler, StorageState,
         },
         erasure_coding::{
             ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,

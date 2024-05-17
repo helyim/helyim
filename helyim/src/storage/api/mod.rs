@@ -18,9 +18,6 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::stream::once;
-use helyim_proto::volume::{
-    VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
-};
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -33,24 +30,22 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
-        erasure_coding::EcVolumeError,
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::{
-        grpc::volume_server_client,
         http::{
-            extractor::{
-                DeleteExtractor, ErasureCodingExtractor, GetOrHeadExtractor, PostExtractor,
-            },
+            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
             HTTP_DATE_FORMAT,
         },
         parser::parse_url_path,
         time::now,
     },
 };
+
+pub mod erasure_coding;
 
 #[derive(Clone)]
 pub struct StorageState {
@@ -491,44 +486,4 @@ pub async fn get_or_head_handler(
     *response.status_mut() = StatusCode::ACCEPTED;
 
     Ok(response)
-}
-
-// erasure coding
-pub async fn generate_ec_shards_handler(
-    State(state): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&state.store.public_url)?;
-    let request = VolumeEcShardsGenerateRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_generate(request).await?;
-    Ok(())
-}
-
-pub async fn generate_volume_from_ec_shards_handler(
-    State(state): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&state.store.public_url)?;
-    let request = VolumeEcShardsToVolumeRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_to_volume(request).await?;
-    Ok(())
-}
-
-pub async fn rebuild_missing_ec_shards_handler(
-    State(state): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&state.store.public_url)?;
-    let request = VolumeEcShardsRebuildRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_rebuild(request).await?;
-    Ok(())
 }
