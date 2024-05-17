@@ -139,7 +139,7 @@ impl VolumeServer {
         let read_redirect = self.read_redirect;
         let pulse = self.options.pulse;
 
-        let ctx = StorageState {
+        let state = StorageState {
             store,
             needle_map_type,
             read_redirect,
@@ -150,7 +150,7 @@ impl VolumeServer {
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
 
-        rt_spawn(start_volume_server(ctx, addr, shutdown_rx));
+        rt_spawn(start_volume_server(state, addr, shutdown_rx));
 
         Ok(())
     }
@@ -309,7 +309,7 @@ impl VolumeServer {
 }
 
 async fn start_volume_server(
-    ctx: StorageState,
+    state: StorageState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
@@ -335,14 +335,14 @@ async fn start_volume_server(
                 .post(post_handler)
                 .delete(delete_handler)
                 .fallback(default_handler)
-                .with_state(ctx.clone()),
+                .with_state(state.clone()),
         )
         .layer((
             CompressionLayer::new(),
             DefaultBodyLimit::max(1024 * 1024 * 50),
             TimeoutLayer::new(Duration::from_secs(10)),
         ))
-        .with_state(ctx);
+        .with_state(state);
 
     info!("volume api server is starting up. binding addr: {addr}");
     match TcpListener::bind(addr).await {

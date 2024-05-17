@@ -122,7 +122,7 @@ impl DirectoryServer {
         self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
-        let ctx = DirectoryState {
+        let state = DirectoryState {
             topology: self.topology.clone(),
             volume_grow: self.volume_grow,
             options: self.options.clone(),
@@ -131,7 +131,12 @@ impl DirectoryServer {
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
-        rt_spawn(start_directory_server(ctx, addr, shutdown_rx, raft_router));
+        rt_spawn(start_directory_server(
+            state,
+            addr,
+            shutdown_rx,
+            raft_router,
+        ));
 
         raft_server
             .start_node_with_peers(&raft_node_addr, &self.options.raft.peers)
@@ -146,7 +151,7 @@ impl DirectoryServer {
 }
 
 async fn start_directory_server(
-    ctx: DirectoryState,
+    state: DirectoryState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
     raft_router: Router,
@@ -156,13 +161,13 @@ async fn start_directory_server(
             "/dir/assign",
             get(assign_handler)
                 .post(assign_handler)
-                .layer(from_fn_with_state(ctx.clone(), require_leader)),
+                .layer(from_fn_with_state(state.clone(), require_leader)),
         )
         .route(
             "/dir/lookup",
             get(lookup_handler)
                 .post(lookup_handler)
-                .layer(from_fn_with_state(ctx.clone(), require_leader)),
+                .layer(from_fn_with_state(state.clone(), require_leader)),
         )
         .route(
             "/dir/status",
@@ -178,7 +183,7 @@ async fn start_directory_server(
             DefaultBodyLimit::max(1024 * 1024),
             TimeoutLayer::new(Duration::from_secs(10)),
         ))
-        .with_state(ctx);
+        .with_state(state);
 
     let app = http_router.merge(Router::new().nest("/raft", raft_router));
 

@@ -21,24 +21,25 @@ pub struct DirectoryState {
 }
 
 pub async fn assign_handler(
-    State(ctx): State<DirectoryState>,
+    State(state): State<DirectoryState>,
     FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> Result<Json<Assignment>, VolumeError> {
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
     };
-    let option = request.volume_grow_option(&ctx.options.default_replication)?;
+    let option = request.volume_grow_option(&state.options.default_replication)?;
 
-    if !ctx.topology.has_writable_volume(&option).await {
-        if ctx.topology.free_space() <= 0 {
+    if !state.topology.has_writable_volume(&option).await {
+        if state.topology.free_space() <= 0 {
             return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
         }
-        ctx.volume_grow
-            .grow_by_type(&option, ctx.topology.as_ref())
+        state
+            .volume_grow
+            .grow_by_type(&option, state.topology.as_ref())
             .await?;
     }
-    let (fid, count, node) = ctx.topology.pick_for_write(count, &option).await?;
+    let (fid, count, node) = state.topology.pick_for_write(count, &option).await?;
     let assignment = Assignment {
         fid: fid.to_string(),
         url: node.url(),
@@ -50,7 +51,7 @@ pub async fn assign_handler(
 }
 
 pub async fn lookup_handler(
-    State(ctx): State<DirectoryState>,
+    State(state): State<DirectoryState>,
     FormOrJson(request): FormOrJson<LookupRequest>,
 ) -> Result<Json<Lookup>, VolumeError> {
     if request.volume_id.is_empty() {
@@ -61,7 +62,7 @@ pub async fn lookup_handler(
         volume_id = volume_id[..idx].to_string();
     }
     let mut locations = vec![];
-    let data_nodes = ctx
+    let data_nodes = state
         .topology
         .lookup(
             &request.collection.unwrap_or_default(),
@@ -88,19 +89,19 @@ pub async fn lookup_handler(
     }
 }
 
-pub async fn dir_status_handler(State(ctx): State<DirectoryState>) -> Json<Topology> {
-    let topology = ctx.topology.topology();
+pub async fn dir_status_handler(State(state): State<DirectoryState>) -> Json<Topology> {
+    let topology = state.topology.topology();
     Json(topology)
 }
 
-pub async fn cluster_status_handler(State(ctx): State<DirectoryState>) -> Json<ClusterStatus> {
-    let is_leader = ctx.topology.is_leader().await;
-    let leader = ctx
+pub async fn cluster_status_handler(State(state): State<DirectoryState>) -> Json<ClusterStatus> {
+    let is_leader = state.topology.is_leader().await;
+    let leader = state
         .topology
         .current_leader_address()
         .await
         .unwrap_or_default();
-    let peers = ctx.topology.peers().await;
+    let peers = state.topology.peers().await;
 
     let status = ClusterStatus {
         is_leader,
@@ -168,7 +169,7 @@ mod tests {
         };
         let options = Arc::new(options);
 
-        let ctx = DirectoryState {
+        let state = DirectoryState {
             topology: topo,
             volume_grow: VolumeGrowth {},
             options,
@@ -186,7 +187,7 @@ mod tests {
                 get(cluster_status_handler).post(cluster_status_handler),
             )
             .fallback(default_handler)
-            .with_state(ctx);
+            .with_state(state);
 
         sim.host("server", move || {
             let router = http_router.clone();
