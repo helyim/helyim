@@ -233,12 +233,14 @@ impl Node for DataNode {
         self.max_volume_count() - self.volume_count()
     }
 
-    fn reserve_one_volume(&self, rand: i64) -> Result<Option<DataNodeRef>> {
-        todo!()
+    fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
+        self.node.reserve_one_volume(rand)
     }
 
     async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
-        self.node._adjust_max_volume_count(max_volume_count_delta);
+        self.node
+            .adjust_max_volume_count(max_volume_count_delta)
+            .await;
 
         if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_max_volume_count(max_volume_count_delta).await;
@@ -246,7 +248,7 @@ impl Node for DataNode {
     }
 
     async fn adjust_volume_count(&self, volume_count_delta: i64) {
-        self.node._adjust_volume_count(volume_count_delta);
+        self.node.adjust_volume_count(volume_count_delta).await;
 
         if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_volume_count(volume_count_delta).await;
@@ -254,7 +256,7 @@ impl Node for DataNode {
     }
 
     async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
-        self.node._adjust_ec_shard_count(ec_shard_count_delta);
+        self.node.adjust_ec_shard_count(ec_shard_count_delta).await;
 
         if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_ec_shard_count(ec_shard_count_delta).await;
@@ -263,7 +265,8 @@ impl Node for DataNode {
 
     async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self.node
-            ._adjust_active_volume_count(active_volume_count_delta);
+            .adjust_active_volume_count(active_volume_count_delta)
+            .await;
 
         if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_active_volume_count(active_volume_count_delta)
@@ -272,7 +275,7 @@ impl Node for DataNode {
     }
 
     async fn adjust_max_volume_id(&self, vid: VolumeId) {
-        self.node._adjust_max_volume_id(vid);
+        self.node.adjust_max_volume_id(vid).await;
 
         if let Some(rack) = self.rack.read().await.upgrade() {
             rack.adjust_max_volume_id(self.max_volume_id()).await;
@@ -299,28 +302,28 @@ impl Node for DataNode {
         self.node.max_volume_id()
     }
 
-    fn set_parent(&mut self, parent: Arc<dyn Node>) {
-        todo!()
+    async fn set_parent(&self, parent: Weak<dyn Node>) {
+        self.node.set_parent(parent).await
     }
 
-    fn link_child_node(&mut self, child: Arc<dyn Node>) {
-        todo!()
+    async fn link_child_node(self: Arc<Self>, child: Arc<dyn Node>) {
+        (&self.node).link_child_node(child).await;
     }
 
-    fn unlink_child_node(&mut self, node_id: NodeId) {
-        todo!()
+    async fn unlink_child_node(&self, node_id: NodeId) {
+        self.node.unlink_child_node(node_id).await;
     }
 
     fn node_type(&self) -> NodeType {
-        todo!()
+        NodeType::DataNode
     }
 
     fn children(&self) -> Vec<Arc<dyn Node>> {
-        todo!()
+        self.node.children()
     }
 
-    fn parent(&self) -> Option<Arc<dyn Node>> {
-        todo!()
+    async fn parent(&self) -> Option<Arc<dyn Node>> {
+        self.node.parent()
     }
 }
 
@@ -332,7 +335,7 @@ mod test {
 
     use crate::{
         storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
-        topology::data_node::DataNode,
+        topology::{data_node::DataNode, node::Node},
     };
 
     fn setup() -> DataNode {
