@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     storage::{erasure_coding::EcVolumeInfo, VolumeId},
-    topology::data_node::DataNode,
+    topology::{data_node::DataNode, node::Node},
 };
 
 impl DataNode {

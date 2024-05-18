@@ -9,7 +9,7 @@ use crate::{
         erasure_coding::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT},
         VolumeId,
     },
-    topology::{DataNodeRef, Topology},
+    topology::{node::Node, DataNodeRef, Topology},
 };
 
 mod data_node;

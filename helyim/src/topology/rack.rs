@@ -11,12 +11,17 @@ use tokio::sync::RwLock;
 
 use crate::{
     storage::{VolumeError, VolumeId},
-    topology::{data_center::DataCenter, data_node::DataNode, node::Node, DataNodeRef},
+    topology::{
+        data_center::DataCenter,
+        data_node::DataNode,
+        node::{Node, NodeImpl},
+        DataNodeRef,
+    },
 };
 
 #[derive(Serialize)]
 pub struct Rack {
-    node: Node,
+    node: NodeImpl,
     // children
     #[serde(skip)]
     pub data_nodes: DashMap<FastStr, DataNodeRef>,
@@ -27,7 +32,7 @@ pub struct Rack {
 
 impl Rack {
     pub fn new(id: FastStr) -> Rack {
-        let node = Node::new(id);
+        let node = NodeImpl::new(id);
         Self {
             node,
             data_nodes: DashMap::new(),
@@ -101,7 +106,8 @@ impl Rack {
             self.adjust_active_volume_count(data_node.active_volume_count())
                 .await;
 
-            self.data_nodes.insert(data_node.id.clone(), data_node);
+            self.data_nodes
+                .insert(FastStr::new(data_node.id()), data_node);
         }
     }
 
@@ -185,7 +191,7 @@ impl Rack {
 }
 
 impl Deref for Rack {
-    type Target = Node;
+    type Target = NodeImpl;
 
     fn deref(&self) -> &Self::Target {
         &self.node

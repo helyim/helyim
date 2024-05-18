@@ -37,7 +37,7 @@ use crate::{
         collection::Collection,
         data_center::{DataCenter, DataCenterRef},
         erasure_coding::EcShardLocations,
-        node::Node,
+        node::{Node, NodeImpl},
         volume_grow::VolumeGrowOption,
         volume_layout::VolumeLayoutRef,
         DataNodeRef,
@@ -46,7 +46,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct Topology {
-    node: Node,
+    node: NodeImpl,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: DashMap<FastStr, Collection>,
@@ -79,7 +79,7 @@ impl Clone for Topology {
 
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
-        let node = Node::new(FastStr::new("topo"));
+        let node = NodeImpl::new(FastStr::new("topo"));
         Topology {
             node,
             sequencer,
@@ -432,7 +432,7 @@ impl Topology {
             self.adjust_max_volume_id(data_center.max_volume_id());
             self.adjust_volume_count(data_center.volume_count());
             self.adjust_ec_shard_count(data_center.ec_shard_count());
-            self.adjust_active_volume_count(data_center.active_volume_count());
+            self.adjust_active_volume_count(data_center._active_volume_count());
 
             self.data_centers
                 .insert(data_center.id.clone(), data_center);
@@ -485,7 +485,7 @@ impl Topology {
 }
 
 impl Deref for Topology {
-    type Target = Node;
+    type Target = NodeImpl;
 
     fn deref(&self) -> &Self::Target {
         &self.node

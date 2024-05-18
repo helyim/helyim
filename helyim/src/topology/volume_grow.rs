@@ -5,7 +5,7 @@ use tracing::{debug, error};
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, Topology},
+    topology::{data_center::DataCenterRef, node::Node, rack::RackRef, DataNodeRef, Topology},
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -346,7 +346,7 @@ async fn find_main_node(
     candidates = vec![];
 
     for node in data_nodes.iter() {
-        if node.id == main_dn.id {
+        if node.id() == main_dn.id() {
             continue;
         }
         if node.free_space() <= 0 {
