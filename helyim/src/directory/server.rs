@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
-use axum::{extract::DefaultBodyLimit, routing::get, Router};
+use axum::{extract::DefaultBodyLimit, middleware::from_fn_with_state, routing::get, Router};
 use dashmap::DashMap;
 use faststr::FastStr;
 use futures::{
@@ -34,8 +34,12 @@ use crate::{
         TopologyRef,
     },
     util::{
-        args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler,
-        parser::parse_vid_fid, sys::exit,
+        args::MasterOptions,
+        get_or_default,
+        grpc::grpc_port,
+        http::{default_handler, extractor::require_leader},
+        parser::parse_vid_fid,
+        sys::exit,
     },
 };
 
@@ -114,11 +118,11 @@ impl DirectoryServer {
         let raft_node_addr = format!("{}:{}", self.options.ip, self.options.port);
         // start raft node and control cluster with `raft_client`
         let raft_server = RaftServer::start_node(&raft_node_addr).await?;
-        raft_server.set_topology(&self.topology.clone()).await;
+        raft_server.set_topology(self.topology.clone()).await;
         self.topology.set_raft_server(raft_server.clone()).await;
 
         // http server
-        let ctx = DirectoryState {
+        let state = DirectoryState {
             topology: self.topology.clone(),
             volume_grow: self.volume_grow,
             options: self.options.clone(),
@@ -127,7 +131,12 @@ impl DirectoryServer {
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
-        rt_spawn(start_directory_server(ctx, addr, shutdown_rx, raft_router));
+        rt_spawn(start_directory_server(
+            state,
+            addr,
+            shutdown_rx,
+            raft_router,
+        ));
 
         raft_server
             .start_node_with_peers(&raft_node_addr, &self.options.raft.peers)
@@ -142,14 +151,24 @@ impl DirectoryServer {
 }
 
 async fn start_directory_server(
-    ctx: DirectoryState,
+    state: DirectoryState,
     addr: SocketAddr,
     mut shutdown: async_broadcast::Receiver<()>,
     raft_router: Router,
 ) {
     let http_router = Router::new()
-        .route("/dir/assign", get(assign_handler).post(assign_handler))
-        .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
+        .route(
+            "/dir/assign",
+            get(assign_handler)
+                .post(assign_handler)
+                .layer(from_fn_with_state(state.clone(), require_leader)),
+        )
+        .route(
+            "/dir/lookup",
+            get(lookup_handler)
+                .post(lookup_handler)
+                .layer(from_fn_with_state(state.clone(), require_leader)),
+        )
         .route(
             "/dir/status",
             get(dir_status_handler).post(dir_status_handler),
@@ -164,13 +183,14 @@ async fn start_directory_server(
             DefaultBodyLimit::max(1024 * 1024),
             TimeoutLayer::new(Duration::from_secs(10)),
         ))
-        .with_state(ctx);
+        .with_state(state);
 
     let app = http_router.merge(Router::new().nest("/raft", raft_router));
 
     info!("directory api server is starting up. binding addr: {addr}");
     match TcpListener::bind(addr).await {
         Ok(listener) => {
+            // will blocking current thread
             if let Err(err) = axum::serve(listener, app.into_make_service())
                 .with_graceful_shutdown(async move {
                     let _ = shutdown.recv().await;
@@ -228,23 +248,26 @@ impl Helyim for DirectoryGrpcServer {
                         }
                         topology.set_max_sequence(heartbeat.max_file_key);
 
-                        if data_node_opt.is_none() {
-                            let data_node = update_topology(&heartbeat, &topology, addr).await;
-                            info!(
-                                "register connected volume server: {}:{}",
-                                data_node.ip, data_node.port
-                            );
+                        match data_node_opt.as_ref() {
+                            Some(data_node) => {
+                                update_volume_layout(
+                                    &heartbeat,
+                                    &topology,
+                                    &client_chans,
+                                    data_node,
+                                )
+                                .await;
+                            }
+                            None => {
+                                let data_node = update_topology(&heartbeat, &topology, addr).await;
+                                info!(
+                                    "register connected volume server: {}:{}",
+                                    data_node.ip, data_node.port
+                                );
 
-                            data_node_opt = Some(data_node);
+                                data_node_opt = Some(data_node);
+                            }
                         }
-
-                        update_volume_layout(
-                            &heartbeat,
-                            &topology,
-                            &client_chans,
-                            data_node_opt.as_ref().unwrap(),
-                        )
-                        .await;
 
                         match heartbeat_response(volume_size_limit, &topology).await {
                             Ok(response) => {

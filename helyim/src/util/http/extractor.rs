@@ -2,8 +2,9 @@ use std::{result::Result as StdResult, str::FromStr};
 
 use axum::{
     body::Body,
-    extract::{FromRequest, Query},
+    extract::{FromRequest, Query, State},
     http::{header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    middleware::Next,
     response::IntoResponse,
     Form, Json, RequestExt,
 };
@@ -86,13 +87,8 @@ where
 
     async fn from_request(
         req: Request<Body>,
-        state: &DirectoryState,
+        _state: &DirectoryState,
     ) -> StdResult<Self, Self::Rejection> {
-        let topology = &state.topology;
-        if !topology.is_leader().await {
-            return Err(proxy_to_leader(req, topology).await.into_response());
-        }
-
         match req.method() {
             &Method::GET | &Method::HEAD => {
                 let Query(payload) = req
@@ -135,6 +131,18 @@ where
         );
         Err(StatusCode::BAD_REQUEST.into_response())
     }
+}
+
+pub async fn require_leader(
+    State(state): State<DirectoryState>,
+    request: Request<Body>,
+    next: Next,
+) -> axum::response::Response {
+    let topology = &state.topology;
+    if !topology.is_leader().await {
+        return proxy_to_leader(request, topology).await.into_response();
+    }
+    next.run(request).await
 }
 
 async fn proxy_to_leader(

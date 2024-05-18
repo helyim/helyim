@@ -301,10 +301,10 @@ mod test {
     };
 
     fn setup() -> DataNode {
-        let id = FastStr::new("127.0.0.1:9333");
+        let id = FastStr::new("127.0.0.1:8080");
         let ip = FastStr::new("127.0.0.1");
         let public_url = id.clone();
-        DataNode::new(id, ip, 9333, public_url, 1)
+        DataNode::new(id, ip, 8080, public_url, 1)
     }
 
     fn volume_info(id: VolumeId) -> VolumeInfo {

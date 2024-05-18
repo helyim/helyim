@@ -18,9 +18,6 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::stream::once;
-use helyim_proto::volume::{
-    VolumeEcShardsGenerateRequest, VolumeEcShardsRebuildRequest, VolumeEcShardsToVolumeRequest,
-};
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -33,24 +30,22 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
-        erasure_coding::EcVolumeError,
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
     util::{
-        grpc::volume_server_client,
         http::{
-            extractor::{
-                DeleteExtractor, ErasureCodingExtractor, GetOrHeadExtractor, PostExtractor,
-            },
+            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
             HTTP_DATE_FORMAT,
         },
         parser::parse_url_path,
         time::now,
     },
 };
+
+pub mod erasure_coding;
 
 #[derive(Clone)]
 pub struct StorageState {
@@ -61,9 +56,9 @@ pub struct StorageState {
     pub looker: Arc<Looker>,
 }
 
-pub async fn status_handler(State(ctx): State<StorageState>) -> Result<Json<Value>> {
+pub async fn status_handler(State(state): State<StorageState>) -> Result<Json<Value>> {
     let mut infos: Vec<VolumeInfo> = vec![];
-    for location in ctx.store.locations().iter() {
+    for location in state.store.locations().iter() {
         for volume in location.volumes.iter() {
             infos.push(volume.get_volume_info());
         }
@@ -78,7 +73,7 @@ pub async fn status_handler(State(ctx): State<StorageState>) -> Result<Json<Valu
 }
 
 pub async fn delete_handler(
-    State(ctx): State<StorageState>,
+    State(state): State<StorageState>,
     extractor: DeleteExtractor,
 ) -> Result<Json<Value>> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
@@ -87,7 +82,7 @@ pub async fn delete_handler(
     let mut needle = Needle::new_with_fid(fid)?;
 
     let cookie = needle.cookie;
-    let _ = ctx.store.read_volume_needle(vid, &mut needle).await?;
+    let _ = state.store.read_volume_needle(vid, &mut needle).await?;
     if cookie != needle.cookie {
         info!(
             "cookie not match from {:?} recv: {}, file is {}",
@@ -96,35 +91,36 @@ pub async fn delete_handler(
         return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
     }
 
-    let size = replicate_delete(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let size =
+        replicate_delete(&state, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
     let size = json!({ "size": size });
 
     Ok(Json(size))
 }
 
 async fn replicate_delete(
-    ctx: &StorageState,
+    state: &StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
 ) -> Result<usize> {
-    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
-    let size = ctx.store.delete_volume_needle(vid, needle).await?;
+    let local_url = format!("{}:{}", state.store.ip, state.store.port);
+    let size = state.store.delete_volume_needle(vid, needle).await?;
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid) {
+    if let Some(volume) = state.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
     }
 
     let params = vec![("type", "replicate")];
-    let mut volume_locations = ctx
+    let mut volume_locations = state
         .looker
-        .lookup(vec![vid], &ctx.store.current_master.read().await)
+        .lookup(vec![vid], &state.store.current_master.read().await)
         .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
@@ -154,7 +150,7 @@ async fn replicate_delete(
 }
 
 pub async fn post_handler(
-    State(ctx): State<StorageState>,
+    State(state): State<StorageState>,
     extractor: PostExtractor,
 ) -> Result<Json<Upload>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
@@ -166,7 +162,8 @@ pub async fn post_handler(
         new_needle_from_request(&extractor).await?
     };
 
-    let size = replicate_write(&ctx, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    let size =
+        replicate_write(&state, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
     let mut upload = Upload {
         size,
         ..Default::default()
@@ -180,20 +177,20 @@ pub async fn post_handler(
 }
 
 async fn replicate_write(
-    ctx: &StorageState,
+    state: &StorageState,
     path: &str,
     vid: VolumeId,
     needle: &mut Needle,
     is_replicate: bool,
 ) -> Result<usize> {
-    let local_url = format!("{}:{}", ctx.store.ip, ctx.store.port);
-    let size = ctx.store.write_volume_needle(vid, needle).await?;
+    let local_url = format!("{}:{}", state.store.ip, state.store.port);
+    let size = state.store.write_volume_needle(vid, needle).await?;
     // if the volume is replica, it will return needle directly.
     if is_replicate {
         return Ok(size);
     }
 
-    if let Some(volume) = ctx.store.find_volume(vid) {
+    if let Some(volume) = state.store.find_volume(vid) {
         if !volume.need_to_replicate() {
             return Ok(size);
         }
@@ -202,9 +199,9 @@ async fn replicate_write(
     let params = vec![("type", "replicate")];
     let data = Bytes::from(bincode::serialize(&needle)?);
 
-    let mut volume_locations = ctx
+    let mut volume_locations = state
         .looker
-        .lookup(vec![vid], &ctx.store.current_master.read().await)
+        .lookup(vec![vid], &state.store.current_master.read().await)
         .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
@@ -375,18 +372,18 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {
 }
 
 pub async fn get_or_head_handler(
-    State(ctx): State<StorageState>,
+    State(state): State<StorageState>,
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>> {
     let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
 
     let mut response = Response::new(Body::empty());
 
-    let has_volume = ctx.store.has_volume(vid);
-    let has_ec_volume = ctx.store.has_ec_volume(vid);
+    let has_volume = state.store.has_volume(vid);
+    let has_ec_volume = state.store.has_ec_volume(vid);
     if !has_volume && !has_ec_volume {
         // TODO: support read redirect
-        if !ctx.read_redirect {
+        if !state.read_redirect {
             info!("volume {} is not belongs to this server", vid);
             *response.status_mut() = StatusCode::NOT_FOUND;
             return Ok(response);
@@ -398,9 +395,9 @@ pub async fn get_or_head_handler(
 
     let mut count = 0;
     if has_volume {
-        count = ctx.store.read_volume_needle(vid, &mut needle).await?;
+        count = state.store.read_volume_needle(vid, &mut needle).await?;
     } else if has_ec_volume {
-        count = ctx.store.read_ec_shard_needle(vid, &mut needle).await?;
+        count = state.store.read_ec_shard_needle(vid, &mut needle).await?;
     }
 
     if count == 0 {
@@ -489,44 +486,4 @@ pub async fn get_or_head_handler(
     *response.status_mut() = StatusCode::ACCEPTED;
 
     Ok(response)
-}
-
-// erasure coding
-pub async fn generate_ec_shards_handler(
-    State(ctx): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&ctx.store.public_url)?;
-    let request = VolumeEcShardsGenerateRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_generate(request).await?;
-    Ok(())
-}
-
-pub async fn generate_volume_from_ec_shards_handler(
-    State(ctx): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&ctx.store.public_url)?;
-    let request = VolumeEcShardsToVolumeRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_to_volume(request).await?;
-    Ok(())
-}
-
-pub async fn rebuild_missing_ec_shards_handler(
-    State(ctx): State<StorageState>,
-    extractor: ErasureCodingExtractor,
-) -> StdResult<(), EcVolumeError> {
-    let client = volume_server_client(&ctx.store.public_url)?;
-    let request = VolumeEcShardsRebuildRequest {
-        volume_id: extractor.query.volume,
-        collection: extractor.query.collection.unwrap_or_default().to_string(),
-    };
-    let _ = client.volume_ec_shards_rebuild(request).await?;
-    Ok(())
 }

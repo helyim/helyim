@@ -27,6 +27,7 @@ axum-macros.workspace = true
 bincode.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 chrono.workspace = true
+cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
@@ -72,10 +73,15 @@ reqwest = { version = "0.11", features = ["json"] }
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 helyim-benchmark = { path = "../benchmark" }
+http-body-util.workspace = true
+hyper-util = { workspace = true, features = ["client", "client-legacy", "service", "tokio"] }
+pin-project-lite.workspace = true
 pprof = { workspace = true, features = ["flamegraph", "criterion", "frame-pointer"] }
 reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tower.workspace = true
+turmoil.workspace = true
 
 [features]
 default = []

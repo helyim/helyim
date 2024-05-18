@@ -38,18 +38,18 @@ async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::err
 
 fn log_init(
     level: Level,
-    opts: &LogOptions,
-    log_prefix: &str,
+    _opts: &LogOptions,
+    _log_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("RUST_LOG", "none");
     let helyim = env!("CARGO_PKG_NAME");
     let filter = EnvFilter::from_default_env().add_directive(format!("{helyim}={level}").parse()?);
-    let file_appender = tracing_appender::rolling::daily(
-        opts.log_path.as_str(),
-        format!("helyim-{}.log", log_prefix),
-    );
+    // let file_appender = tracing_appender::rolling::daily(
+    //     opts.log_path.as_str(),
+    //     format!("helyim-{}.log", log_prefix),
+    // );
     let subscriber = tracing_subscriber::fmt()
-        .with_writer(file_appender)
+        // .with_writer(file_appender)
         .with_env_filter(filter)
         .with_target(true)
         .with_level(true)

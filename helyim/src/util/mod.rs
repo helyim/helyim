@@ -27,3 +27,6 @@ pub fn get_or_default(s: &str) -> FastStr {
         FastStr::new(s)
     }
 }
+
+#[cfg(test)]
+pub mod connector;
