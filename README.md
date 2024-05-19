@@ -41,7 +41,7 @@ cargo run --bin helyim master
 #### 2. Start Volume Servers
 
 ```shell
-cargo run --bin helyim volume --port 8080 --folders ./vdata:10
+cargo run --bin helyim volume --port 8080 --folders ./target
 ```
 
 #### 3. Write File
