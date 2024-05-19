@@ -1,11 +1,14 @@
+#[macro_use]
+pub mod node;
+
 pub mod collection;
 
 mod data_center;
+
 mod data_node;
 pub use data_node::DataNodeRef;
 
 mod erasure_coding;
-pub mod node;
 
 mod rack;
 
