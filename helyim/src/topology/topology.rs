@@ -529,7 +529,7 @@ pub(crate) mod tests {
         block_on(async move {
             for (k, v) in data {
                 let dc = Arc::new(DataCenter::new(FastStr::new(k)));
-                topo.as_ref().link_child_node(dc.clone()).await;
+                topo.link_data_center(dc.clone()).await;
 
                 for (k, v) in v {
                     let rack = Arc::new(Rack::new(FastStr::new(k)));

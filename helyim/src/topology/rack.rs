@@ -112,7 +112,7 @@ mod tests {
     use faststr::FastStr;
     use rand::Rng;
 
-    use crate::topology::rack::Rack;
+    use crate::topology::{node::Node, rack::Rack};
 
     #[tokio::test]
     pub async fn test_get_or_create_data_node() {
