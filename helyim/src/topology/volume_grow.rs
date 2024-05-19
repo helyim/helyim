@@ -51,13 +51,13 @@ impl VolumeGrowth {
 
         for rack in other_racks.into_iter().flatten() {
             let random = rand::thread_rng().gen_range(0..rack.free_space());
-            let node = rack.reserve_one_volume(random).await?;
+            let node = rack.reserve_one_volume(random)?;
             ret.push(node);
         }
 
         for dc in other_centers.into_iter().flatten() {
             let random = rand::thread_rng().gen_range(0..dc.free_space());
-            let node = dc.reserve_one_volume(random).await?;
+            let node = dc.reserve_one_volume(random)?;
             ret.push(node);
         }
 

@@ -52,26 +52,6 @@ impl DataCenter {
             }
         }
     }
-
-    pub async fn reserve_one_volume(&self, mut random: i64) -> StdResult<DataNodeRef, VolumeError> {
-        for rack in self.racks.iter() {
-            let free_space = rack.free_space();
-            if free_space <= 0 {
-                continue;
-            }
-            if random >= free_space {
-                random -= free_space;
-            } else {
-                let node = rack.reserve_one_volume(random).await?;
-                return Ok(node);
-            }
-        }
-
-        Err(VolumeError::NoFreeSpace(format!(
-            "no free volumes found on data center {}",
-            self.id()
-        )))
-    }
 }
 
 impl DataCenter {

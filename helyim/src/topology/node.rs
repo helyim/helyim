@@ -106,7 +106,7 @@ pub trait Node: DowncastSync {
         NodeType::None
     }
 
-    fn children(&self) -> Vec<Arc<dyn Node>>;
+    fn children(&self) -> &DashMap<NodeId, Arc<dyn Node>>;
     async fn parent(&self) -> Option<Arc<dyn Node>> {
         None
     }
@@ -254,12 +254,8 @@ impl Node for NodeImpl {
         }
     }
 
-    fn children(&self) -> Vec<Arc<dyn Node>> {
-        let mut childs = Vec::with_capacity(self.children.len());
-        for child in self.children.iter() {
-            childs.push(child.clone());
-        }
-        childs
+    fn children(&self) -> &DashMap<NodeId, Arc<dyn Node>> {
+        &self.children
     }
 
     async fn parent(&self) -> Option<Arc<dyn Node>> {
@@ -342,7 +338,7 @@ macro_rules! impl_node {
                 NodeType::$node
             }
 
-            fn children(&self) -> Vec<Arc<dyn Node>> {
+            fn children(&self) -> &DashMap<faststr::FastStr, Arc<dyn Node>> {
                 self.node.children()
             }
 

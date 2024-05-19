@@ -73,25 +73,6 @@ impl Rack {
             None => FastStr::empty(),
         }
     }
-
-    pub async fn reserve_one_volume(&self, mut random: i64) -> StdResult<DataNodeRef, VolumeError> {
-        for data_node in self.data_nodes.iter() {
-            let free_space = data_node.free_space();
-            if free_space <= 0 {
-                continue;
-            }
-            if random >= free_space {
-                random -= free_space;
-            } else {
-                return Ok(data_node.clone());
-            }
-        }
-
-        Err(VolumeError::NoFreeSpace(format!(
-            "no free volumes found on rack {}",
-            self.id()
-        )))
-    }
 }
 
 impl Rack {
@@ -140,7 +121,7 @@ mod tests {
             .await;
 
         let random = rand::thread_rng().gen_range(0..rack.free_space());
-        let _node1 = rack.reserve_one_volume(random).await.unwrap();
+        let _node1 = rack.reserve_one_volume(random).unwrap();
 
         assert_eq!(Arc::strong_count(&node), 3);
     }
