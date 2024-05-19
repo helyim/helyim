@@ -5,7 +5,7 @@ mod data_node;
 pub use data_node::DataNodeRef;
 
 mod erasure_coding;
-mod node;
+pub mod node;
 
 mod rack;
 

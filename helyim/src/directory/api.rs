@@ -9,7 +9,7 @@ use crate::{
         AssignRequest, Assignment, ClusterStatus,
     },
     storage::VolumeError,
-    topology::{volume_grow::VolumeGrowth, Topology, TopologyRef},
+    topology::{node::Node, volume_grow::VolumeGrowth, Topology, TopologyRef},
     util::{args::MasterOptions, http::extractor::FormOrJson},
 };
 
@@ -156,7 +156,6 @@ mod tests {
             .build();
 
         let topo = crate::topology::tests::setup_topo();
-        let topo = Arc::new(topo);
 
         let options = MasterOptions {
             ip: FastStr::new("127.0.0.1"),

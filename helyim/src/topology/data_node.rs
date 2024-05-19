@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::{Debug, Display, Formatter},
     result::Result as StdResult,
     sync::{atomic::AtomicU64, Arc, Weak},
 };
@@ -16,10 +17,9 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    errors::Result,
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
     topology::{
-        node::{Node, NodeId, NodeImpl, NodeType},
+        node::{Node, NodeImpl, NodeType},
         rack::Rack,
     },
     util::grpc::volume_server_client,
@@ -31,7 +31,7 @@ pub struct DataNode {
     pub port: u16,
     pub public_url: FastStr,
     pub last_seen: i64,
-    node: NodeImpl,
+    node: Arc<NodeImpl>,
     #[serde(skip)]
     pub rack: RwLock<Weak<Rack>>,
     pub volumes: DashMap<VolumeId, VolumeInfo>,
@@ -39,8 +39,14 @@ pub struct DataNode {
     pub ec_shard_count: AtomicU64,
 }
 
-impl std::fmt::Display for DataNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Debug for DataNode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DataNode ({}:{})", self.ip, self.port)
+    }
+}
+
+impl Display for DataNode {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "DataNode({})", self.id())
     }
 }
@@ -53,7 +59,7 @@ impl DataNode {
         public_url: FastStr,
         max_volume_count: i64,
     ) -> DataNode {
-        let node = NodeImpl::new(id);
+        let node = Arc::new(NodeImpl::new(id));
         node.set_max_volume_count(max_volume_count);
 
         DataNode {
@@ -154,16 +160,18 @@ impl DataNode {
     }
 
     pub async fn rack_id(&self) -> FastStr {
-        match self.rack.read().await.upgrade() {
-            Some(rack) => rack.id.clone(),
+        match self.parent().await {
+            Some(rack) => FastStr::new(rack.id()),
             None => FastStr::empty(),
         }
     }
     pub async fn data_center_id(&self) -> FastStr {
-        match self.rack.read().await.upgrade() {
-            Some(rack) => rack.data_center_id().await,
-            None => FastStr::empty(),
+        if let Some(rack) = self.parent().await {
+            if let Some(data_center) = rack.parent().await {
+                return FastStr::new(data_center.id());
+            }
         }
+        FastStr::empty()
     }
     pub async fn set_rack(&self, rack: Weak<Rack>) {
         *self.rack.write().await = rack;
@@ -230,7 +238,7 @@ impl Node for DataNode {
 
     /// number of free volume slots
     fn free_space(&self) -> i64 {
-        self.max_volume_count() - self.volume_count()
+        self.node.free_space()
     }
 
     fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
@@ -241,49 +249,28 @@ impl Node for DataNode {
         self.node
             .adjust_max_volume_count(max_volume_count_delta)
             .await;
-
-        if let Some(rack) = self.rack.read().await.upgrade() {
-            rack.adjust_max_volume_count(max_volume_count_delta).await;
-        }
     }
 
     async fn adjust_volume_count(&self, volume_count_delta: i64) {
         self.node.adjust_volume_count(volume_count_delta).await;
-
-        if let Some(rack) = self.rack.read().await.upgrade() {
-            rack.adjust_volume_count(volume_count_delta).await;
-        }
     }
 
     async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
         self.node.adjust_ec_shard_count(ec_shard_count_delta).await;
-
-        if let Some(rack) = self.rack.read().await.upgrade() {
-            rack.adjust_ec_shard_count(ec_shard_count_delta).await;
-        }
     }
 
     async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
         self.node
             .adjust_active_volume_count(active_volume_count_delta)
             .await;
-
-        if let Some(rack) = self.rack.read().await.upgrade() {
-            rack.adjust_active_volume_count(active_volume_count_delta)
-                .await;
-        }
     }
 
     async fn adjust_max_volume_id(&self, vid: VolumeId) {
         self.node.adjust_max_volume_id(vid).await;
-
-        if let Some(rack) = self.rack.read().await.upgrade() {
-            rack.adjust_max_volume_id(self.max_volume_id()).await;
-        }
     }
 
     fn volume_count(&self) -> i64 {
-        self.node._volume_count()
+        self.node.volume_count()
     }
 
     fn ec_shard_count(&self) -> i64 {
@@ -291,26 +278,24 @@ impl Node for DataNode {
     }
 
     fn active_volume_count(&self) -> i64 {
-        self.node._active_volume_count()
+        self.node.active_volume_count()
     }
 
     fn max_volume_count(&self) -> i64 {
-        self.node._max_volume_count()
+        self.node.max_volume_count()
     }
 
     fn max_volume_id(&self) -> VolumeId {
         self.node.max_volume_id()
     }
 
-    async fn set_parent(&self, parent: Weak<dyn Node>) {
+    async fn set_parent(&self, parent: Option<Arc<dyn Node>>) {
         self.node.set_parent(parent).await
     }
 
-    async fn link_child_node(self: Arc<Self>, child: Arc<dyn Node>) {
-        (&self.node).link_child_node(child).await;
-    }
+    async fn link_child_node(self: Arc<Self>, _child: Arc<dyn Node>) {}
 
-    async fn unlink_child_node(&self, node_id: NodeId) {
+    async fn unlink_child_node(&self, node_id: &str) {
         self.node.unlink_child_node(node_id).await;
     }
 
@@ -323,7 +308,7 @@ impl Node for DataNode {
     }
 
     async fn parent(&self) -> Option<Arc<dyn Node>> {
-        self.node.parent()
+        self.node.parent().await
     }
 }
 

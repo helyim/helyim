@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, DerefMut},
+    result::Result as StdResult,
     sync::{Arc, Weak},
 };
 
@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::{
     storage::{VolumeError, VolumeId},
     topology::{
-        node::NodeImpl,
+        node::{Node, NodeImpl, NodeType},
         rack::{Rack, RackRef},
         DataNodeRef, Topology,
     },
@@ -19,7 +19,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct DataCenter {
-    node: NodeImpl,
+    node: Arc<NodeImpl>,
     // parent
     #[serde(skip)]
     pub topology: RwLock<Weak<Topology>>,
@@ -30,7 +30,7 @@ pub struct DataCenter {
 
 impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
-        let node = NodeImpl::new(id);
+        let node = Arc::new(NodeImpl::new(id));
         Self {
             node,
             topology: RwLock::new(Weak::new()),
@@ -53,7 +53,7 @@ impl DataCenter {
         }
     }
 
-    pub async fn reserve_one_volume(&self, mut random: i64) -> Result<DataNodeRef, VolumeError> {
+    pub async fn reserve_one_volume(&self, mut random: i64) -> StdResult<DataNodeRef, VolumeError> {
         for rack in self.racks.iter() {
             let free_space = rack.free_space();
             if free_space <= 0 {
@@ -76,94 +76,90 @@ impl DataCenter {
 
 impl DataCenter {
     pub async fn link_rack(&self, rack: Arc<Rack>) {
-        if !self.racks.contains_key(rack.id()) {
-            self.adjust_max_volume_count(rack.max_volume_count()).await;
-            self.adjust_max_volume_id(rack.max_volume_id()).await;
-            self.adjust_volume_count(rack.volume_count()).await;
-            self.adjust_ec_shard_count(rack.ec_shard_count()).await;
-            self.adjust_active_volume_count(rack._active_volume_count())
-                .await;
-
-            self.racks.insert(rack.id.clone(), rack);
-        }
-    }
-
-    pub fn volume_count(&self) -> i64 {
-        let mut count = 0;
-        for rack in self.racks.iter() {
-            count += rack.volume_count();
-        }
-        count
-    }
-
-    pub fn max_volume_count(&self) -> i64 {
-        let mut max_volumes = 0;
-        for rack in self.racks.iter() {
-            max_volumes += rack.max_volume_count();
-        }
-        max_volumes
-    }
-
-    pub fn free_space(&self) -> i64 {
-        let mut free_space = 0;
-        for rack in self.racks.iter() {
-            free_space += rack.free_space();
-        }
-        free_space
-    }
-
-    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
-        self._adjust_volume_count(volume_count_delta);
-
-        if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_volume_count(volume_count_delta);
-        }
-    }
-
-    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
-        self._adjust_active_volume_count(active_volume_count_delta);
-
-        if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_active_volume_count(active_volume_count_delta);
-        }
-    }
-
-    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
-        self._adjust_ec_shard_count(ec_shard_count_delta);
-
-        if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_ec_shard_count(ec_shard_count_delta);
-        }
-    }
-
-    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
-        self._adjust_max_volume_count(max_volume_count_delta);
-
-        if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_max_volume_count(max_volume_count_delta);
-        }
-    }
-
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
-        self._adjust_max_volume_id(vid);
-
-        if let Some(topo) = self.topology.read().await.upgrade() {
-            topo.adjust_max_volume_id(self.max_volume_id());
-        }
+        let data_center_node = self.node.clone();
+        data_center_node.link_child_node(rack).await;
     }
 }
 
-impl Deref for DataCenter {
-    type Target = NodeImpl;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
+#[async_trait::async_trait]
+impl Node for DataCenter {
+    fn id(&self) -> &str {
+        self.node.id()
     }
-}
 
-impl DerefMut for DataCenter {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.node
+    /// number of free volume slots
+    fn free_space(&self) -> i64 {
+        self.node.free_space()
+    }
+
+    fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
+        self.node.reserve_one_volume(rand)
+    }
+
+    async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self.node
+            .adjust_max_volume_count(max_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self.node.adjust_volume_count(volume_count_delta).await;
+    }
+
+    async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self.node.adjust_ec_shard_count(ec_shard_count_delta).await;
+    }
+
+    async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self.node
+            .adjust_active_volume_count(active_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_max_volume_id(&self, vid: VolumeId) {
+        self.node.adjust_max_volume_id(vid).await;
+    }
+
+    fn volume_count(&self) -> i64 {
+        self.node.volume_count()
+    }
+
+    fn ec_shard_count(&self) -> i64 {
+        self.node.ec_shard_count()
+    }
+
+    fn active_volume_count(&self) -> i64 {
+        self.node.active_volume_count()
+    }
+
+    fn max_volume_count(&self) -> i64 {
+        self.node.max_volume_count()
+    }
+
+    fn max_volume_id(&self) -> VolumeId {
+        self.node.max_volume_id()
+    }
+
+    async fn set_parent(&self, parent: Option<Arc<dyn Node>>) {
+        self.node.set_parent(parent).await
+    }
+
+    async fn link_child_node(self: Arc<Self>, _child: Arc<dyn Node>) {}
+
+    async fn unlink_child_node(&self, node_id: &str) {
+        self.node.unlink_child_node(node_id).await;
+    }
+
+    fn node_type(&self) -> NodeType {
+        NodeType::DataCenter
+    }
+
+    fn children(&self) -> Vec<Arc<dyn Node>> {
+        self.node.children()
+    }
+
+    async fn parent(&self) -> Option<Arc<dyn Node>> {
+        self.node.parent().await
     }
 }
 

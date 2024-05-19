@@ -1,10 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ops::{Deref, DerefMut},
-    result::Result as StdResult,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, result::Result as StdResult, sync::Arc, time::Duration};
 
 use axum::{
     http::{
@@ -46,7 +40,7 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct Topology {
-    node: NodeImpl,
+    node: Arc<NodeImpl>,
     #[serde(skip)]
     sequencer: Sequencer,
     pub collections: DashMap<FastStr, Collection>,
@@ -79,7 +73,7 @@ impl Clone for Topology {
 
 impl Topology {
     pub fn new(sequencer: Sequencer, volume_size_limit: u64, pulse: u64) -> Topology {
-        let node = NodeImpl::new(FastStr::new("topo"));
+        let node = Arc::new(NodeImpl::new(FastStr::new("topo")));
         Topology {
             node,
             sequencer,
@@ -97,7 +91,7 @@ impl Topology {
             Some(data_node) => data_node.value().clone(),
             None => {
                 let data_center = Arc::new(DataCenter::new(FastStr::new(name)));
-                self.link_data_center(data_center.clone());
+                self.link_data_center(data_center.clone()).await;
                 data_center
             }
         }
@@ -275,7 +269,7 @@ impl Topology {
             .adjust_max_volume_count(-data_node.max_volume_count())
             .await;
         if let Some(rack) = data_node.rack.read().await.upgrade() {
-            rack.unlink_data_node(data_node.id()).await;
+            rack.unlink_child_node(data_node.id()).await;
         }
     }
 
@@ -426,75 +420,87 @@ impl Topology {
         locations
     }
 
-    pub fn link_data_center(&self, data_center: Arc<DataCenter>) {
-        if !self.data_centers.contains_key(data_center.id()) {
-            self.adjust_max_volume_count(data_center.max_volume_count());
-            self.adjust_max_volume_id(data_center.max_volume_id());
-            self.adjust_volume_count(data_center.volume_count());
-            self.adjust_ec_shard_count(data_center.ec_shard_count());
-            self.adjust_active_volume_count(data_center._active_volume_count());
-
-            self.data_centers
-                .insert(data_center.id.clone(), data_center);
-        }
-    }
-
-    pub fn volume_count(&self) -> i64 {
-        let mut count = 0;
-        for dc in self.data_centers.iter() {
-            count += dc.volume_count();
-        }
-        count
-    }
-
-    pub fn max_volume_count(&self) -> i64 {
-        let mut max_volumes = 0;
-        for dc in self.data_centers.iter() {
-            max_volumes += dc.max_volume_count();
-        }
-        max_volumes
-    }
-
-    pub fn free_space(&self) -> i64 {
-        let mut free_space = 0;
-        for dc in self.data_centers.iter() {
-            free_space += dc.free_space();
-        }
-        free_space
-    }
-
-    pub fn adjust_volume_count(&self, volume_count_delta: i64) {
-        self._adjust_volume_count(volume_count_delta);
-    }
-
-    pub fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
-        self._adjust_active_volume_count(active_volume_count_delta);
-    }
-
-    pub fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
-        self._adjust_ec_shard_count(ec_shard_count_delta);
-    }
-
-    pub fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
-        self._adjust_max_volume_count(max_volume_count_delta);
-    }
-
-    pub fn adjust_max_volume_id(&self, vid: VolumeId) {
-        self._adjust_max_volume_id(vid);
+    pub async fn link_data_center(&self, data_center: Arc<DataCenter>) {
+        let topo_node = self.node.clone();
+        topo_node.link_child_node(data_center).await;
     }
 }
 
-impl Deref for Topology {
-    type Target = NodeImpl;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
+#[async_trait::async_trait]
+impl Node for Topology {
+    fn id(&self) -> &str {
+        self.node.id()
     }
-}
 
-impl DerefMut for Topology {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.node
+    /// number of free volume slots
+    fn free_space(&self) -> i64 {
+        self.node.free_space()
+    }
+
+    fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
+        self.node.reserve_one_volume(rand)
+    }
+
+    async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self.node
+            .adjust_max_volume_count(max_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self.node.adjust_volume_count(volume_count_delta).await;
+    }
+
+    async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self.node.adjust_ec_shard_count(ec_shard_count_delta).await;
+    }
+
+    async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self.node
+            .adjust_active_volume_count(active_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_max_volume_id(&self, vid: VolumeId) {
+        self.node.adjust_max_volume_id(vid).await;
+    }
+
+    fn volume_count(&self) -> i64 {
+        self.node.volume_count()
+    }
+
+    fn ec_shard_count(&self) -> i64 {
+        self.node.ec_shard_count()
+    }
+
+    fn active_volume_count(&self) -> i64 {
+        self.node.active_volume_count()
+    }
+
+    fn max_volume_count(&self) -> i64 {
+        self.node.max_volume_count()
+    }
+
+    fn max_volume_id(&self) -> VolumeId {
+        self.node.max_volume_id()
+    }
+
+    async fn set_parent(&self, parent: Option<Arc<dyn Node>>) {
+        self.node.set_parent(parent).await
+    }
+
+    async fn link_child_node(self: Arc<Self>, _child: Arc<dyn Node>) {}
+
+    async fn unlink_child_node(&self, node_id: &str) {
+        self.node.unlink_child_node(node_id).await;
+    }
+
+    fn children(&self) -> Vec<Arc<dyn Node>> {
+        self.node.children()
+    }
+
+    async fn parent(&self) -> Option<Arc<dyn Node>> {
+        self.node.parent().await
     }
 }
 
@@ -568,7 +574,10 @@ pub(crate) mod tests {
         directory::Sequencer,
         sequence::MemorySequencer,
         storage::{VolumeInfo, CURRENT_VERSION},
-        topology::{data_center::DataCenter, data_node::DataNode, rack::Rack, Topology},
+        topology::{
+            data_center::DataCenter, data_node::DataNode, node::Node, rack::Rack, Topology,
+            TopologyRef,
+        },
     };
 
     #[derive(Deserialize, Debug)]
@@ -583,16 +592,20 @@ pub(crate) mod tests {
         size: u64,
     }
 
-    pub fn setup_topo() -> Topology {
+    pub fn setup_topo() -> TopologyRef {
         let file = File::open("tests/topo.json").unwrap();
         let data: HashMap<String, HashMap<String, HashMap<String, ServerLayout>>> =
             serde_json::from_reader(file).unwrap();
-        let topo = Topology::new(Sequencer::Memory(MemorySequencer::new()), 32 * 1024, 5);
+        let topo = Arc::new(Topology::new(
+            Sequencer::Memory(MemorySequencer::new()),
+            32 * 1024,
+            5,
+        ));
 
         block_on(async move {
             for (k, v) in data {
                 let dc = Arc::new(DataCenter::new(FastStr::new(k)));
-                topo.link_data_center(dc.clone());
+                topo.as_ref().link_child_node(dc.clone()).await;
 
                 for (k, v) in v {
                     let rack = Arc::new(Rack::new(FastStr::new(k)));

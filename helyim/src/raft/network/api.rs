@@ -7,6 +7,7 @@ use crate::{
         RaftServer,
     },
     storage::VolumeId,
+    topology::node::Node,
 };
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -198,7 +198,7 @@ async fn find_main_data_center(
     candidates = vec![];
 
     for dc in data_centers.iter() {
-        if dc.id == main_dc.id {
+        if dc.id() == main_dc.id() {
             continue;
         }
         if dc.free_space() <= 0 {
@@ -245,7 +245,7 @@ async fn find_main_rack(
     let rp = option.replica_placement;
 
     for rack in racks.iter() {
-        if !option.rack.is_empty() && option.rack != rack.id {
+        if !option.rack.is_empty() && option.rack != rack.id() {
             continue;
         }
         if rack.free_space() < rp.same_rack_count as i64 + 1 {
@@ -281,7 +281,7 @@ async fn find_main_rack(
     candidates = vec![];
 
     for rack in racks.iter() {
-        if rack.id == main_rack.id {
+        if rack.id() == main_rack.id() {
             continue;
         }
         if rack.free_space() <= 0 {
@@ -393,6 +393,7 @@ mod tests {
         storage::{ReplicaPlacement, VolumeId, VolumeInfo},
         topology::{
             data_node::DataNode,
+            node::Node,
             topology::tests::setup_topo,
             volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
             DataNodeRef,
@@ -476,7 +477,7 @@ mod tests {
 
         assert_eq!(servers.len(), 3);
         for server in servers {
-            println!("assigned node: {}", server.id);
+            println!("assigned node: {}", server.id());
         }
     }
 }

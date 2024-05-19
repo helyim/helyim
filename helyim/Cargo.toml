@@ -31,6 +31,7 @@ cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
+downcast-rs.workspace = true
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ginepro.workspace = true

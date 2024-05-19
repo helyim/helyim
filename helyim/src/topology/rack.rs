@@ -1,5 +1,4 @@
 use std::{
-    ops::{Deref, DerefMut},
     result::Result as StdResult,
     sync::{Arc, Weak},
 };
@@ -14,14 +13,14 @@ use crate::{
     topology::{
         data_center::DataCenter,
         data_node::DataNode,
-        node::{Node, NodeImpl},
+        node::{Node, NodeImpl, NodeType},
         DataNodeRef,
     },
 };
 
 #[derive(Serialize)]
 pub struct Rack {
-    node: NodeImpl,
+    node: Arc<NodeImpl>,
     // children
     #[serde(skip)]
     pub data_nodes: DashMap<FastStr, DataNodeRef>,
@@ -32,7 +31,7 @@ pub struct Rack {
 
 impl Rack {
     pub fn new(id: FastStr) -> Rack {
-        let node = NodeImpl::new(id);
+        let node = Arc::new(NodeImpl::new(id));
         Self {
             node,
             data_nodes: DashMap::new(),
@@ -69,8 +68,8 @@ impl Rack {
     }
 
     pub async fn data_center_id(&self) -> FastStr {
-        match self.data_center.read().await.upgrade() {
-            Some(data_center) => data_center.id.clone(),
+        match self.node.parent().await {
+            Some(data_center) => FastStr::new(data_center.id()),
             None => FastStr::empty(),
         }
     }
@@ -97,110 +96,90 @@ impl Rack {
 
 impl Rack {
     pub async fn link_data_node(&self, data_node: Arc<DataNode>) {
-        if !self.data_nodes.contains_key(data_node.id()) {
-            self.adjust_max_volume_count(data_node.max_volume_count())
-                .await;
-            self.adjust_max_volume_id(data_node.max_volume_id()).await;
-            self.adjust_volume_count(data_node.volume_count()).await;
-            self.adjust_ec_shard_count(data_node.ec_shard_count()).await;
-            self.adjust_active_volume_count(data_node.active_volume_count())
-                .await;
-
-            self.data_nodes
-                .insert(FastStr::new(data_node.id()), data_node);
-        }
-    }
-
-    pub async fn unlink_data_node(&self, id: &str) {
-        if let Some((_, data_node)) = self.data_nodes.remove(id) {
-            self.adjust_max_volume_count(-data_node.max_volume_count())
-                .await;
-            self.adjust_volume_count(-data_node.volume_count()).await;
-            self.adjust_ec_shard_count(-data_node.ec_shard_count())
-                .await;
-            self.adjust_active_volume_count(-data_node.active_volume_count())
-                .await;
-            *data_node.rack.write().await = Weak::new();
-        }
-    }
-
-    pub fn volume_count(&self) -> i64 {
-        let mut count = 0;
-        for data_node in self.data_nodes.iter() {
-            count += data_node.volume_count();
-        }
-        count
-    }
-
-    pub fn max_volume_count(&self) -> i64 {
-        let mut max_volumes = 0;
-        for data_node in self.data_nodes.iter() {
-            max_volumes += data_node.max_volume_count();
-        }
-        max_volumes
-    }
-
-    pub fn free_space(&self) -> i64 {
-        let mut free_space = 0;
-        for data_node in self.data_nodes.iter() {
-            free_space += data_node.free_space();
-        }
-        free_space
-    }
-
-    pub async fn adjust_volume_count(&self, volume_count_delta: i64) {
-        self._adjust_volume_count(volume_count_delta);
-
-        if let Some(dc) = self.data_center.read().await.upgrade() {
-            dc.adjust_volume_count(volume_count_delta).await;
-        }
-    }
-
-    pub async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
-        self._adjust_active_volume_count(active_volume_count_delta);
-
-        if let Some(dc) = self.data_center.read().await.upgrade() {
-            dc.adjust_active_volume_count(active_volume_count_delta)
-                .await;
-        }
-    }
-
-    pub async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
-        self._adjust_ec_shard_count(ec_shard_count_delta);
-
-        if let Some(dc) = self.data_center.read().await.upgrade() {
-            dc.adjust_ec_shard_count(ec_shard_count_delta).await;
-        }
-    }
-
-    pub async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
-        self._adjust_max_volume_count(max_volume_count_delta);
-
-        if let Some(dc) = self.data_center.read().await.upgrade() {
-            dc.adjust_max_volume_count(max_volume_count_delta).await;
-        }
-    }
-
-    pub async fn adjust_max_volume_id(&self, vid: VolumeId) {
-        self._adjust_max_volume_id(vid);
-
-        if let Some(dc) = self.data_center.read().await.upgrade() {
-            dc.adjust_max_volume_id(self.max_volume_id()).await;
-        }
+        let rack_node = self.node.clone();
+        rack_node.link_child_node(data_node).await;
     }
 }
 
-impl Deref for Rack {
-    type Target = NodeImpl;
-
-    fn deref(&self) -> &Self::Target {
-        &self.node
+#[async_trait::async_trait]
+impl Node for Rack {
+    fn id(&self) -> &str {
+        self.node.id()
     }
-}
 
-impl DerefMut for Rack {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.node
+    /// number of free volume slots
+    fn free_space(&self) -> i64 {
+        self.node.free_space()
+    }
+
+    fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
+        self.node.reserve_one_volume(rand)
+    }
+
+    async fn adjust_max_volume_count(&self, max_volume_count_delta: i64) {
+        self.node
+            .adjust_max_volume_count(max_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_volume_count(&self, volume_count_delta: i64) {
+        self.node.adjust_volume_count(volume_count_delta).await;
+    }
+
+    async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64) {
+        self.node.adjust_ec_shard_count(ec_shard_count_delta).await;
+    }
+
+    async fn adjust_active_volume_count(&self, active_volume_count_delta: i64) {
+        self.node
+            .adjust_active_volume_count(active_volume_count_delta)
+            .await;
+    }
+
+    async fn adjust_max_volume_id(&self, vid: VolumeId) {
+        self.node.adjust_max_volume_id(vid).await;
+    }
+
+    fn volume_count(&self) -> i64 {
+        self.node.volume_count()
+    }
+
+    fn ec_shard_count(&self) -> i64 {
+        self.node.ec_shard_count()
+    }
+
+    fn active_volume_count(&self) -> i64 {
+        self.node.active_volume_count()
+    }
+
+    fn max_volume_count(&self) -> i64 {
+        self.node.max_volume_count()
+    }
+
+    fn max_volume_id(&self) -> VolumeId {
+        self.node.max_volume_id()
+    }
+
+    async fn set_parent(&self, parent: Option<Arc<dyn Node>>) {
+        self.node.set_parent(parent).await
+    }
+
+    async fn link_child_node(self: Arc<Self>, _child: Arc<dyn Node>) {}
+
+    async fn unlink_child_node(&self, node_id: &str) {
+        self.node.unlink_child_node(node_id).await;
+    }
+
+    fn node_type(&self) -> NodeType {
+        NodeType::Rack
+    }
+
+    fn children(&self) -> Vec<Arc<dyn Node>> {
+        self.node.children()
+    }
+
+    async fn parent(&self) -> Option<Arc<dyn Node>> {
+        self.node.parent().await
     }
 }
 
