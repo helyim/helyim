@@ -251,13 +251,16 @@ impl Helyim for DirectoryGrpcServer {
 
                         match data_node_opt.as_ref() {
                             Some(data_node) => {
-                                update_volume_layout(
+                                if let Err(err) = update_volume_layout(
                                     &heartbeat,
                                     &topology,
                                     &client_chans,
                                     data_node,
                                 )
-                                .await;
+                                .await
+                                {
+                                    error!("update volume layout error: {err}");
+                                }
                             }
                             None => {
                                 if let Ok(data_node) =
@@ -491,10 +494,10 @@ async fn update_topology(
     let data_center = get_or_default(&heartbeat.data_center);
     let rack = get_or_default(&heartbeat.rack);
 
-    let data_center = topology.get_or_create_data_center(&data_center).await;
+    let data_center = topology.get_or_create_data_center(&data_center).await?;
     data_center.set_parent(Some(topology.clone())).await;
 
-    let rack = data_center.get_or_create_rack(&rack).await;
+    let rack = data_center.get_or_create_rack(&rack).await?;
     rack.set_parent(Some(data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
@@ -516,7 +519,7 @@ async fn update_volume_layout(
     topology: &TopologyRef,
     client_chans: &Arc<DashMap<FastStr, UnboundedSender<VolumeLocation>>>,
     data_node: &DataNodeRef,
-) {
+) -> StdResult<(), VolumeError> {
     let mut volume_location = VolumeLocation::new();
     volume_location.url = data_node.url();
     volume_location.public_url = data_node.public_url.to_string();
@@ -552,7 +555,7 @@ async fn update_volume_layout(
         if !heartbeat.ip.is_empty() {
             topology
                 .register_data_node(&heartbeat.data_center, &heartbeat.rack, data_node)
-                .await;
+                .await?;
         }
 
         let (new_volumes, deleted_volumes) = topology
@@ -642,6 +645,8 @@ async fn update_volume_layout(
             let _ = client.value().unbounded_send(volume_location.clone());
         }
     }
+
+    Ok(())
 }
 
 async fn remove_data_node(

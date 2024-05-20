@@ -24,13 +24,13 @@ impl DataCenter {
         Self { node }
     }
 
-    pub async fn get_or_create_rack(&self, id: &str) -> RackRef {
+    pub async fn get_or_create_rack(&self, id: &str) -> Result<RackRef, VolumeError> {
         match self.children().get(id) {
-            Some(rack) => downcast_rack(rack.clone()).unwrap(),
+            Some(rack) => downcast_rack(rack.clone()),
             None => {
                 let rack = Arc::new(Rack::new(FastStr::new(id)));
                 self.link_rack(rack.clone()).await;
-                rack
+                Ok(rack)
             }
         }
     }

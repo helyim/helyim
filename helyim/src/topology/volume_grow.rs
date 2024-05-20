@@ -302,7 +302,7 @@ mod tests {
             data_node::DataNode,
             node::{downcast_node, Node},
             topology::tests::setup_topo,
-            volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
+            volume_grow::{randomly_pick_nodes, VolumeGrowOption, VolumeGrowth},
             DataNodeRef,
         },
     };
@@ -349,7 +349,22 @@ mod tests {
         let mut data_node3_cnt = 0;
 
         for _ in 0..1_000_000 {
-            let (main_node, _rest_nodes) = find_main_node(&data_nodes, &option).await.unwrap();
+            let (main_node, _rest_nodes) = randomly_pick_nodes(
+                &data_nodes,
+                |node| {
+                    let node_id = node.id();
+                    if !option.data_node.is_empty() && option.data_node != *node_id {
+                        return false;
+                    }
+                    if node.free_space() < 1 {
+                        return false;
+                    }
+                    true
+                },
+                option.replica_placement.same_rack_count as usize,
+            )
+            .await
+            .unwrap();
             let main_node = downcast_node(main_node).unwrap();
             if main_node.ip == "127.0.0.1" {
                 data_node1_cnt += 1;

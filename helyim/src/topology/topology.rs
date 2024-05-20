@@ -82,13 +82,16 @@ impl Topology {
         }
     }
 
-    pub async fn get_or_create_data_center(&self, name: &str) -> DataCenterRef {
+    pub async fn get_or_create_data_center(
+        &self,
+        name: &str,
+    ) -> Result<DataCenterRef, VolumeError> {
         match self.children().get(name) {
-            Some(data_center) => downcast_data_center(data_center.clone()).unwrap(),
+            Some(data_center) => downcast_data_center(data_center.clone()),
             None => {
                 let data_center = Arc::new(DataCenter::new(FastStr::new(name)));
                 self.link_data_center(data_center.clone()).await;
-                data_center
+                Ok(data_center)
             }
         }
     }
@@ -151,15 +154,16 @@ impl Topology {
         dc_name: &str,
         rack_name: &str,
         data_node: &DataNodeRef,
-    ) {
+    ) -> Result<(), VolumeError> {
         if data_node.parent().await.is_some() {
-            return;
+            return Ok(());
         }
-        let dc = self.get_or_create_data_center(dc_name).await;
-        let rack = dc.get_or_create_rack(rack_name).await;
+        let dc = self.get_or_create_data_center(dc_name).await?;
+        let rack = dc.get_or_create_rack(rack_name).await?;
         rack.link_data_node(data_node.clone()).await;
         data_node.set_parent(Some(rack)).await;
         info!("data node: {} relink to topology", data_node.id());
+        Ok(())
     }
 
     pub async fn sync_data_node_registration(
