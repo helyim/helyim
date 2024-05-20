@@ -1,50 +1,32 @@
-use std::{
-    result::Result as StdResult,
-    sync::{Arc, Weak},
-};
+use std::{result::Result as StdResult, sync::Arc};
 
 use dashmap::DashMap;
 use faststr::FastStr;
 use serde::Serialize;
-use tokio::sync::RwLock;
 
 use crate::{
     storage::{VolumeError, VolumeId},
     topology::{
-        node::{Node, NodeImpl, NodeType},
+        node::{downcast_rack, Node, NodeImpl, NodeType},
         rack::{Rack, RackRef},
-        DataNodeRef, Topology,
+        DataNodeRef,
     },
 };
 
 #[derive(Serialize)]
 pub struct DataCenter {
     node: Arc<NodeImpl>,
-    // parent
-    #[serde(skip)]
-    pub topology: RwLock<Weak<Topology>>,
-    // children
-    #[serde(skip)]
-    pub racks: DashMap<FastStr, RackRef>,
 }
 
 impl DataCenter {
     pub fn new(id: FastStr) -> DataCenter {
         let node = Arc::new(NodeImpl::new(id));
-        Self {
-            node,
-            topology: RwLock::new(Weak::new()),
-            racks: DashMap::new(),
-        }
-    }
-
-    pub async fn set_topology(&self, topology: Weak<Topology>) {
-        *self.topology.write().await = topology;
+        Self { node }
     }
 
     pub async fn get_or_create_rack(&self, id: &str) -> RackRef {
-        match self.racks.get(id) {
-            Some(rack) => rack.value().clone(),
+        match self.children().get(id) {
+            Some(rack) => downcast_rack(rack.clone()).unwrap(),
             None => {
                 let rack = Arc::new(Rack::new(FastStr::new(id)));
                 self.link_rack(rack.clone()).await;

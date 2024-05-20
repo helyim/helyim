@@ -30,8 +30,9 @@ use crate::{
     topology::{
         collection::Collection,
         data_center::{DataCenter, DataCenterRef},
+        data_node::DataNode,
         erasure_coding::EcShardLocations,
-        node::{Node, NodeImpl, NodeType},
+        node::{downcast_data_center, Node, NodeImpl, NodeType},
         volume_grow::VolumeGrowOption,
         volume_layout::VolumeLayoutRef,
         DataNodeRef,
@@ -48,9 +49,6 @@ pub struct Topology {
     pub ec_shards: DashMap<VolumeId, EcShardLocations>,
     pulse: u64,
     volume_size_limit: u64,
-    // children
-    #[serde(skip)]
-    pub(crate) data_centers: DashMap<FastStr, DataCenterRef>,
 
     #[serde(skip)]
     raft: RwLock<Option<RaftServer>>,
@@ -65,7 +63,6 @@ impl Clone for Topology {
             ec_shards: self.ec_shards.clone(),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
-            data_centers: DashMap::new(),
             raft: RwLock::new(None),
         }
     }
@@ -81,14 +78,13 @@ impl Topology {
             ec_shards: DashMap::new(),
             pulse,
             volume_size_limit,
-            data_centers: DashMap::new(),
             raft: RwLock::new(None),
         }
     }
 
     pub async fn get_or_create_data_center(&self, name: &str) -> DataCenterRef {
-        match self.data_centers.get(name) {
-            Some(data_node) => data_node.value().clone(),
+        match self.children().get(name) {
+            Some(data_center) => downcast_data_center(data_center.clone()).unwrap(),
             None => {
                 let data_center = Arc::new(DataCenter::new(FastStr::new(name)));
                 self.link_data_center(data_center.clone()).await;
@@ -156,13 +152,13 @@ impl Topology {
         rack_name: &str,
         data_node: &DataNodeRef,
     ) {
-        if data_node.rack.read().await.upgrade().is_some() {
+        if data_node.parent().await.is_some() {
             return;
         }
         let dc = self.get_or_create_data_center(dc_name).await;
         let rack = dc.get_or_create_rack(rack_name).await;
         rack.link_data_node(data_node.clone()).await;
-        *data_node.rack.write().await = Arc::downgrade(&rack);
+        data_node.set_parent(Some(rack)).await;
         info!("data node: {} relink to topology", data_node.id());
     }
 
@@ -268,7 +264,7 @@ impl Topology {
         data_node
             .adjust_max_volume_count(-data_node.max_volume_count())
             .await;
-        if let Some(rack) = data_node.rack.read().await.upgrade() {
+        if let Some(rack) = data_node.parent().await {
             rack.unlink_child_node(data_node.id()).await;
         }
     }
@@ -400,20 +396,28 @@ impl Topology {
     pub fn to_volume_locations(&self) -> Vec<VolumeLocation> {
         let mut locations = Vec::new();
 
-        for data_center in self.data_centers.iter() {
-            for rack in data_center.racks.iter() {
-                for data_node in rack.data_nodes.iter() {
-                    let mut location = VolumeLocation::new();
-                    location.url = data_node.url();
-                    location.public_url = data_node.public_url.to_string();
+        for data_center in self.children().iter() {
+            for rack in data_center.children().iter() {
+                for data_node in rack.children().iter() {
+                    let data_node = data_node.value().clone();
+                    match data_node.downcast_arc::<DataNode>() {
+                        Ok(data_node) => {
+                            let mut location = VolumeLocation::new();
+                            location.url = data_node.url();
+                            location.public_url = data_node.public_url.to_string();
 
-                    for volume in data_node.volumes.iter() {
-                        location.new_vids.push(volume.id);
+                            for volume in data_node.volumes.iter() {
+                                location.new_vids.push(volume.id);
+                            }
+                            for volume in data_node.ec_shards.iter() {
+                                location.new_vids.push(volume.volume_id);
+                            }
+                            locations.push(location);
+                        }
+                        Err(data_node) => {
+                            error!("expect DataNode type but got {}", data_node.node_type())
+                        }
                     }
-                    for volume in data_node.ec_shards.iter() {
-                        location.new_vids.push(volume.volume_id);
-                    }
-                    locations.push(location);
                 }
             }
         }

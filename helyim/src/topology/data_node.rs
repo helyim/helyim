@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     result::Result as StdResult,
-    sync::{atomic::AtomicU64, Arc, Weak},
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use dashmap::{mapref::one::Ref, DashMap};
@@ -14,14 +14,10 @@ use helyim_proto::volume::{
     VacuumVolumeCompactResponse,
 };
 use serde::Serialize;
-use tokio::sync::RwLock;
 
 use crate::{
     storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
-    topology::{
-        node::{Node, NodeImpl, NodeType},
-        rack::Rack,
-    },
+    topology::node::{Node, NodeImpl, NodeType},
     util::grpc::volume_server_client,
 };
 
@@ -32,8 +28,7 @@ pub struct DataNode {
     pub public_url: FastStr,
     pub last_seen: i64,
     node: Arc<NodeImpl>,
-    #[serde(skip)]
-    pub rack: RwLock<Weak<Rack>>,
+
     pub volumes: DashMap<VolumeId, VolumeInfo>,
     pub ec_shards: DashMap<VolumeId, EcVolumeInfo>,
     pub ec_shard_count: AtomicU64,
@@ -68,7 +63,6 @@ impl DataNode {
             public_url,
             last_seen: 0,
             node,
-            rack: RwLock::new(Weak::new()),
             volumes: DashMap::new(),
             ec_shards: DashMap::new(),
             ec_shard_count: AtomicU64::new(0),
@@ -172,9 +166,6 @@ impl DataNode {
             }
         }
         FastStr::empty()
-    }
-    pub async fn set_rack(&self, rack: Weak<Rack>) {
-        *self.rack.write().await = rack;
     }
 }
 

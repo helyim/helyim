@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use faststr::FastStr;
 use rand::Rng;
@@ -5,7 +7,10 @@ use tracing::{debug, error};
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_center::DataCenterRef, node::Node, rack::RackRef, DataNodeRef, Topology},
+    topology::{
+        node::{downcast_node, Node},
+        DataNodeRef, Topology,
+    },
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -35,18 +40,18 @@ impl VolumeGrowth {
     ) -> Result<Vec<DataNodeRef>, VolumeError> {
         let mut ret = vec![];
 
-        let data_centers = &topology.data_centers;
+        let data_centers = topology.children();
         let (main_data_node, other_centers) = find_main_data_center(data_centers, option).await?;
 
-        let racks = &main_data_node.racks;
+        let racks = main_data_node.children();
         let (main_rack, other_racks) = find_main_rack(racks, option).await?;
 
-        let data_nodes = &main_rack.data_nodes;
+        let data_nodes = main_rack.children();
         let (main_dn, other_nodes) = find_main_node(data_nodes, option).await?;
 
-        ret.push(main_dn);
-        for nd in other_nodes.into_iter().flatten() {
-            ret.push(nd);
+        ret.push(downcast_node(main_dn)?);
+        for node in other_nodes.into_iter().flatten() {
+            ret.push(downcast_node(node)?);
         }
 
         for rack in other_racks.into_iter().flatten() {
@@ -149,9 +154,9 @@ pub struct VolumeGrowOption {
 }
 
 async fn find_main_data_center(
-    data_centers: &DashMap<FastStr, DataCenterRef>,
+    data_centers: &DashMap<FastStr, Arc<dyn Node>>,
     option: &VolumeGrowOption,
-) -> Result<(DataCenterRef, Vec<Option<DataCenterRef>>), VolumeError> {
+) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError> {
     let mut candidates = vec![];
     let rp = option.replica_placement;
 
@@ -159,7 +164,7 @@ async fn find_main_data_center(
         if !option.data_center.is_empty() && data_center.id() != option.data_center {
             continue;
         }
-        let racks_len = data_center.racks.len();
+        let racks_len = data_center.children().len();
         if racks_len < rp.diff_rack_count as usize + 1 {
             continue;
         }
@@ -167,9 +172,9 @@ async fn find_main_data_center(
             continue;
         }
         let mut possible_racks_count = 0;
-        for rack in data_center.racks.iter() {
+        for rack in data_center.children().iter() {
             let mut possible_nodes_count = 0;
-            for dn in rack.data_nodes.iter() {
+            for dn in rack.children().iter() {
                 if dn.free_space() >= 1 {
                     possible_nodes_count += 1;
                 }
@@ -238,9 +243,9 @@ async fn find_main_data_center(
 }
 
 async fn find_main_rack(
-    racks: &DashMap<FastStr, RackRef>,
+    racks: &DashMap<FastStr, Arc<dyn Node>>,
     option: &VolumeGrowOption,
-) -> Result<(RackRef, Vec<Option<RackRef>>), VolumeError> {
+) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError> {
     let mut candidates = vec![];
     let rp = option.replica_placement;
 
@@ -251,12 +256,12 @@ async fn find_main_rack(
         if rack.free_space() < rp.same_rack_count as i64 + 1 {
             continue;
         }
-        let data_nodes_len = rack.data_nodes.len();
+        let data_nodes_len = rack.children().len();
         if data_nodes_len < rp.same_rack_count as usize + 1 {
             continue;
         }
         let mut possible_nodes = 0;
-        for node in rack.data_nodes.iter() {
+        for node in rack.children().iter() {
             if node.free_space() >= 1 {
                 possible_nodes += 1;
             }
@@ -317,9 +322,9 @@ async fn find_main_rack(
 }
 
 async fn find_main_node(
-    data_nodes: &DashMap<FastStr, DataNodeRef>,
+    data_nodes: &DashMap<FastStr, Arc<dyn Node>>,
     option: &VolumeGrowOption,
-) -> Result<(DataNodeRef, Vec<Option<DataNodeRef>>), VolumeError> {
+) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError> {
     let mut candidates = vec![];
     let rp = option.replica_placement;
 
@@ -393,7 +398,7 @@ mod tests {
         storage::{ReplicaPlacement, VolumeId, VolumeInfo},
         topology::{
             data_node::DataNode,
-            node::Node,
+            node::{downcast_node, Node},
             topology::tests::setup_topo,
             volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
             DataNodeRef,
@@ -421,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_find_main_node() {
-        let data_nodes = DashMap::new();
+        let data_nodes: DashMap<FastStr, Arc<dyn Node>> = DashMap::new();
         data_nodes.insert(
             FastStr::new("127.0.0.1:8080"),
             data_node(0, "127.0.0.1", 8080),
@@ -443,6 +448,7 @@ mod tests {
 
         for _ in 0..1_000_000 {
             let (main_node, _rest_nodes) = find_main_node(&data_nodes, &option).await.unwrap();
+            let main_node = downcast_node(main_node).unwrap();
             if main_node.ip == "127.0.0.1" {
                 data_node1_cnt += 1;
             } else if main_node.ip == "127.0.0.2" {

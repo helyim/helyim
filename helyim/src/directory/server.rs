@@ -29,9 +29,10 @@ use crate::{
     raft::{create_raft_router, RaftServer},
     rt_spawn,
     sequence::Sequencer,
+    storage::VolumeError,
     topology::{
-        topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology, TopologyError,
-        TopologyRef,
+        node::Node, topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology,
+        TopologyError, TopologyRef,
     },
     util::{
         args::MasterOptions,
@@ -259,13 +260,16 @@ impl Helyim for DirectoryGrpcServer {
                                 .await;
                             }
                             None => {
-                                let data_node = update_topology(&heartbeat, &topology, addr).await;
-                                info!(
-                                    "register connected volume server: {}:{}",
-                                    data_node.ip, data_node.port
-                                );
+                                if let Ok(data_node) =
+                                    update_topology(&heartbeat, &topology, addr).await
+                                {
+                                    info!(
+                                        "register connected volume server: {}:{}",
+                                        data_node.ip, data_node.port
+                                    );
 
-                                data_node_opt = Some(data_node);
+                                    data_node_opt = Some(data_node);
+                                }
                             }
                         }
 
@@ -477,7 +481,7 @@ async fn update_topology(
     heartbeat: &HeartbeatRequest,
     topology: &TopologyRef,
     addr: SocketAddr,
-) -> DataNodeRef {
+) -> StdResult<DataNodeRef, VolumeError> {
     topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
@@ -488,10 +492,10 @@ async fn update_topology(
     let rack = get_or_default(&heartbeat.rack);
 
     let data_center = topology.get_or_create_data_center(&data_center).await;
-    data_center.set_topology(Arc::downgrade(topology)).await;
+    data_center.set_parent(Some(topology.clone())).await;
 
     let rack = data_center.get_or_create_rack(&rack).await;
-    rack.set_data_center(Arc::downgrade(&data_center)).await;
+    rack.set_parent(Some(data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let data_node = rack
@@ -503,8 +507,8 @@ async fn update_topology(
             heartbeat.max_volume_count as i64,
         )
         .await;
-    data_node.set_rack(Arc::downgrade(&rack)).await;
-    data_node
+    data_node.set_parent(Some(rack.clone())).await;
+    Ok(data_node)
 }
 
 async fn update_volume_layout(

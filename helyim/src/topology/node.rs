@@ -15,7 +15,12 @@ use tracing::info;
 
 use crate::{
     storage::{erasure_coding::DATA_SHARDS_COUNT, VolumeError, VolumeId},
-    topology::{data_node::DataNode, DataNodeRef},
+    topology::{
+        data_center::{DataCenter, DataCenterRef},
+        data_node::DataNode,
+        rack::{Rack, RackRef},
+        DataNodeRef,
+    },
 };
 
 pub type NodeId = FastStr;
@@ -121,7 +126,7 @@ impl Node for NodeImpl {
     }
 
     fn free_space(&self) -> i64 {
-        let mut free_volume_slot_count = self.max_volume_count() + self.volume_count();
+        let mut free_volume_slot_count = self.max_volume_count() - self.volume_count();
         if self.ec_shard_count() > 0 {
             free_volume_slot_count =
                 free_volume_slot_count - self.ec_shard_count() / DATA_SHARDS_COUNT as i64 - 1;
@@ -139,11 +144,7 @@ impl Node for NodeImpl {
                 rand -= free_space;
             } else {
                 if child.node_type().is_data_node() && child.free_space() > 0 {
-                    let child = child.value().clone();
-                    return match child.downcast_arc::<DataNode>() {
-                        Ok(child) => Ok(child),
-                        Err(_) => Err(VolumeError::NotDataNodeType),
-                    };
+                    return downcast_node(child.clone());
                 }
                 return child.reserve_one_volume(rand);
             }
@@ -347,4 +348,19 @@ macro_rules! impl_node {
             }
         }
     };
+}
+
+pub fn downcast_node(node: Arc<dyn Node>) -> Result<DataNodeRef, VolumeError> {
+    node.downcast_arc::<DataNode>()
+        .map_err(|_| VolumeError::WrongNodeType)
+}
+
+pub fn downcast_rack(node: Arc<dyn Node>) -> Result<RackRef, VolumeError> {
+    node.downcast_arc::<Rack>()
+        .map_err(|_| VolumeError::WrongNodeType)
+}
+
+pub fn downcast_data_center(node: Arc<dyn Node>) -> Result<DataCenterRef, VolumeError> {
+    node.downcast_arc::<DataCenter>()
+        .map_err(|_| VolumeError::WrongNodeType)
 }
