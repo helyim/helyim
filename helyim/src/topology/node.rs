@@ -236,7 +236,7 @@ impl Node for NodeImpl {
             child.set_parent(Some(self.clone())).await;
 
             let node_id = FastStr::new(child.id());
-            info!("add child {node_id}");
+            info!("add child {node_id}, node type: {}", child.node_type());
             self.children.insert(node_id, child);
         }
     }

@@ -121,6 +121,7 @@ mod tests {
 
     use axum::{body::Body, http::Request, routing::get, Router};
     use faststr::FastStr;
+    use futures::executor::block_on;
     use http_body_util::BodyExt as _;
     use hyper::Method;
     use hyper_util::{
@@ -155,7 +156,7 @@ mod tests {
             .enable_tokio_io()
             .build();
 
-        let topo = crate::topology::tests::setup_topo();
+        let topo = block_on(crate::topology::tests::setup_topo());
 
         let options = MasterOptions {
             ip: FastStr::new("127.0.0.1"),
@@ -262,6 +263,7 @@ mod tests {
         let body = body.collect().await.unwrap().to_bytes();
         let res = hyper::Response::from_parts(parts, body);
 
+        println!("{:?}", res);
         serde_json::from_slice::<T>(res.body()).unwrap()
     }
 }

@@ -469,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_find_empty_slots() {
-        let topo = setup_topo();
+        let topo = setup_topo().await;
         let vg = VolumeGrowth {};
         let rp = ReplicaPlacement::new("002").unwrap();
 
