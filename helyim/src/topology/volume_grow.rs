@@ -41,9 +41,8 @@ impl VolumeGrowth {
         let mut ret = vec![];
         let rp = option.replica_placement;
 
-        let data_centers = topology.children();
-        let (main_data_node, other_centers) = randomly_pick_nodes(
-            data_centers,
+        let (main_data_center, other_centers) = randomly_pick_nodes(
+            topology.children(),
             |node| {
                 if !option.data_center.is_empty() && node.id() != option.data_center {
                     return false;
@@ -72,13 +71,12 @@ impl VolumeGrowth {
                 }
                 true
             },
-            option,
+            rp.diff_data_center_count as usize,
         )
         .await?;
 
-        let racks = main_data_node.children();
         let (main_rack, other_racks) = randomly_pick_nodes(
-            racks,
+            main_data_center.children(),
             |node| {
                 if !option.rack.is_empty() && option.rack != node.id() {
                     return false;
@@ -101,13 +99,12 @@ impl VolumeGrowth {
                 }
                 true
             },
-            option,
+            rp.diff_rack_count as usize,
         )
         .await?;
 
-        let data_nodes = main_rack.children();
         let (main_dn, other_nodes) = randomly_pick_nodes(
-            data_nodes,
+            main_rack.children(),
             |node| {
                 let node_id = node.id();
                 if !option.data_node.is_empty() && option.data_node != *node_id {
@@ -118,7 +115,7 @@ impl VolumeGrowth {
                 }
                 true
             },
-            option,
+            rp.same_rack_count as usize,
         )
         .await?;
 
@@ -229,13 +226,12 @@ pub struct VolumeGrowOption {
 async fn randomly_pick_nodes<F>(
     children: &DashMap<FastStr, Arc<dyn Node>>,
     filter: F,
-    option: &VolumeGrowOption,
+    nodes_num: usize,
 ) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError>
 where
     F: Fn(&Arc<dyn Node>) -> bool,
 {
     let mut candidates = vec![];
-    let rp = option.replica_placement;
 
     for node in children.iter() {
         if filter(node.value()) {
@@ -253,7 +249,7 @@ where
     let main_dn = candidates[first_idx].clone();
     debug!("picked main node: {}", main_dn.id());
 
-    let mut rest_nodes = vec![None; rp.same_rack_count as usize];
+    let mut rest_nodes = vec![None; nodes_num];
     candidates = vec![];
 
     for node in children.iter() {
@@ -284,7 +280,7 @@ where
     }
 
     if !ret {
-        error!("failed to pick {} node from rest", rp.same_rack_count);
+        error!("failed to pick {nodes_num} node from rest");
         return Err(VolumeError::NoFreeSpace(
             "not enough node found".to_string(),
         ));
