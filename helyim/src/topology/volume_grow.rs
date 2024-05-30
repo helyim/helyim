@@ -29,9 +29,9 @@ impl VolumeGrowth {
     }
 
     /// 1. find the main data node
-    ///     1.1 collect all data nodes that have 1 slots
-    ///     2.2 collect all racks that have rp.SameRackCount+1
-    ///     2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
+    ///  1.1 collect all data nodes that have 1 slots
+    ///  2.2 collect all racks that have rp.SameRackCount+1
+    ///  2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
     /// 2. find rest data nodes
     async fn find_empty_slots(
         &self,
