@@ -47,7 +47,10 @@ pub async fn favicon_handler<'a>() -> Result<&'a [u8]> {
 
 pub static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(10))
         .pool_idle_timeout(Duration::from_secs(30))
+        .http2_keep_alive_timeout(Duration::from_secs(60))
         .build()
         .expect("HTTP CLIENT initialize failed")
 });

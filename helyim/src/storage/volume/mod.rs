@@ -721,6 +721,8 @@ pub enum VolumeError {
     VolumeSizeLimit(u64, u64),
     #[error("Wrong node type")]
     WrongNodeType,
+    #[error("Master not found")]
+    MasterNotFound,
 
     // heartbeat
     #[error("Start heartbeat failed.")]
