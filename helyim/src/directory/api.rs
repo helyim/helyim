@@ -138,7 +138,7 @@ mod tests {
             api::{assign_handler, cluster_status_handler, dir_status_handler, lookup_handler},
             DirectoryState,
         },
-        operation::{lookup::Lookup, Assignment},
+        operation::{Assignment},
         topology::volume_grow::VolumeGrowth,
         util::{
             args::{MasterOptions, RaftOptions},

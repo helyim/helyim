@@ -190,7 +190,7 @@ fn encode_data_one_batch(
         }
     }
 
-    reed_solomon.encode(&mut bufs)?;
+    reed_solomon.encode(bufs)?;
 
     for (i, output) in outputs.iter_mut().enumerate() {
         output.write_all(&bufs[i])?;
