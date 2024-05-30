@@ -364,3 +364,180 @@ pub fn downcast_data_center(node: Arc<dyn Node>) -> Result<DataCenterRef, Volume
     node.downcast_arc::<DataCenter>()
         .map_err(|_| VolumeError::WrongNodeType)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::topology::{node::Node, tests::setup_topo};
+
+    #[tokio::test]
+    pub async fn test_node() {
+        let topo = setup_topo().await;
+        assert_eq!(topo.active_volume_count(), 15);
+        assert_eq!(topo.volume_count(), 15);
+        assert_eq!(topo.max_volume_count(), 30);
+        assert_eq!(topo.ec_shard_count(), 0);
+
+        for child in topo.children().iter() {
+            let dc = child.key().as_str();
+
+            match dc {
+                "dc1" => {
+                    assert_eq!(child.volume_count(), 12);
+                    assert_eq!(child.max_volume_count(), 26);
+                    assert_eq!(child.active_volume_count(), 12);
+                    assert_eq!(child.ec_shard_count(), 0);
+                }
+                "dc2" => {
+                    assert_eq!(child.volume_count(), 0);
+                    assert_eq!(child.max_volume_count(), 0);
+                    assert_eq!(child.active_volume_count(), 0);
+                    assert_eq!(child.ec_shard_count(), 0);
+                }
+                "dc3" => {
+                    assert_eq!(child.volume_count(), 3);
+                    assert_eq!(child.max_volume_count(), 4);
+                    assert_eq!(child.active_volume_count(), 3);
+                    assert_eq!(child.ec_shard_count(), 0);
+                }
+                _ => {
+                    panic!("should not be here.");
+                }
+            }
+
+            for child in child.children().iter() {
+                let rack = child.key().as_str();
+
+                match rack {
+                    "rack11" => {
+                        assert_eq!(child.volume_count(), 6);
+                        assert_eq!(child.max_volume_count(), 13);
+                        assert_eq!(child.active_volume_count(), 6);
+                        assert_eq!(child.ec_shard_count(), 0);
+                    }
+                    "rack12" => {
+                        assert_eq!(child.volume_count(), 6);
+                        assert_eq!(child.max_volume_count(), 13);
+                        assert_eq!(child.active_volume_count(), 6);
+                        assert_eq!(child.ec_shard_count(), 0);
+                    }
+                    "rack32" => {
+                        assert_eq!(child.volume_count(), 3);
+                        assert_eq!(child.max_volume_count(), 4);
+                        assert_eq!(child.active_volume_count(), 3);
+                        assert_eq!(child.ec_shard_count(), 0);
+                    }
+                    _ => {
+                        panic!("should not be here.");
+                    }
+                }
+
+                for child in child.children().iter() {
+                    let data_node = child.key().as_str();
+
+                    match data_node {
+                        "server111" => {
+                            assert_eq!(child.volume_count(), 3);
+                            assert_eq!(child.max_volume_count(), 3);
+                            assert_eq!(child.active_volume_count(), 3);
+                            assert_eq!(child.ec_shard_count(), 0);
+
+                            child.adjust_volume_count(-1).await;
+                        }
+                        "server112" => {
+                            assert_eq!(child.volume_count(), 3);
+                            assert_eq!(child.max_volume_count(), 10);
+                            assert_eq!(child.active_volume_count(), 3);
+                            assert_eq!(child.ec_shard_count(), 0);
+
+                            child.adjust_active_volume_count(-1).await;
+                        }
+                        "server121" => {
+                            assert_eq!(child.volume_count(), 3);
+                            assert_eq!(child.max_volume_count(), 4);
+                            assert_eq!(child.active_volume_count(), 3);
+                            assert_eq!(child.ec_shard_count(), 0);
+
+                            child.adjust_ec_shard_count(1).await;
+                        }
+                        "server122" => {
+                            assert_eq!(child.volume_count(), 0);
+                            assert_eq!(child.max_volume_count(), 4);
+                            assert_eq!(child.active_volume_count(), 0);
+                            assert_eq!(child.ec_shard_count(), 0);
+
+                            child.adjust_max_volume_count(4).await;
+                        }
+                        "server123" => {
+                            assert_eq!(child.volume_count(), 3);
+                            assert_eq!(child.max_volume_count(), 5);
+                            assert_eq!(child.active_volume_count(), 3);
+                            assert_eq!(child.ec_shard_count(), 0);
+                        }
+                        "server321" => {
+                            assert_eq!(child.volume_count(), 3);
+                            assert_eq!(child.max_volume_count(), 4);
+                            assert_eq!(child.active_volume_count(), 3);
+                            assert_eq!(child.ec_shard_count(), 0);
+                        }
+                        _ => {
+                            panic!("should not be here.");
+                        }
+                    }
+                }
+
+                match rack {
+                    "rack11" => {
+                        assert_eq!(child.volume_count(), 5);
+                        assert_eq!(child.max_volume_count(), 13);
+                        assert_eq!(child.active_volume_count(), 5);
+                        assert_eq!(child.ec_shard_count(), 0);
+                    }
+                    "rack12" => {
+                        assert_eq!(child.volume_count(), 6);
+                        assert_eq!(child.max_volume_count(), 17);
+                        assert_eq!(child.active_volume_count(), 6);
+                        assert_eq!(child.ec_shard_count(), 1);
+                    }
+                    "rack32" => {
+                        assert_eq!(child.volume_count(), 3);
+                        assert_eq!(child.max_volume_count(), 4);
+                        assert_eq!(child.active_volume_count(), 3);
+                        assert_eq!(child.ec_shard_count(), 0);
+                    }
+                    _ => {
+                        panic!("should not be here.");
+                    }
+                }
+            }
+
+            match dc {
+                "dc1" => {
+                    assert_eq!(child.volume_count(), 11);
+                    assert_eq!(child.max_volume_count(), 30);
+                    assert_eq!(child.active_volume_count(), 11);
+                    assert_eq!(child.ec_shard_count(), 1);
+                }
+                "dc2" => {
+                    assert_eq!(child.volume_count(), 0);
+                    assert_eq!(child.max_volume_count(), 0);
+                    assert_eq!(child.active_volume_count(), 0);
+                    assert_eq!(child.ec_shard_count(), 0);
+                }
+                "dc3" => {
+                    assert_eq!(child.volume_count(), 3);
+                    assert_eq!(child.max_volume_count(), 4);
+                    assert_eq!(child.active_volume_count(), 3);
+                    assert_eq!(child.ec_shard_count(), 0);
+                }
+                _ => {
+                    panic!("should not be here.");
+                }
+            }
+        }
+
+        assert_eq!(topo.active_volume_count(), 14);
+        assert_eq!(topo.volume_count(), 14);
+        assert_eq!(topo.max_volume_count(), 34);
+        assert_eq!(topo.ec_shard_count(), 1);
+    }
+}
