@@ -21,7 +21,6 @@ use tracing::{debug, error, info};
 
 use crate::{
     raft::{types::NodeId, RaftServer},
-    rt_spawn,
     sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
@@ -278,7 +277,7 @@ impl Topology {
         let next = vid + 1;
         if let Some(raft) = self.raft.read().await.as_ref() {
             let raft = raft.clone();
-            rt_spawn(async move {
+            tokio::spawn(async move {
                 if let Err(err) = raft.set_max_volume_id(next).await {
                     error!("set max volume id failed, error: {err}");
                 }

@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
-    anyhow, rt_spawn,
+    anyhow,
     storage::{
         erasure_coding::EcVolume,
         needle::NeedleMapType,
@@ -59,7 +59,7 @@ impl DiskLocation {
                     let dir = self.directory.clone();
                     let collection = FastStr::new(collection);
 
-                    let handle = rt_spawn(async move {
+                    let handle = tokio::spawn(async move {
                         let volume = Volume::new(
                             dir,
                             collection,

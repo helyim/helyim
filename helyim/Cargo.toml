@@ -60,7 +60,6 @@ sonyflake.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
-tokio-uring = { workspace = true, optional = true }
 tonic.workspace = true
 tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
 tracing.workspace = true
@@ -83,10 +82,6 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tower.workspace = true
 turmoil.workspace = true
-
-[features]
-default = []
-iouring = ["tokio-uring"]
 
 [[bench]]
 name = "read_upload_files"

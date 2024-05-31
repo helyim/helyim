@@ -27,7 +27,6 @@ use crate::{
     },
     errors::Result,
     raft::{create_raft_router, RaftServer},
-    rt_spawn,
     sequence::Sequencer,
     storage::VolumeError,
     topology::{
@@ -71,7 +70,7 @@ impl DirectoryServer {
             master_opts.pulse,
         ));
 
-        rt_spawn(topology_vacuum_loop(
+        tokio::spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
             volume_size_limit_mb * (1 << 20),
@@ -89,7 +88,7 @@ impl DirectoryServer {
         };
 
         let addr = format!("{}:{}", master.options.ip, grpc_port(master.options.port)).parse()?;
-        rt_spawn(async move {
+        tokio::spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(HelyimServer::new(DirectoryGrpcServer {
@@ -132,7 +131,7 @@ impl DirectoryServer {
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
-        rt_spawn(start_directory_server(
+        tokio::spawn(start_directory_server(
             state,
             addr,
             shutdown_rx,
@@ -144,7 +143,7 @@ impl DirectoryServer {
             .await?;
 
         let master_client = self.master_client.clone();
-        rt_spawn(async move {
+        tokio::spawn(async move {
             master_client.keep_connected_to_master().await;
         });
         Ok(())

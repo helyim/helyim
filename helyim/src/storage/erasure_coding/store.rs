@@ -18,7 +18,6 @@ use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
 use tracing::{error, info};
 
 use crate::{
-    rt_spawn,
     storage::{
         erasure_coding::{
             add_shard_id, volume::EcVolume, EcShardError, EcVolumeError, EcVolumeShard, Interval,
@@ -417,7 +416,7 @@ impl Store {
 
         let (tx, mut rx) = channel(ec_volume.shard_locations.len());
 
-        let reconstruct = rt_spawn(async move {
+        let reconstruct = tokio::spawn(async move {
             let mut is_deleted = false;
             while let Some((shard_id, data, if_deleted)) = rx.next().await {
                 bufs[shard_id as usize] = Some(data);
