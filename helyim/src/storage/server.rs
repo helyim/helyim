@@ -34,7 +34,6 @@ use crate::{
     errors::Result,
     operation::{list_master, Looker},
     proto::save_volume_info,
-    rt_spawn,
     storage::{
         api::{
             delete_handler,
@@ -103,7 +102,7 @@ impl VolumeServer {
             shutdown,
         };
 
-        rt_spawn(Self::heartbeat(
+        tokio::spawn(Self::heartbeat(
             store.clone(),
             storage.seed_master_nodes.clone(),
             storage.options.pulse,
@@ -111,7 +110,7 @@ impl VolumeServer {
             storage.shutdown.new_receiver(),
         ));
 
-        rt_spawn(async move {
+        tokio::spawn(async move {
             info!("volume grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(VolumeServerServer::new(StorageGrpcServer {
@@ -153,7 +152,7 @@ impl VolumeServer {
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
 
-        rt_spawn(start_volume_server(state, addr, shutdown_rx));
+        tokio::spawn(start_volume_server(state, addr, shutdown_rx));
 
         Ok(())
     }

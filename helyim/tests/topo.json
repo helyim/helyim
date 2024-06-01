@@ -1,6 +1,6 @@
 {
   "dc1":{
-    "rack1":{
+    "rack11":{
       "server111":{
         "volumes":[
           {"id":1, "size":12312},
@@ -18,7 +18,7 @@
         "limit":10
       }
     },
-    "rack2":{
+    "rack12":{
       "server121":{
         "volumes":[
           {"id":4, "size":12312},
@@ -44,7 +44,7 @@
   "dc2":{
   },
   "dc3":{
-    "rack2":{
+    "rack32":{
       "server321":{
         "volumes":[
           {"id":1, "size":12312},

@@ -719,6 +719,10 @@ pub enum VolumeError {
     NoFreeSpace(String),
     #[error("Volume size limit {0} exceeded, current size is {1}")]
     VolumeSizeLimit(u64, u64),
+    #[error("Wrong node type")]
+    WrongNodeType,
+    #[error("Master not found")]
+    MasterNotFound,
 
     // heartbeat
     #[error("Start heartbeat failed.")]

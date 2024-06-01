@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use faststr::FastStr;
 use rand::Rng;
@@ -5,7 +7,10 @@ use tracing::{debug, error};
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_center::DataCenterRef, rack::RackRef, DataNodeRef, Topology},
+    topology::{
+        node::{downcast_node, Node},
+        DataNodeRef, Topology,
+    },
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -23,41 +28,113 @@ impl VolumeGrowth {
         }
     }
 
-    /// 1. find the main data node
-    /// 1.1 collect all data nodes that have 1 slots
-    /// 2.2 collect all racks that have rp.SameRackCount+1
-    /// 2.2 collect all data centers that have DiffRackCount+rp.SameRackCount+1
-    /// 2. find rest data nodes
+    /// # 1. find the main data node
+    ///
+    /// - 1.1 collect all data nodes that have 1 slots
+    /// - 2.2 collect all racks that have rp.SameRackCount+1
+    /// - 2.3 collect all data centers that have DiffRackCount+rp.SameRackCount+1
+    ///
+    /// # 2. find rest data nodes
     async fn find_empty_slots(
         &self,
         option: &VolumeGrowOption,
         topology: &Topology,
     ) -> Result<Vec<DataNodeRef>, VolumeError> {
         let mut ret = vec![];
+        let rp = option.replica_placement;
 
-        let data_centers = &topology.data_centers;
-        let (main_data_node, other_centers) = find_main_data_center(data_centers, option).await?;
+        let (main_data_center, other_centers) = randomly_pick_nodes(
+            topology.children(),
+            |node| {
+                if !option.data_center.is_empty() && node.id() != option.data_center {
+                    return false;
+                }
+                let racks_len = node.children().len();
+                if racks_len < rp.diff_rack_count as usize + 1 {
+                    return false;
+                }
+                if node.free_space() < (rp.diff_rack_count + rp.same_rack_count) as i64 + 1 {
+                    return false;
+                }
+                let mut possible_racks_count = 0;
+                for rack in node.children().iter() {
+                    let mut possible_nodes_count = 0;
+                    for dn in rack.children().iter() {
+                        if dn.free_space() >= 1 {
+                            possible_nodes_count += 1;
+                        }
+                    }
+                    if possible_nodes_count > rp.same_rack_count {
+                        possible_racks_count += 1;
+                    }
+                }
+                if possible_racks_count < rp.diff_rack_count + 1 {
+                    return false;
+                }
+                true
+            },
+            rp.diff_data_center_count as usize,
+        )
+        .await?;
 
-        let racks = &main_data_node.racks;
-        let (main_rack, other_racks) = find_main_rack(racks, option).await?;
+        let (main_rack, other_racks) = randomly_pick_nodes(
+            main_data_center.children(),
+            |node| {
+                if !option.rack.is_empty() && option.rack != node.id() {
+                    return false;
+                }
+                if node.free_space() < rp.same_rack_count as i64 + 1 {
+                    return false;
+                }
+                let data_nodes_len = node.children().len();
+                if data_nodes_len < rp.same_rack_count as usize + 1 {
+                    return false;
+                }
+                let mut possible_nodes = 0;
+                for node in node.children().iter() {
+                    if node.free_space() >= 1 {
+                        possible_nodes += 1;
+                    }
+                }
+                if possible_nodes < rp.same_rack_count as usize + 1 {
+                    return false;
+                }
+                true
+            },
+            rp.diff_rack_count as usize,
+        )
+        .await?;
 
-        let data_nodes = &main_rack.data_nodes;
-        let (main_dn, other_nodes) = find_main_node(data_nodes, option).await?;
+        let (main_dn, other_nodes) = randomly_pick_nodes(
+            main_rack.children(),
+            |node| {
+                let node_id = node.id();
+                if !option.data_node.is_empty() && option.data_node != *node_id {
+                    return false;
+                }
+                if node.free_space() < 1 {
+                    return false;
+                }
+                true
+            },
+            rp.same_rack_count as usize,
+        )
+        .await?;
 
-        ret.push(main_dn);
-        for nd in other_nodes.into_iter().flatten() {
-            ret.push(nd);
+        ret.push(downcast_node(main_dn)?);
+        for node in other_nodes.into_iter().flatten() {
+            ret.push(downcast_node(node)?);
         }
 
         for rack in other_racks.into_iter().flatten() {
             let random = rand::thread_rng().gen_range(0..rack.free_space());
-            let node = rack.reserve_one_volume(random).await?;
+            let node = rack.reserve_one_volume(random)?;
             ret.push(node);
         }
 
         for dc in other_centers.into_iter().flatten() {
             let random = rand::thread_rng().gen_range(0..dc.free_space());
-            let node = dc.reserve_one_volume(random).await?;
+            let node = dc.reserve_one_volume(random)?;
             ret.push(node);
         }
 
@@ -148,205 +225,37 @@ pub struct VolumeGrowOption {
     pub data_node: FastStr,
 }
 
-async fn find_main_data_center(
-    data_centers: &DashMap<FastStr, DataCenterRef>,
-    option: &VolumeGrowOption,
-) -> Result<(DataCenterRef, Vec<Option<DataCenterRef>>), VolumeError> {
+async fn randomly_pick_nodes<F>(
+    children: &DashMap<FastStr, Arc<dyn Node>>,
+    filter: F,
+    nodes_num: usize,
+) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError>
+where
+    F: Fn(&Arc<dyn Node>) -> bool,
+{
     let mut candidates = vec![];
-    let rp = option.replica_placement;
 
-    for data_center in data_centers.iter() {
-        if !option.data_center.is_empty() && data_center.id() != option.data_center {
-            continue;
-        }
-        let racks_len = data_center.racks.len();
-        if racks_len < rp.diff_rack_count as usize + 1 {
-            continue;
-        }
-        if data_center.free_space() < (rp.diff_rack_count + rp.same_rack_count) as i64 + 1 {
-            continue;
-        }
-        let mut possible_racks_count = 0;
-        for rack in data_center.racks.iter() {
-            let mut possible_nodes_count = 0;
-            for dn in rack.data_nodes.iter() {
-                if dn.free_space() >= 1 {
-                    possible_nodes_count += 1;
-                }
-            }
-            if possible_nodes_count > rp.same_rack_count {
-                possible_racks_count += 1;
-            }
-        }
-        if possible_racks_count < rp.diff_rack_count + 1 {
-            continue;
-        }
-        candidates.push(data_center.clone());
-    }
-
-    if candidates.is_empty() {
-        return Err(VolumeError::NoFreeSpace(
-            "find main data center failed".to_string(),
-        ));
-    }
-
-    let first_idx = rand::thread_rng().gen_range(0..candidates.len());
-    let main_dc = candidates[first_idx].clone();
-    debug!("picked main data center: {}", main_dc.id());
-
-    let mut rest_nodes = vec![None; rp.diff_data_center_count as usize];
-    candidates = vec![];
-
-    for dc in data_centers.iter() {
-        if dc.id == main_dc.id {
-            continue;
-        }
-        if dc.free_space() <= 0 {
-            continue;
-        }
-        candidates.push(dc.clone());
-    }
-
-    let mut rng = rand::thread_rng();
-    let mut ret = rest_nodes.is_empty();
-
-    for (i, data_center) in candidates.iter().enumerate() {
-        if i < rest_nodes.len() {
-            rest_nodes[i] = Some(data_center.clone());
-            if i == rest_nodes.len() - 1 {
-                ret = true;
-            }
+    for node in children.iter() {
+        if filter(node.value()) {
+            candidates.push(node.clone());
         } else {
-            let r = rng.gen_range(0..(i + 1));
-            if r < rest_nodes.len() {
-                rest_nodes[r] = Some(data_center.clone());
-            }
-        }
-    }
-
-    if !ret {
-        error!(
-            "failed to pick {} data center from rest",
-            rp.diff_data_center_count
-        );
-        return Err(VolumeError::NoFreeSpace(
-            "not enough data center found".to_string(),
-        ));
-    }
-
-    Ok((main_dc, rest_nodes))
-}
-
-async fn find_main_rack(
-    racks: &DashMap<FastStr, RackRef>,
-    option: &VolumeGrowOption,
-) -> Result<(RackRef, Vec<Option<RackRef>>), VolumeError> {
-    let mut candidates = vec![];
-    let rp = option.replica_placement;
-
-    for rack in racks.iter() {
-        if !option.rack.is_empty() && option.rack != rack.id {
             continue;
         }
-        if rack.free_space() < rp.same_rack_count as i64 + 1 {
-            continue;
-        }
-        let data_nodes_len = rack.data_nodes.len();
-        if data_nodes_len < rp.same_rack_count as usize + 1 {
-            continue;
-        }
-        let mut possible_nodes = 0;
-        for node in rack.data_nodes.iter() {
-            if node.free_space() >= 1 {
-                possible_nodes += 1;
-            }
-        }
-        if possible_nodes < rp.same_rack_count as usize + 1 {
-            continue;
-        }
-        candidates.push(rack.clone());
-    }
-
-    if candidates.is_empty() {
-        return Err(VolumeError::NoFreeSpace(
-            "find main rack failed".to_string(),
-        ));
-    }
-
-    let first_idx = rand::thread_rng().gen_range(0..candidates.len());
-    let main_rack = candidates[first_idx].clone();
-    debug!("picked main rack: {}", main_rack.id());
-
-    let mut rest_nodes = vec![None; rp.diff_rack_count as usize];
-    candidates = vec![];
-
-    for rack in racks.iter() {
-        if rack.id == main_rack.id {
-            continue;
-        }
-        if rack.free_space() <= 0 {
-            continue;
-        }
-        candidates.push(rack.clone());
-    }
-
-    let mut rng = rand::thread_rng();
-    let mut ret = rest_nodes.is_empty();
-
-    for (i, rack) in candidates.iter().enumerate() {
-        if i < rest_nodes.len() {
-            rest_nodes[i] = Some(rack.clone());
-            if i == rest_nodes.len() - 1 {
-                ret = true;
-            }
-        } else {
-            let r = rng.gen_range(0..(i + 1));
-            if r < rest_nodes.len() {
-                rest_nodes[r] = Some(rack.clone());
-            }
-        }
-    }
-
-    if !ret {
-        error!("failed to pick {} rack from rest", rp.diff_rack_count);
-        return Err(VolumeError::NoFreeSpace(
-            "not enough rack found".to_string(),
-        ));
-    }
-    Ok((main_rack, rest_nodes))
-}
-
-async fn find_main_node(
-    data_nodes: &DashMap<FastStr, DataNodeRef>,
-    option: &VolumeGrowOption,
-) -> Result<(DataNodeRef, Vec<Option<DataNodeRef>>), VolumeError> {
-    let mut candidates = vec![];
-    let rp = option.replica_placement;
-
-    for node in data_nodes.iter() {
-        let node_id = node.key();
-        if !option.data_node.is_empty() && option.data_node != *node_id {
-            continue;
-        }
-        if node.free_space() < 1 {
-            continue;
-        }
-        candidates.push(node.clone());
     }
     if candidates.is_empty() {
         return Err(VolumeError::NoFreeSpace(
-            "find main data node failed".to_string(),
+            "find main node failed".to_string(),
         ));
     }
     let first_idx = rand::thread_rng().gen_range(0..candidates.len());
     let main_dn = candidates[first_idx].clone();
-    debug!("picked main data node: {}", main_dn.id());
+    debug!("picked main node: {}", main_dn.id());
 
-    let mut rest_nodes = vec![None; rp.same_rack_count as usize];
+    let mut rest_nodes = vec![None; nodes_num];
     candidates = vec![];
 
-    for node in data_nodes.iter() {
-        if node.id == main_dn.id {
+    for node in children.iter() {
+        if node.id() == main_dn.id() {
             continue;
         }
         if node.free_space() <= 0 {
@@ -373,9 +282,9 @@ async fn find_main_node(
     }
 
     if !ret {
-        error!("failed to pick {} data node from rest", rp.same_rack_count);
+        error!("failed to pick {nodes_num} node from rest");
         return Err(VolumeError::NoFreeSpace(
-            "not enough data node found".to_string(),
+            "not enough node found".to_string(),
         ));
     }
 
@@ -393,8 +302,9 @@ mod tests {
         storage::{ReplicaPlacement, VolumeId, VolumeInfo},
         topology::{
             data_node::DataNode,
+            node::{downcast_node, Node},
             topology::tests::setup_topo,
-            volume_grow::{find_main_node, VolumeGrowOption, VolumeGrowth},
+            volume_grow::{randomly_pick_nodes, VolumeGrowOption, VolumeGrowth},
             DataNodeRef,
         },
     };
@@ -420,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_find_main_node() {
-        let data_nodes = DashMap::new();
+        let data_nodes: DashMap<FastStr, Arc<dyn Node>> = DashMap::new();
         data_nodes.insert(
             FastStr::new("127.0.0.1:8080"),
             data_node(0, "127.0.0.1", 8080),
@@ -441,7 +351,23 @@ mod tests {
         let mut data_node3_cnt = 0;
 
         for _ in 0..1_000_000 {
-            let (main_node, _rest_nodes) = find_main_node(&data_nodes, &option).await.unwrap();
+            let (main_node, _rest_nodes) = randomly_pick_nodes(
+                &data_nodes,
+                |node| {
+                    let node_id = node.id();
+                    if !option.data_node.is_empty() && option.data_node != *node_id {
+                        return false;
+                    }
+                    if node.free_space() < 1 {
+                        return false;
+                    }
+                    true
+                },
+                option.replica_placement.same_rack_count as usize,
+            )
+            .await
+            .unwrap();
+            let main_node = downcast_node(main_node).unwrap();
             if main_node.ip == "127.0.0.1" {
                 data_node1_cnt += 1;
             } else if main_node.ip == "127.0.0.2" {
@@ -462,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_find_empty_slots() {
-        let topo = setup_topo();
+        let topo = setup_topo().await;
         let vg = VolumeGrowth {};
         let rp = ReplicaPlacement::new("002").unwrap();
 
@@ -476,7 +402,7 @@ mod tests {
 
         assert_eq!(servers.len(), 3);
         for server in servers {
-            println!("assigned node: {}", server.id);
+            println!("assigned node: {}", server.id());
         }
     }
 }

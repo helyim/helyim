@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_node::DataNodeRef, volume_grow::VolumeGrowOption},
+    topology::{data_node::DataNodeRef, node::Node, volume_grow::VolumeGrowOption},
 };
 
 #[derive(Serialize)]

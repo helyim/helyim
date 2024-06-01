@@ -35,13 +35,13 @@ Helyim uses HTTP REST operations to read, write, and delete. The responses are i
 #### 1. Start Master Server
 
 ```shell
-cargo run --bin helyim master
+cargo run --release --bin helyim master
 ```
 
 #### 2. Start Volume Servers
 
 ```shell
-cargo run --bin helyim volume --port 8080 --folders ./vdata:10
+cargo run --release --bin helyim volume --port 8080 --folders ./target
 ```
 
 #### 3. Write File

@@ -27,11 +27,11 @@ use crate::{
     },
     errors::Result,
     raft::{create_raft_router, RaftServer},
-    rt_spawn,
     sequence::Sequencer,
+    storage::VolumeError,
     topology::{
-        topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology, TopologyError,
-        TopologyRef,
+        node::Node, topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology,
+        TopologyError, TopologyRef,
     },
     util::{
         args::MasterOptions,
@@ -70,7 +70,7 @@ impl DirectoryServer {
             master_opts.pulse,
         ));
 
-        rt_spawn(topology_vacuum_loop(
+        tokio::spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
             volume_size_limit_mb * (1 << 20),
@@ -88,7 +88,7 @@ impl DirectoryServer {
         };
 
         let addr = format!("{}:{}", master.options.ip, grpc_port(master.options.port)).parse()?;
-        rt_spawn(async move {
+        tokio::spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
                 .add_service(HelyimServer::new(DirectoryGrpcServer {
@@ -131,7 +131,7 @@ impl DirectoryServer {
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
-        rt_spawn(start_directory_server(
+        tokio::spawn(start_directory_server(
             state,
             addr,
             shutdown_rx,
@@ -143,7 +143,7 @@ impl DirectoryServer {
             .await?;
 
         let master_client = self.master_client.clone();
-        rt_spawn(async move {
+        tokio::spawn(async move {
             master_client.keep_connected_to_master().await;
         });
         Ok(())
@@ -250,22 +250,28 @@ impl Helyim for DirectoryGrpcServer {
 
                         match data_node_opt.as_ref() {
                             Some(data_node) => {
-                                update_volume_layout(
+                                if let Err(err) = update_volume_layout(
                                     &heartbeat,
                                     &topology,
                                     &client_chans,
                                     data_node,
                                 )
-                                .await;
+                                .await
+                                {
+                                    error!("update volume layout error: {err}");
+                                }
                             }
                             None => {
-                                let data_node = update_topology(&heartbeat, &topology, addr).await;
-                                info!(
-                                    "register connected volume server: {}:{}",
-                                    data_node.ip, data_node.port
-                                );
+                                if let Ok(data_node) =
+                                    update_topology(&heartbeat, &topology, addr).await
+                                {
+                                    info!(
+                                        "register connected volume server: {}:{}",
+                                        data_node.ip, data_node.port
+                                    );
 
-                                data_node_opt = Some(data_node);
+                                    data_node_opt = Some(data_node);
+                                }
                             }
                         }
 
@@ -477,7 +483,7 @@ async fn update_topology(
     heartbeat: &HeartbeatRequest,
     topology: &TopologyRef,
     addr: SocketAddr,
-) -> DataNodeRef {
+) -> StdResult<DataNodeRef, VolumeError> {
     topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
@@ -487,11 +493,11 @@ async fn update_topology(
     let data_center = get_or_default(&heartbeat.data_center);
     let rack = get_or_default(&heartbeat.rack);
 
-    let data_center = topology.get_or_create_data_center(&data_center).await;
-    data_center.set_topology(Arc::downgrade(topology)).await;
+    let data_center = topology.get_or_create_data_center(&data_center).await?;
+    data_center.set_parent(Some(topology.clone())).await;
 
-    let rack = data_center.get_or_create_rack(&rack).await;
-    rack.set_data_center(Arc::downgrade(&data_center)).await;
+    let rack = data_center.get_or_create_rack(&rack).await?;
+    rack.set_parent(Some(data_center)).await;
 
     let node_addr = format!("{}:{}", ip, heartbeat.port);
     let data_node = rack
@@ -503,8 +509,8 @@ async fn update_topology(
             heartbeat.max_volume_count as i64,
         )
         .await;
-    data_node.set_rack(Arc::downgrade(&rack)).await;
-    data_node
+    data_node.set_parent(Some(rack.clone())).await;
+    Ok(data_node)
 }
 
 async fn update_volume_layout(
@@ -512,7 +518,7 @@ async fn update_volume_layout(
     topology: &TopologyRef,
     client_chans: &Arc<DashMap<FastStr, UnboundedSender<VolumeLocation>>>,
     data_node: &DataNodeRef,
-) {
+) -> StdResult<(), VolumeError> {
     let mut volume_location = VolumeLocation::new();
     volume_location.url = data_node.url();
     volume_location.public_url = data_node.public_url.to_string();
@@ -548,7 +554,7 @@ async fn update_volume_layout(
         if !heartbeat.ip.is_empty() {
             topology
                 .register_data_node(&heartbeat.data_center, &heartbeat.rack, data_node)
-                .await;
+                .await?;
         }
 
         let (new_volumes, deleted_volumes) = topology
@@ -638,6 +644,8 @@ async fn update_volume_layout(
             let _ = client.value().unbounded_send(volume_location.clone());
         }
     }
+
+    Ok(())
 }
 
 async fn remove_data_node(

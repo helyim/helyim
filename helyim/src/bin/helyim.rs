@@ -64,17 +64,7 @@ fn log_init(
 }
 
 #[tokio::main]
-#[cfg(not(all(target_os = "linux", feature = "iouring")))]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    main_inner().await
-}
-
-#[cfg(all(target_os = "linux", feature = "iouring"))]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tokio_uring::start(main_inner())
-}
-
-async fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
     let level = Level::INFO;
 
     let opts = Opts::parse();

@@ -15,7 +15,7 @@ use tracing::{debug, info, instrument};
 
 use crate::{
     raft::types::{NodeId, RaftRequest, RaftResponse, TypeConfig},
-    topology::TopologyRef,
+    topology::{node::Node, TopologyRef},
 };
 
 mod log_store;
@@ -161,7 +161,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachineStore> {
                 EntryPayload::Normal(ref req) => match req {
                     RaftRequest::MaxVolumeId { max_volume_id } => {
                         debug!("apply max volume id: {max_volume_id}");
-                        sm.topology().adjust_max_volume_id(*max_volume_id);
+                        sm.topology().adjust_max_volume_id(*max_volume_id).await;
                         res.push(RaftResponse)
                     }
                 },

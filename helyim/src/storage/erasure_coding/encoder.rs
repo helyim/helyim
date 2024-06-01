@@ -162,7 +162,7 @@ fn encode_data_one_batch(
     reed_solomon: &ReedSolomon<Field>,
     start_offset: u64,
     block_size: u64,
-    mut bufs: &mut [Vec<u8>],
+    bufs: &mut [Vec<u8>],
     outputs: &mut [File],
 ) -> Result<(), EcShardError> {
     assert_eq!(bufs.len(), outputs.len());
@@ -190,7 +190,7 @@ fn encode_data_one_batch(
         }
     }
 
-    reed_solomon.encode(&mut bufs)?;
+    reed_solomon.encode(bufs.as_mut())?;
 
     for (i, output) in outputs.iter_mut().enumerate() {
         output.write_all(&bufs[i])?;
