@@ -278,8 +278,9 @@ impl VolumeServer {
                             if let Ok(response) = serde_json::to_string(&response) {
                                 debug!("heartbeat reply: {response}");
                             }
-                            let old_leader = store.current_master.read().await.clone();
-                            if !response.leader.is_empty() && response.leader != old_leader {
+                            let old_leader = store.current_master.load();
+                            if !response.leader.is_empty() && response.leader != old_leader.as_str()
+                            {
                                 info!(
                                     "leader changed, current leader is {}, old leader is \
                                      {old_leader}",
@@ -287,7 +288,10 @@ impl VolumeServer {
                                 );
                                 let new_leader = FastStr::new(response.leader);
                                 store.set_current_master(new_leader.clone()).await;
-                                return Err(VolumeError::LeaderChanged(new_leader, old_leader));
+                                return Err(VolumeError::LeaderChanged(
+                                    new_leader,
+                                    FastStr::new(old_leader.as_str()),
+                                ));
                             }
                             store.set_volume_size_limit(response.volume_size_limit);
                         }

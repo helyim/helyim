@@ -18,6 +18,7 @@ categories = ["object-storage", "file-system", "distributed-system"]
 keywords = ["helyim", "seaweedfs", "object-storage", "haystack", "raft"]
 
 [workspace.dependencies]
+arc-swap = "1"
 async-broadcast = "0.7"
 async-scoped = "0.9"
 async-stream = "0.3"

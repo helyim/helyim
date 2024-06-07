@@ -120,7 +120,7 @@ async fn replicate_delete(
     let params = vec![("type", "replicate")];
     let mut volume_locations = state
         .looker
-        .lookup(vec![vid], &state.store.current_master.read().await)
+        .lookup(vec![vid], &state.store.current_master.load())
         .await?;
 
     if let Some(volume_location) = volume_locations.pop() {
@@ -201,7 +201,7 @@ async fn replicate_write(
 
     let mut volume_locations = state
         .looker
-        .lookup(vec![vid], &state.store.current_master.read().await)
+        .lookup(vec![vid], &state.store.current_master.load())
         .await?;
 
     if let Some(volume_location) = volume_locations.pop() {

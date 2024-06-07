@@ -6,12 +6,12 @@ use std::{
     },
 };
 
+use arc_swap::ArcSwap;
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use helyim_proto::directory::{
     HeartbeatRequest, VolumeInformationMessage, VolumeShortInformationMessage,
 };
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -45,7 +45,7 @@ pub struct Store {
 
     pub delta_volume_tx: DeltaVolumeInfoSender,
 
-    pub current_master: RwLock<FastStr>,
+    pub current_master: ArcSwap<FastStr>,
 }
 
 impl Store {
@@ -79,7 +79,7 @@ impl Store {
             connected: false,
             volume_size_limit: AtomicU64::new(0),
             delta_volume_tx,
-            current_master: RwLock::new(FastStr::empty()),
+            current_master: ArcSwap::new(Arc::new(FastStr::empty())),
         })
     }
 
@@ -101,7 +101,7 @@ impl Store {
     }
 
     pub async fn set_current_master(&self, current_master: FastStr) {
-        *self.current_master.write().await = current_master;
+        self.current_master.store(Arc::new(current_master));
     }
 
     pub fn locations(&self) -> &[DiskLocation] {

@@ -7,6 +7,7 @@ use std::{
     time::SystemTime,
 };
 
+use arc_swap::ArcSwap;
 use bytes::{Buf, BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
@@ -40,7 +41,7 @@ pub struct EcVolume {
     ecx_created_at: SystemTime,
     pub shards: RwLock<Vec<Arc<EcVolumeShard>>>,
     pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
-    pub shard_locations_refresh_time: RwLock<SystemTime>,
+    pub shard_locations_refresh_time: ArcSwap<SystemTime>,
     pub version: Version,
     ecj_file: File,
 }
@@ -90,7 +91,7 @@ impl EcVolume {
             ecj_file,
             shards: RwLock::new(Vec::new()),
             shard_locations: DashMap::new(),
-            shard_locations_refresh_time: RwLock::new(SystemTime::now()),
+            shard_locations_refresh_time: ArcSwap::new(Arc::new(SystemTime::now())),
             version,
         })
     }
