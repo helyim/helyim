@@ -179,22 +179,19 @@ impl Store {
         if shard_count < DATA_SHARDS_COUNT
             && volume
                 .shard_locations_refresh_time
-                .read()
-                .await
+                .load()
                 .add(Duration::from_secs(11))
                 > now
             || shard_count == TOTAL_SHARDS_COUNT
                 && volume
                     .shard_locations_refresh_time
-                    .read()
-                    .await
+                    .load()
                     .add(Duration::from_secs(37 * 60))
                     > now
             || shard_count >= DATA_SHARDS_COUNT
                 && volume
                     .shard_locations_refresh_time
-                    .read()
-                    .await
+                    .load()
                     .add(Duration::from_secs(7 * 60))
                     > now
         {
@@ -203,12 +200,14 @@ impl Store {
 
         info!("lookup and cache ec volume {} locations", volume.volume_id);
 
-        let master = self.current_master.read().await.clone();
-        let client = helyim_client(&master)?;
-        let request = LookupEcVolumeRequest {
-            volume_id: volume.volume_id,
+        let response = {
+            let master = self.current_master.load();
+            let client = helyim_client(&master)?;
+            let request = LookupEcVolumeRequest {
+                volume_id: volume.volume_id,
+            };
+            client.lookup_ec_volume(request).await?
         };
-        let response = client.lookup_ec_volume(request).await?;
         let response = response.into_inner();
         if response.shard_id_locations.len() < DATA_SHARDS_COUNT as usize {
             error!(
@@ -233,7 +232,9 @@ impl Store {
             }
         }
 
-        *volume.shard_locations_refresh_time.write().await = SystemTime::now();
+        volume
+            .shard_locations_refresh_time
+            .store(Arc::new(SystemTime::now()));
         Ok(())
     }
 

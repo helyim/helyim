@@ -1,12 +1,12 @@
 mod location;
 
-use std::{ops::Deref, time::Duration};
+use std::{ops::Deref, sync::Arc, time::Duration};
 
+use arc_swap::{ArcSwap, Guard};
 use async_stream::stream;
 use faststr::FastStr;
 use helyim_proto::directory::KeepConnectedRequest;
 use nom::error::Error as NomError;
-use tokio::sync::{RwLock, RwLockReadGuard};
 use tokio_stream::StreamExt;
 use tonic::Status;
 use tracing::{error, info, warn};
@@ -19,7 +19,7 @@ use crate::{
 
 pub struct MasterClient {
     name: FastStr,
-    current_master: RwLock<FastStr>,
+    current_master: ArcSwap<FastStr>,
     masters: Vec<FastStr>,
     locations: LocationMap,
 }
@@ -28,7 +28,7 @@ impl MasterClient {
     pub fn new(name: &str, masters: Vec<FastStr>) -> Self {
         Self {
             name: FastStr::new(name),
-            current_master: RwLock::new(FastStr::empty()),
+            current_master: ArcSwap::new(Arc::new(FastStr::empty())),
             masters,
             locations: LocationMap::default(),
         }
@@ -36,8 +36,8 @@ impl MasterClient {
 }
 
 impl MasterClient {
-    pub async fn current_master(&self) -> RwLockReadGuard<FastStr> {
-        self.current_master.read().await
+    pub async fn current_master(&self) -> Guard<Arc<FastStr>> {
+        self.current_master.load()
     }
 
     pub async fn keep_connected_to_master(&self) {
@@ -54,7 +54,7 @@ impl MasterClient {
             while !next_hinted_leader.is_empty() {
                 next_hinted_leader = self.try_connect_to_master(&next_hinted_leader).await?;
             }
-            *self.current_master.write().await = FastStr::empty();
+            self.current_master.store(Arc::new(FastStr::empty()));
             self.locations.clear();
         }
 
@@ -80,7 +80,7 @@ impl MasterClient {
         let mut next_hinted_leader = FastStr::empty();
         match client.keep_connected(request_stream).await {
             Ok(response) => {
-                *self.current_master.write().await = master.clone();
+                self.current_master.store(Arc::new(master.clone()));
                 info!("current master is {}", master);
 
                 let mut stream = response.into_inner();

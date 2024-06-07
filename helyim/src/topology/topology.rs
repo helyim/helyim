@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, result::Result as StdResult, sync::Arc, time::Duration};
 
+use arc_swap::ArcSwap;
 use axum::{
     http::{
         header::{InvalidHeaderName, InvalidHeaderValue},
@@ -15,7 +16,7 @@ use helyim_proto::directory::{
 };
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
 use tracing::{debug, error, info};
 
@@ -50,7 +51,7 @@ pub struct Topology {
     volume_size_limit: u64,
 
     #[serde(skip)]
-    raft: RwLock<Option<RaftServer>>,
+    raft: Option<ArcSwap<RaftServer>>,
 }
 
 impl Clone for Topology {
@@ -62,7 +63,7 @@ impl Clone for Topology {
             ec_shards: self.ec_shards.clone(),
             pulse: self.pulse,
             volume_size_limit: self.volume_size_limit,
-            raft: RwLock::new(None),
+            raft: None,
         }
     }
 }
@@ -77,7 +78,7 @@ impl Topology {
             ec_shards: DashMap::new(),
             pulse,
             volume_size_limit,
-            raft: RwLock::new(None),
+            raft: None,
         }
     }
 
@@ -275,8 +276,8 @@ impl Topology {
     pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
         let vid = self.max_volume_id();
         let next = vid + 1;
-        if let Some(raft) = self.raft.read().await.as_ref() {
-            let raft = raft.clone();
+        if let Some(raft) = self.raft.as_ref() {
+            let raft = raft.load().clone();
             tokio::spawn(async move {
                 if let Err(err) = raft.set_max_volume_id(next).await {
                     error!("set max volume id failed, error: {err}");
@@ -343,27 +344,29 @@ impl Topology {
 }
 
 impl Topology {
-    pub async fn set_raft_server(&self, raft: RaftServer) {
-        *self.raft.write().await = Some(raft);
+    pub fn set_raft_server(&self, raft: RaftServer) {
+        if let Some(raft_server) = self.raft.as_ref() {
+            raft_server.store(Arc::new(raft));
+        }
     }
 
     pub async fn current_leader_id(&self) -> Option<NodeId> {
-        match self.raft.read().await.as_ref() {
-            Some(raft) => raft.current_leader().await,
+        match self.raft.as_ref() {
+            Some(raft) => raft.load().current_leader().await,
             None => None,
         }
     }
 
     pub async fn current_leader_address(&self) -> Option<FastStr> {
-        match self.raft.read().await.as_ref() {
-            Some(raft) => raft.current_leader_address().await,
+        match self.raft.as_ref() {
+            Some(raft) => raft.load().current_leader_address().await,
             None => None,
         }
     }
 
     pub async fn current_leader(&self) -> Result<FastStr, TopologyError> {
-        match self.raft.read().await.as_ref() {
-            Some(raft) => match raft.current_leader_address().await {
+        match self.raft.as_ref() {
+            Some(raft) => match raft.load().current_leader_address().await {
                 Some(leader) => Ok(leader),
                 None => Err(TopologyError::NoLeader),
             },
@@ -372,15 +375,15 @@ impl Topology {
     }
 
     pub async fn is_leader(&self) -> bool {
-        match self.raft.read().await.as_ref() {
-            Some(raft) => raft.is_leader().await,
+        match self.raft.as_ref() {
+            Some(raft) => raft.load().is_leader().await,
             None => false,
         }
     }
 
     pub async fn peers(&self) -> BTreeMap<NodeId, FastStr> {
-        match self.raft.read().await.as_ref() {
-            Some(raft) => raft.peers(),
+        match self.raft.as_ref() {
+            Some(raft) => raft.load().peers(),
             None => BTreeMap::new(),
         }
     }
