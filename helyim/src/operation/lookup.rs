@@ -1,6 +1,5 @@
 use std::{num::ParseIntError, time::Duration};
 
-use faststr::FastStr;
 use helyim_proto::directory::{
     lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
@@ -25,7 +24,7 @@ pub struct LookupRequest {
 #[serde(rename_all = "camelCase")]
 pub struct Location {
     pub url: String,
-    pub public_url: FastStr,
+    pub public_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +32,25 @@ pub struct Location {
 pub struct Lookup {
     pub volume_id: String,
     pub locations: Vec<Location>,
-    pub error: FastStr,
+    pub error: String,
+}
+
+impl Lookup {
+    pub fn ok<S: ToString>(vid: S, locations: Vec<Location>) -> Self {
+        Self {
+            volume_id: vid.to_string(),
+            locations,
+            error: String::default(),
+        }
+    }
+
+    pub fn error<S: ToString>(error: S) -> Self {
+        Self {
+            volume_id: String::default(),
+            locations: vec![],
+            error: error.to_string(),
+        }
+    }
 }
 
 pub struct Looker {

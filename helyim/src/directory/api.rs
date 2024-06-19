@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use axum::{extract::State, Json};
-use faststr::FastStr;
 
 use crate::{
     operation::{
@@ -74,16 +73,11 @@ pub async fn lookup_handler(
             for dn in nodes.iter() {
                 locations.push(Location {
                     url: dn.url(),
-                    public_url: dn.public_url.clone(),
+                    public_url: dn.public_url.to_string(),
                 });
             }
 
-            let lookup = Lookup {
-                volume_id,
-                locations,
-                error: FastStr::default(),
-            };
-            Ok(Json(lookup))
+            Ok(Json(Lookup::ok(volume_id, locations)))
         }
         None => Err(VolumeError::String("cannot find any locations".to_string())),
     }

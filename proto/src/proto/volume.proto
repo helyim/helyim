@@ -22,6 +22,8 @@ service VolumeServer {
   rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {}
   rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {}
   rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {}
+
+  rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {}
 }
 
 message AllocateVolumeRequest {
@@ -165,4 +167,19 @@ message VolumeMarkReadonlyRequest {
   uint32 volume_id = 1;
 }
 message VolumeMarkReadonlyResponse {
+}
+
+message BatchDeleteRequest {
+  repeated string file_ids = 1;
+}
+
+message BatchDeleteResponse {
+  repeated DeleteResult results = 1;
+}
+message DeleteResult {
+  string file_id = 1;
+  int32 status = 2;
+  string error = 3;
+  uint32 size = 4;
+  uint32 version = 5;
 }

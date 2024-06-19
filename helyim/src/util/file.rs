@@ -1,4 +1,4 @@
-use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, time::SystemTime};
+use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, path::Path, time::SystemTime};
 
 pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)>, std::io::Error> {
     match metadata(filename) {
@@ -31,6 +31,13 @@ pub fn file_exists(filename: &str) -> Result<bool, std::io::Error> {
             }
         }
     }
+}
+
+pub fn file_name(path: &str) -> String {
+    let path = Path::new(path);
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap()
 }
 
 #[cfg(test)]

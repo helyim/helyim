@@ -114,11 +114,7 @@ impl Topology {
     }
 
     pub async fn has_writable_volume(&self, option: &VolumeGrowOption) -> bool {
-        let vl = self.get_volume_layout(
-            option.collection.clone(),
-            option.replica_placement,
-            option.ttl,
-        );
+        let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
 
         let active_volume_count = vl.active_volume_count(option).await;
         active_volume_count > 0
@@ -135,11 +131,8 @@ impl Topology {
             .map_err(|err| VolumeError::Box(Box::new(err)))?;
 
         let (volume_id, node) = {
-            let layout = self.get_volume_layout(
-                option.collection.clone(),
-                option.replica_placement,
-                option.ttl,
-            );
+            let layout =
+                self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
             let (vid, nodes) = layout.pick_for_write(option).await?;
             (vid, nodes[0].clone())
         };
@@ -228,34 +221,22 @@ impl Topology {
     }
 
     pub async fn register_volume_layout(&self, volume: &VolumeInfo, data_node: &DataNodeRef) {
-        self.get_volume_layout(
-            volume.collection.clone(),
-            volume.replica_placement,
-            volume.ttl,
-        )
-        .register_volume(volume, data_node)
-        .await
+        self.get_volume_layout(&volume.collection, volume.replica_placement, volume.ttl)
+            .register_volume(volume, data_node)
+            .await
     }
 
     pub async fn unregister_volume_layout(&self, volume: &VolumeInfo, data_node: &DataNodeRef) {
-        self.get_volume_layout(
-            volume.collection.clone(),
-            volume.replica_placement,
-            volume.ttl,
-        )
-        .unregister_volume(volume, data_node)
-        .await;
+        self.get_volume_layout(&volume.collection, volume.replica_placement, volume.ttl)
+            .unregister_volume(volume, data_node)
+            .await;
     }
 
     pub async fn unregister_data_node(&self, data_node: &DataNodeRef) {
         for volume in data_node.volumes.iter() {
-            self.get_volume_layout(
-                volume.collection.clone(),
-                volume.replica_placement,
-                volume.ttl,
-            )
-            .set_volume_unavailable(volume.key(), data_node)
-            .await;
+            self.get_volume_layout(&volume.collection, volume.replica_placement, volume.ttl)
+                .set_volume_unavailable(volume.key(), data_node)
+                .await;
         }
 
         data_node
@@ -326,13 +307,14 @@ impl Topology {
 impl Topology {
     fn get_volume_layout(
         &self,
-        collection_name: FastStr,
+        collection: &str,
         rp: ReplicaPlacement,
         ttl: Ttl,
     ) -> VolumeLayoutRef {
-        match self.collections.get(&collection_name) {
+        match self.collections.get(collection) {
             Some(collection) => collection.get_or_create_volume_layout(rp, Some(ttl)),
             None => {
+                let collection_name = FastStr::new(collection);
                 let collection = Collection::new(collection_name.clone(), self.volume_size_limit);
                 let vl = collection.get_or_create_volume_layout(rp, Some(ttl));
                 self.collections.insert(collection_name, collection);

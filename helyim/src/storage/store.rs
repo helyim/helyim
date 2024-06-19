@@ -175,28 +175,28 @@ impl Store {
     }
 
     pub async fn delete_volume(&self, vid: VolumeId) -> Result<()> {
-        let volume = self.find_volume(vid);
-        if volume.is_none() {
-            return Ok(());
-        }
-        let volume = volume.unwrap();
-
-        for location in self.locations.iter() {
-            if location.delete_volume(vid).is_ok() {
-                self.delta_volume_tx
-                    .delete_volume(VolumeShortInformationMessage {
-                        id: *volume.key(),
-                        collection: volume.collection.to_string(),
-                        replica_placement: Into::<u8>::into(volume.super_block.replica_placement)
-                            as u32,
-                        version: volume.version() as u32,
-                        ttl: volume.super_block.ttl.to_u32(),
-                    })
-                    .await;
-                return Ok(());
+        match self.find_volume(vid) {
+            Some(volume) => {
+                for location in self.locations.iter() {
+                    if location.delete_volume(vid).is_ok() {
+                        self.delta_volume_tx
+                            .delete_volume(VolumeShortInformationMessage {
+                                id: *volume.key(),
+                                collection: volume.collection.to_string(),
+                                replica_placement: Into::<u8>::into(
+                                    volume.super_block.replica_placement,
+                                ) as u32,
+                                version: volume.version() as u32,
+                                ttl: volume.super_block.ttl.to_u32(),
+                            })
+                            .await;
+                        return Ok(());
+                    }
+                }
+                Err(VolumeError::NotFound(vid).into())
             }
+            None => Ok(()),
         }
-        Err(VolumeError::NotFound(vid).into())
     }
 
     pub async fn mark_volume_readonly(&self, volume_id: VolumeId) -> StdResult<(), VolumeError> {
