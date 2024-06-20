@@ -34,6 +34,7 @@ crc32fast.workspace = true
 dashmap = { workspace = true, features = ["serde"] }
 downcast-rs.workspace = true
 faststr = { workspace = true, features = ["serde"] }
+fnv.workspace = true
 futures.workspace = true
 ginepro.workspace = true
 helyim-proto = { path = "../proto", version = "0.1.0" }

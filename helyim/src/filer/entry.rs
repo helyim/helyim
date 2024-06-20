@@ -7,19 +7,19 @@ use faststr::FastStr;
 use helyim_proto::filer::FileChunk;
 use rustix::process::{getgid, getuid};
 
-use crate::filer::file_chunks::total_size;
+use crate::filer::file_chunk::total_size;
 
 #[derive(Clone)]
 pub struct Attr {
-    mtime: SystemTime,
-    crtime: SystemTime,
-    mode: u32,
-    uid: u32,
-    gid: u32,
-    mime: FastStr,
-    replication: FastStr,
-    collection: FastStr,
-    ttl: i32,
+    pub mtime: SystemTime,
+    pub crtime: SystemTime,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub mime: FastStr,
+    pub replication: FastStr,
+    pub collection: FastStr,
+    pub ttl: i32,
 }
 
 impl Attr {
@@ -44,14 +44,14 @@ impl Attr {
 
 #[derive(Clone)]
 pub struct Entry {
-    pub path: FastStr,
+    pub full_path: FastStr,
     pub attr: Attr,
     pub chunks: Vec<FileChunk>,
 }
 
 impl Entry {
     pub fn path(&self) -> &str {
-        &self.path
+        &self.full_path
     }
 
     pub fn size(&self) -> u64 {

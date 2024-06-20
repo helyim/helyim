@@ -7,17 +7,49 @@ use tracing::info;
 
 use crate::{
     client::{ClientError, MasterClient},
-    filer::{Filer, FilerError},
+    filer::{entry::Entry, Filer, FilerError},
     operation::lookup::{Location, Lookup},
 };
 
 impl Filer {
     pub fn delete_chunks(&self, chunks: Vec<FileChunk>) -> Result<(), FilerError> {
         for chunk in chunks {
-            self.delete_file_id_tx.unbounded_send(chunk.file_id)?;
+            self.delete_file_id_tx.unbounded_send(chunk.fid)?;
         }
 
         Ok(())
+    }
+
+    pub fn delete_chunks_if_not_new(
+        &self,
+        old_entry: Option<&Entry>,
+        new_entry: Option<&Entry>,
+    ) -> Result<(), FilerError> {
+        if old_entry.is_none() {
+            return Ok(());
+        }
+        let old_entry = old_entry.unwrap();
+
+        if new_entry.is_none() {
+            self.delete_chunks(old_entry.chunks.clone())?;
+        }
+
+        let mut to_delete = Vec::new();
+        for old_chunk in old_entry.chunks.iter() {
+            let mut found = false;
+            if let Some(new_entry) = new_entry {
+                for new_chunk in new_entry.chunks.iter() {
+                    if old_chunk.fid == new_chunk.fid {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if !found {
+                to_delete.push(old_chunk.clone());
+            }
+        }
+        self.delete_chunks(to_delete)
     }
 
     fn lookup(&self, vids: Vec<FastStr>) -> HashMap<FastStr, Lookup> {
@@ -57,7 +89,7 @@ fn lookup_by_master_client(
             map.insert(vid.clone(), Lookup::ok(vid, locations));
         }
     }
-    return Ok(map);
+    Ok(map)
 }
 
 pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<Option<FileId>>) {

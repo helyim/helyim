@@ -7,7 +7,7 @@ use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
 use moka::sync::Cache;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     client::{ClientError, MasterClient},
@@ -20,7 +20,8 @@ use crate::{
 
 pub mod deletion;
 pub mod entry;
-pub mod file_chunks;
+mod file_chunk;
+mod server;
 
 pub trait FilerStore: Send + Sync {
     fn name(&self) -> &str;
@@ -47,6 +48,9 @@ pub struct Filer {
     directories: Option<Cache<FastStr, Entry>>,
     delete_file_id_tx: UnboundedSender<Option<FileId>>,
     master_client: MasterClient,
+    // dir_buckets_path: FastStr,
+    // fsync_buckets: Vec<FastStr>,
+    // buckets: FilerBuckets,
 }
 
 impl Filer {
@@ -85,18 +89,97 @@ impl Filer {
         Ok(self.master_client.try_all_masters().await?)
     }
 
+    pub fn create_entry(&self, entry: Entry) -> Result<(), FilerError> {
+        if entry.full_path == "/" {
+            return Ok(());
+        }
+
+        let dir_parts: Vec<&str> = entry.full_path.split("/").collect();
+        let mut last_directory_entry: Option<Entry> = None;
+
+        for i in 1..dir_parts.len() {
+            let dir_path = String::new();
+            let dir_entry = match self.get_directory(&dir_path) {
+                Some(dir) => {
+                    info!("find cached directory: {}", dir_path);
+                    Some(dir)
+                }
+                None => {
+                    info!("find uncached directory: {}", dir_path);
+                    self.find_entry(&dir_path)?
+                }
+            };
+
+            match dir_entry {
+                Some(entry) => {
+                    let dir_path = FastStr::new(dir_path);
+                    if !entry.is_directory() {
+                        return Err(FilerError::IsFile(dir_path));
+                    }
+
+                    self.set_directory(dir_path, entry.clone());
+
+                    if i == dir_parts.len() - 1 {
+                        last_directory_entry = Some(entry);
+                    }
+                }
+                None => {
+                    let now = SystemTime::now();
+                    let entry = Entry {
+                        full_path: FastStr::new(dir_path),
+                        attr: Attr {
+                            mtime: now,
+                            crtime: now,
+                            mode: 1 << 31 | 0o770,
+                            uid: entry.attr.uid,
+                            gid: entry.attr.gid,
+                            mime: FastStr::empty(),
+                            replication: FastStr::empty(),
+                            collection: FastStr::empty(),
+                            ttl: 0,
+                        },
+                        chunks: Vec::new(),
+                    };
+                    self.filer_store()?.insert_entry(&entry)?;
+                    // FIXME: is there need to find entry?
+                }
+            }
+        }
+
+        if last_directory_entry.is_none() {
+            return Err(FilerError::ParentFolderNotFound);
+        }
+
+        let old_entry = self.find_entry(&entry.full_path)?;
+        match old_entry {
+            Some(ref old_entry) => {
+                if let Err(err) = self.update_entry(Some(old_entry), &entry) {
+                    error!("update entry: {}, {err}", entry.full_path);
+                    return Err(err);
+                }
+            }
+            None => {
+                if let Err(err) = self.filer_store()?.insert_entry(&entry) {
+                    error!("insert entry: {}, {err}", entry.full_path);
+                    return Err(err);
+                }
+            }
+        }
+
+        self.delete_chunks_if_not_new(old_entry.as_ref(), Some(&entry))
+    }
+
     pub fn update_entry(&self, old_entry: Option<&Entry>, entry: &Entry) -> Result<(), FilerError> {
         if let Some(old_entry) = old_entry {
             if old_entry.is_directory() && !entry.is_directory() {
                 error!("existing {0} is a directory", entry.path());
-                return Err(FilerError::IsDirectory(entry.path.clone()));
+                return Err(FilerError::IsDirectory(entry.full_path.clone()));
             }
             if !old_entry.is_directory() && entry.is_directory() {
                 error!("existing {0} is a file", entry.path());
-                return Err(FilerError::IsFile(entry.path.clone()));
+                return Err(FilerError::IsFile(entry.full_path.clone()));
             }
         }
-
         self.filer_store()?.update_entry(entry)
     }
 
@@ -104,7 +187,7 @@ impl Filer {
         let time = SystemTime::now();
         if path == "/" {
             return Ok(Some(Entry {
-                path: FastStr::new(path),
+                full_path: FastStr::new(path),
                 attr: Attr::root_path(time),
                 chunks: vec![],
             }));
@@ -219,8 +302,13 @@ pub enum FilerError {
     IsDirectory(FastStr),
     #[error("Existing {0} is a file")]
     IsFile(FastStr),
+    #[error("Parent folder not found")]
+    ParentFolderNotFound,
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
     #[error("Try send error: {0}")]
     TrySend(#[from] TrySendError<Option<FileId>>),
+
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
 }
