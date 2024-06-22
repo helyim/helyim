@@ -11,8 +11,9 @@ use helyim_proto::directory::{
     helyim_server::{Helyim, HelyimServer},
     lookup_ec_volume_response::EcShardIdLocation,
     lookup_volume_response::VolumeIdLocation,
-    HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest, Location, LookupEcVolumeRequest,
-    LookupEcVolumeResponse, LookupVolumeRequest, LookupVolumeResponse, VolumeLocation,
+    AssignRequest, AssignResponse, HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest,
+    Location, LookupEcVolumeRequest, LookupEcVolumeResponse, LookupVolumeRequest,
+    LookupVolumeResponse, VolumeLocation,
 };
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -26,12 +27,15 @@ use crate::{
         assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, DirectoryState,
     },
     errors::Result,
+    proto::map_error_to_status,
     raft::{create_raft_router, RaftServer},
     sequence::Sequencer,
-    storage::VolumeError,
+    storage::{ReplicaPlacement, Ttl, VolumeError},
     topology::{
-        node::Node, topology_vacuum_loop, volume_grow::VolumeGrowth, DataNodeRef, Topology,
-        TopologyError, TopologyRef,
+        node::Node,
+        topology_vacuum_loop,
+        volume_grow::{VolumeGrowOption, VolumeGrowth},
+        DataNodeRef, Topology, TopologyError, TopologyRef,
     },
     util::{
         args::MasterOptions,
@@ -46,6 +50,7 @@ use crate::{
 pub struct DirectoryServer {
     pub options: Arc<MasterOptions>,
     pub garbage_threshold: f64,
+    pub preallocate: u64,
     pub topology: TopologyRef,
     pub volume_grow: VolumeGrowth,
     pub master_client: Arc<MasterClient>,
@@ -63,6 +68,7 @@ impl DirectoryServer {
 
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
         let volume_size_limit_mb = master_opts.volume_size_limit_mb;
+        let preallocate = volume_size_limit_mb * (1 << 20);
 
         let topology = Arc::new(Topology::new(
             sequencer,
@@ -73,14 +79,15 @@ impl DirectoryServer {
         tokio::spawn(topology_vacuum_loop(
             topology.clone(),
             garbage_threshold,
-            volume_size_limit_mb * (1 << 20),
+            preallocate,
             shutdown_rx.clone(),
         ));
 
         let master_client = MasterClient::new("master", master_opts.raft.peers.clone());
         let master = DirectoryServer {
-            options: master_opts,
+            options: master_opts.clone(),
             garbage_threshold,
+            preallocate,
             volume_grow: VolumeGrowth,
             topology: topology.clone(),
             master_client: Arc::new(master_client),
@@ -93,8 +100,11 @@ impl DirectoryServer {
             if let Err(err) = TonicServer::builder()
                 .add_service(HelyimServer::new(DirectoryGrpcServer {
                     volume_size_limit_mb,
+                    preallocate,
                     topology,
+                    volume_growth: VolumeGrowth {},
                     client_chans: Arc::new(DashMap::new()),
+                    option: master_opts,
                 }))
                 .serve_with_shutdown(addr, async {
                     let _ = shutdown_rx.recv().await;
@@ -209,7 +219,10 @@ async fn start_directory_server(
 #[derive(Clone)]
 struct DirectoryGrpcServer {
     pub volume_size_limit_mb: u64,
+    pub preallocate: u64,
+    pub option: Arc<MasterOptions>,
     pub topology: TopologyRef,
+    pub volume_growth: VolumeGrowth,
     pub client_chans: Arc<DashMap<FastStr, UnboundedSender<VolumeLocation>>>,
 }
 
@@ -475,6 +488,65 @@ impl Helyim for DirectoryGrpcServer {
             volume_id: request.volume_id,
         };
         Ok(Response::new(response))
+    }
+
+    async fn assign(
+        &self,
+        request: Request<AssignRequest>,
+    ) -> StdResult<Response<AssignResponse>, Status> {
+        let mut request = request.into_inner();
+        if !self.topology.is_leader().await {
+            return Err(Status::internal("not leader"));
+        }
+
+        if request.count == 0 {
+            request.count = 1;
+        }
+
+        if request.replication.is_empty() {
+            request.replication = self.option.default_replication.to_string();
+        }
+
+        let replica_placement = map_error_to_status(ReplicaPlacement::new(&request.replication))?;
+        let ttl = map_error_to_status(Ttl::new(&request.ttl))?;
+
+        let volume_grow_option = VolumeGrowOption {
+            collection: FastStr::new(request.collection),
+            replica_placement,
+            ttl,
+            preallocate: self.preallocate as i64,
+            data_center: FastStr::new(request.data_center),
+            rack: FastStr::new(request.rack),
+            data_node: FastStr::new(request.data_node),
+        };
+
+        if !self.topology.has_writable_volume(&volume_grow_option).await {
+            if self.topology.free_space() <= 0 {
+                return Err(Status::resource_exhausted("no free volumes left"));
+            }
+            let automatic_grow_by_type = self
+                .volume_growth
+                .automatic_grow_by_type(
+                    &volume_grow_option,
+                    &self.topology,
+                    request.writable_volume_count as usize,
+                )
+                .await;
+            map_error_to_status(automatic_grow_by_type)?;
+        }
+
+        let pick_for_write = self
+            .topology
+            .pick_for_write(request.count, &volume_grow_option)
+            .await;
+        let (fid, count, data_node) = map_error_to_status(pick_for_write)?;
+        Ok(Response::new(AssignResponse {
+            fid: fid.to_string(),
+            url: data_node.url(),
+            public_url: data_node.public_url.to_string(),
+            count,
+            error: Default::default(),
+        }))
     }
 }
 

@@ -47,7 +47,10 @@ pub fn compact_file_chunks(mut chunks: Vec<FileChunk>) -> (Vec<FileChunk>, Vec<F
     (compact, garbage)
 }
 
-pub fn find_unused_file_chunks(old_chunks: &[FileChunk], new_chunks: &[FileChunk]) -> Vec<FileChunk> {
+pub fn find_unused_file_chunks(
+    old_chunks: &[FileChunk],
+    new_chunks: &[FileChunk],
+) -> Vec<FileChunk> {
     let mut unused = vec![];
     let mut file_ids = HashMap::new();
     for interval in new_chunks {

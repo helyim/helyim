@@ -41,6 +41,7 @@ helyim-proto = { path = "../proto", version = "0.1.0" }
 hyper = { workspace = true, features = ["full"] }
 hyper-util.workspace = true
 indexmap.workspace = true
+itoa.workspace = true
 kanal.workspace = true
 leapfrog.workspace = true
 libflate.workspace = true

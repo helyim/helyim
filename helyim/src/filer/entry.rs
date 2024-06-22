@@ -8,7 +8,7 @@ use helyim_proto::filer::{FileChunk, FuseAttributes};
 use rustix::process::{getgid, getuid};
 
 use crate::{
-    filer::{file_chunk::total_size},
+    filer::file_chunk::total_size,
     util::time::{get_time, timestamp_to_time, TimeError},
 };
 

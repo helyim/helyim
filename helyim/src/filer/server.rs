@@ -18,12 +18,12 @@ use tracing::error;
 use crate::{
     filer::{
         entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
-        file_chunk::compact_file_chunks, FilerRef,
+        file_chunk::{compact_file_chunks, find_unused_file_chunks},
+        FilerRef,
     },
     proto::map_error_to_status,
+    util::time::timestamp_to_time,
 };
-use crate::filer::file_chunk::find_unused_file_chunks;
-use crate::util::time::timestamp_to_time;
 
 #[derive(Clone)]
 pub struct FilerOption {
@@ -205,10 +205,13 @@ impl HelyimFiler for FilerGrpcServer {
             None => return Err(Status::invalid_argument("entry must be set")),
         };
 
-        let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, request_entry.name);
+        let full_path = format!(
+            "{}{MAIN_SEPARATOR}{}",
+            request.directory, request_entry.name
+        );
         let entry = match map_error_to_status(self.filer.find_entry(&full_path))? {
             Some(entry) => entry,
-            None => return Err(Status::not_found(""))
+            None => return Err(Status::not_found("")),
         };
 
         let unused_chunks = find_unused_file_chunks(&entry.chunks, &request_entry.chunks);
@@ -235,13 +238,13 @@ impl HelyimFiler for FilerGrpcServer {
         }
 
         if entry == new_entry {
-            return Ok(Response::new(UpdateEntryResponse{}));
+            return Ok(Response::new(UpdateEntryResponse {}));
         }
         if self.filer.update_entry(Some(&entry), &new_entry).is_ok() {
             map_error_to_status(self.filer.delete_chunks(unused_chunks.as_ref()))?;
             map_error_to_status(self.filer.delete_chunks(garbages.as_ref()))?;
         }
-        Ok(Response::new(UpdateEntryResponse{}))
+        Ok(Response::new(UpdateEntryResponse {}))
     }
 
     async fn append_to_entry(
@@ -257,7 +260,11 @@ impl HelyimFiler for FilerGrpcServer {
     ) -> Result<Response<DeleteEntryResponse>, Status> {
         let request = request.into_inner();
         let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, request.name);
-        let delete_entry = self.filer.delete_entry_meta_and_data(&full_path, request.is_recursive, request.is_delete_data);
+        let delete_entry = self.filer.delete_entry_meta_and_data(
+            &full_path,
+            request.is_recursive,
+            request.is_delete_data,
+        );
         map_error_to_status(delete_entry)?;
         Ok(Response::new(DeleteEntryResponse::default()))
     }
@@ -266,6 +273,18 @@ impl HelyimFiler for FilerGrpcServer {
         &self,
         request: Request<AssignVolumeRequest>,
     ) -> Result<Response<AssignVolumeResponse>, Status> {
+        let request = request.into_inner();
+
+        let mut ttl_str = String::new();
+        if request.ttl_sec > 0 {
+            ttl_str = itoa::Buffer::new().format(request.ttl_sec).to_string();
+        }
+
+        let mut data_center = request.data_center;
+        if data_center.is_empty() {
+            data_center = self.option.data_center.to_string();
+        }
+
         todo!()
     }
 

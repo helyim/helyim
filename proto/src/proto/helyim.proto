@@ -9,6 +9,7 @@ service Helyim {
   rpc KeepConnected (stream KeepConnectedRequest) returns (stream VolumeLocation) {}
   rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {}
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {}
+  rpc Assign (AssignRequest) returns (AssignResponse) {}
 }
 
 //////////////////////////////////////////////////
@@ -111,4 +112,23 @@ message VolumeLocation {
   optional string leader = 5; // optional when leader is not itself
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
+}
+
+message AssignRequest {
+  uint64 count = 1;
+  string replication = 2;
+  string collection = 3;
+  string ttl = 4;
+  string data_center = 5;
+  string rack = 6;
+  string data_node = 7;
+  uint32 memory_map_max_size_mb = 8;
+  uint32 Writable_volume_count = 9;
+}
+message AssignResponse {
+  string fid = 1;
+  string url = 2;
+  string public_url = 3;
+  uint64 count = 4;
+  string error = 5;
 }

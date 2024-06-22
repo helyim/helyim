@@ -153,7 +153,21 @@ impl VolumeGrowth {
         Ok(len)
     }
 
-    async fn grow_by_count_and_type(
+    pub async fn automatic_grow_by_type(
+        &self,
+        option: &VolumeGrowOption,
+        topology: &Topology,
+        mut target_count: usize,
+    ) -> Result<usize, VolumeError> {
+        let copy_count = option.replica_placement.copy_count();
+        if target_count == 0 {
+            target_count = self.find_volume_count(copy_count);
+        }
+        self.grow_by_count_and_type(target_count, option, topology)
+            .await
+    }
+
+    pub async fn grow_by_count_and_type(
         &self,
         count: usize,
         option: &VolumeGrowOption,
