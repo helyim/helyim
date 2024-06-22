@@ -1,6 +1,10 @@
-use std::fs::{read, write};
+use std::{
+    error::Error,
+    fs::{read, write},
+};
 
 use helyim_proto::volume::VolumeInfo;
+use tonic::Status;
 use tracing::error;
 
 use crate::{anyhow, storage::VolumeError, util::file::check_file};
@@ -30,4 +34,8 @@ pub fn save_volume_info(filename: &str, volume_info: VolumeInfo) -> Result<(), V
             Ok(write(filename, data)?)
         }
     }
+}
+
+pub fn map_error_to_status<T, E: Error>(ret: Result<T, E>) -> Result<T, Status> {
+    ret.map_err(|err| Status::internal(err.to_string()))
 }

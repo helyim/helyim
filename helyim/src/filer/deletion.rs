@@ -12,9 +12,9 @@ use crate::{
 };
 
 impl Filer {
-    pub fn delete_chunks(&self, chunks: Vec<FileChunk>) -> Result<(), FilerError> {
+    pub fn delete_chunks(&self, chunks: &[FileChunk]) -> Result<(), FilerError> {
         for chunk in chunks {
-            self.delete_file_id_tx.unbounded_send(chunk.fid)?;
+            self.delete_file_id_tx.unbounded_send(chunk.fid.clone())?;
         }
 
         Ok(())
@@ -31,7 +31,7 @@ impl Filer {
         let old_entry = old_entry.unwrap();
 
         if new_entry.is_none() {
-            self.delete_chunks(old_entry.chunks.clone())?;
+            self.delete_chunks(&old_entry.chunks)?;
         }
 
         let mut to_delete = Vec::new();
@@ -49,7 +49,7 @@ impl Filer {
                 to_delete.push(old_chunk.clone());
             }
         }
-        self.delete_chunks(to_delete)
+        self.delete_chunks(&to_delete)
     }
 
     fn lookup(&self, vids: Vec<FastStr>) -> HashMap<FastStr, Lookup> {

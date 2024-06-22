@@ -68,24 +68,12 @@ message ListEntriesResponse {
   Entry entry = 1;
 }
 
-message RemoteEntry {
-  string storage_name = 1;
-  int64 last_local_sync_ts_ns = 2;
-  string remote_e_tag = 3;
-  int64 remote_mtime = 4;
-  int64 remote_size = 5;
-}
 message Entry {
   string name = 1;
   bool is_directory = 2;
   repeated FileChunk chunks = 3;
   FuseAttributes attributes = 4;
   map<string, bytes> extended = 5;
-  bytes hard_link_id = 7;
-  int32 hard_link_counter = 8; // only exists in hard link meta data
-  bytes content = 9; // if not empty, the file content
-  RemoteEntry remote_entry = 10;
-  int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
 }
 
 message FileChunk {
@@ -95,10 +83,6 @@ message FileChunk {
   int64 mtime = 4;
   string e_tag = 5;
   FileId source_fid = 6;
-  bytes cipher_key = 7;
-  bool is_compressed = 8;
-  // content is a list of FileChunks
-  bool is_chunk_manifest = 9;
 }
 
 message FileId {
@@ -117,24 +101,17 @@ message FuseAttributes {
   // unix time in seconds
   int64 crtime = 6;
   string mime = 7;
+  string replication = 8;
+  string collection = 9;
   int32 ttl_sec = 10;
   // for hdfs
   string user_name = 11;
-  // for hdfs
   repeated string group_name = 12;
-  string symlink_target = 13;
-  bytes md5 = 14;
-  uint32 rdev = 16;
-  uint64 inode = 17;
 }
 
 message CreateEntryRequest {
   string directory = 1;
   Entry entry = 2;
-  bool o_excl = 3;
-  bool is_from_other_cluster = 4;
-  repeated int32 signatures = 5;
-  bool skip_check_parent_directory = 6;
 }
 
 message CreateEntryResponse {
@@ -144,8 +121,6 @@ message CreateEntryResponse {
 message UpdateEntryRequest {
   string directory = 1;
   Entry entry = 2;
-  bool is_from_other_cluster = 3;
-  repeated int32 signatures = 4;
 }
 message UpdateEntryResponse {
 }
@@ -164,9 +139,6 @@ message DeleteEntryRequest {
   // bool is_directory = 3;
   bool is_delete_data = 4;
   bool is_recursive = 5;
-  bool ignore_recursive_error = 6;
-  bool is_from_other_cluster = 7;
-  repeated int32 signatures = 8;
 }
 
 message DeleteEntryResponse {
@@ -179,18 +151,10 @@ message AssignVolumeRequest {
   string replication = 3;
   int32 ttl_sec = 4;
   string data_center = 5;
-  string path = 6;
-  string rack = 7;
-  string data_node = 9;
-  string disk_type = 8;
 }
 
 message AssignVolumeResponse {
   string file_id = 1;
-  int32 count = 4;
-  string auth = 5;
-  string collection = 6;
-  string replication = 7;
   string error = 8;
   Location location = 9;
 }
@@ -206,8 +170,7 @@ message Locations {
 message Location {
   string url = 1;
   string public_url = 2;
-  uint32 grpc_port = 3;
-  string data_center = 4;
+  string data_center = 3;
 }
 message LookupVolumeResponse {
   map<string, Locations> locations_map = 1;

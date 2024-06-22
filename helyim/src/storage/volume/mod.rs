@@ -8,7 +8,6 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
-    time::SystemTimeError,
 };
 
 use axum::{
@@ -49,11 +48,14 @@ mod volume_info;
 
 pub use volume_info::VolumeInfo;
 
-use crate::storage::{
-    needle::{NeedleError, NEEDLE_ENTRY_SIZE},
-    ttl::TtlError,
-    types::Offset,
-    NeedleId,
+use crate::{
+    storage::{
+        needle::{NeedleError, NEEDLE_ENTRY_SIZE},
+        ttl::TtlError,
+        types::Offset,
+        NeedleId,
+    },
+    util::time::TimeError,
 };
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
@@ -673,8 +675,8 @@ pub enum VolumeError {
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("System time error: {0}")]
-    SystemTimeError(#[from] SystemTimeError),
+    #[error("Time error: {0}")]
+    TimeError(#[from] TimeError),
     #[error("Raw volume error: {0}")]
     String(String),
     #[error("Parse integer error: {0}")]

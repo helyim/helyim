@@ -1,4 +1,11 @@
-use std::{fs::metadata, io::ErrorKind, os::unix::fs::MetadataExt, path::Path, time::SystemTime};
+use std::{
+    cmp::max,
+    fs::metadata,
+    io::ErrorKind,
+    os::unix::fs::MetadataExt,
+    path::{Path, MAIN_SEPARATOR},
+    time::SystemTime,
+};
 
 pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)>, std::io::Error> {
     match metadata(filename) {
@@ -40,6 +47,23 @@ pub fn file_name(path: &str) -> String {
         .unwrap()
 }
 
+pub fn join_path(paths: &[&str], index: usize) -> String {
+    let mut path = String::new();
+    path.push(MAIN_SEPARATOR);
+
+    let index = max(1, index) - 1;
+
+    for p in paths[..index].iter() {
+        path.push_str(p);
+        path.push(MAIN_SEPARATOR);
+    }
+
+    if path.len() > 1 {
+        path.remove(path.len() - 1);
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -48,6 +72,8 @@ mod tests {
         io::{ErrorKind, Read, Write},
         path::Path,
     };
+
+    use crate::util::file::join_path;
 
     #[test]
     pub fn test_file_exist() {
@@ -89,5 +115,15 @@ mod tests {
     pub fn test_file_ext() {
         let path = Path::new("/tmp/helyim.txt");
         assert_eq!(path.extension(), Some(OsStr::new("txt")));
+    }
+
+    #[test]
+    pub fn test_join_path() {
+        let paths = vec!["home", "admin", "data", "db"];
+        assert_eq!(join_path(&paths, 0), "/".to_string());
+        assert_eq!(join_path(&paths, 1), "/".to_string());
+        assert_eq!(join_path(&paths, 2), "/home".to_string());
+        assert_eq!(join_path(&paths, 3), "/home/admin".to_string());
+        assert_eq!(join_path(&paths, 4), "/home/admin/data".to_string());
     }
 }

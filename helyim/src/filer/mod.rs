@@ -15,7 +15,7 @@ use crate::{
         deletion::loop_processing_deletion,
         entry::{Attr, Entry},
     },
-    util::file::file_name,
+    util::file::{file_name, join_path},
 };
 
 pub mod deletion;
@@ -85,11 +85,11 @@ impl Filer {
         }
     }
 
-    pub async fn keep_connected_to_master(&mut self) -> Result<(), FilerError> {
+    pub async fn keep_connected_to_master(&self) -> Result<(), FilerError> {
         Ok(self.master_client.try_all_masters().await?)
     }
 
-    pub fn create_entry(&self, entry: Entry) -> Result<(), FilerError> {
+    pub fn create_entry(&self, entry: &Entry) -> Result<(), FilerError> {
         if entry.full_path == "/" {
             return Ok(());
         }
@@ -98,7 +98,7 @@ impl Filer {
         let mut last_directory_entry: Option<Entry> = None;
 
         for i in 1..dir_parts.len() {
-            let dir_path = String::new();
+            let dir_path = join_path(&dir_parts, i);
             let dir_entry = match self.get_directory(&dir_path) {
                 Some(dir) => {
                     info!("find cached directory: {}", dir_path);
@@ -112,12 +112,11 @@ impl Filer {
 
             match dir_entry {
                 Some(entry) => {
-                    let dir_path = FastStr::new(dir_path);
                     if !entry.is_directory() {
-                        return Err(FilerError::IsFile(dir_path));
+                        return Err(FilerError::IsFile(dir_path.to_string()));
                     }
 
-                    self.set_directory(dir_path, entry.clone());
+                    self.set_directory(FastStr::new(dir_path), entry.clone());
 
                     if i == dir_parts.len() - 1 {
                         last_directory_entry = Some(entry);
@@ -126,7 +125,7 @@ impl Filer {
                 None => {
                     let now = SystemTime::now();
                     let entry = Entry {
-                        full_path: FastStr::new(dir_path),
+                        full_path: dir_path,
                         attr: Attr {
                             mtime: now,
                             crtime: now,
@@ -137,6 +136,8 @@ impl Filer {
                             replication: FastStr::empty(),
                             collection: FastStr::empty(),
                             ttl: 0,
+                            username: FastStr::empty(),
+                            group_names: vec![],
                         },
                         chunks: Vec::new(),
                     };
@@ -147,26 +148,26 @@ impl Filer {
         }
 
         if last_directory_entry.is_none() {
-            return Err(FilerError::ParentFolderNotFound);
+            return Err(FilerError::NotFound);
         }
 
         let old_entry = self.find_entry(&entry.full_path)?;
         match old_entry {
             Some(ref old_entry) => {
-                if let Err(err) = self.update_entry(Some(old_entry), &entry) {
+                if let Err(err) = self.update_entry(Some(old_entry), entry) {
                     error!("update entry: {}, {err}", entry.full_path);
                     return Err(err);
                 }
             }
             None => {
-                if let Err(err) = self.filer_store()?.insert_entry(&entry) {
+                if let Err(err) = self.filer_store()?.insert_entry(entry) {
                     error!("insert entry: {}, {err}", entry.full_path);
                     return Err(err);
                 }
             }
         }
 
-        self.delete_chunks_if_not_new(old_entry.as_ref(), Some(&entry))
+        self.delete_chunks_if_not_new(old_entry.as_ref(), Some(entry))
     }
 
     pub fn update_entry(&self, old_entry: Option<&Entry>, entry: &Entry) -> Result<(), FilerError> {
@@ -187,7 +188,7 @@ impl Filer {
         let time = SystemTime::now();
         if path == "/" {
             return Ok(Some(Entry {
-                full_path: FastStr::new(path),
+                full_path: path.to_string(),
                 attr: Attr::root_path(time),
                 chunks: vec![],
             }));
@@ -256,7 +257,7 @@ impl Filer {
             }
 
             if should_delete_chunks {
-                self.delete_chunks(entry.chunks)?;
+                self.delete_chunks(entry.chunks.as_ref())?;
             }
 
             if path == "/" {
@@ -299,11 +300,11 @@ pub enum FilerError {
     #[error("Master client error: {0}")]
     MasterClient(#[from] ClientError),
     #[error("Existing {0} is a directory")]
-    IsDirectory(FastStr),
+    IsDirectory(String),
     #[error("Existing {0} is a file")]
-    IsFile(FastStr),
-    #[error("Parent folder not found")]
-    ParentFolderNotFound,
+    IsFile(String),
+    #[error("Not found")]
+    NotFound,
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
     #[error("Try send error: {0}")]

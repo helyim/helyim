@@ -28,8 +28,8 @@ pub fn etag(chunks: &[FileChunk]) -> String {
     format!("{:x}", hasher.finish())
 }
 
-pub fn compact_file_chunks(chunks: &mut [FileChunk]) -> (Vec<&mut FileChunk>, Vec<&mut FileChunk>) {
-    let visibles = non_overlapping_visible_intervals(chunks);
+pub fn compact_file_chunks(mut chunks: Vec<FileChunk>) -> (Vec<FileChunk>, Vec<FileChunk>) {
+    let visibles = non_overlapping_visible_intervals(&mut chunks);
     let mut fids = HashMap::new();
     for interval in visibles {
         fids.insert(interval.file_id, true);
@@ -45,6 +45,24 @@ pub fn compact_file_chunks(chunks: &mut [FileChunk]) -> (Vec<&mut FileChunk>, Ve
     }
 
     (compact, garbage)
+}
+
+pub fn find_unused_file_chunks(old_chunks: &[FileChunk], new_chunks: &[FileChunk]) -> Vec<FileChunk> {
+    let mut unused = vec![];
+    let mut file_ids = HashMap::new();
+    for interval in new_chunks {
+        if let Some(fid) = &interval.fid {
+            file_ids.insert(fid, true);
+        }
+    }
+    for chunk in old_chunks {
+        if let Some(fid) = &chunk.fid {
+            if file_ids.contains_key(&fid) {
+                unused.push(chunk.clone());
+            }
+        }
+    }
+    unused
 }
 
 /// Find non-overlapping visible intervals visible interval
