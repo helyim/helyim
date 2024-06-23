@@ -2,15 +2,7 @@ use std::{collections::HashMap, path::MAIN_SEPARATOR, pin::Pin};
 
 use faststr::FastStr;
 use futures::Stream;
-use helyim_proto::filer::{
-    helyim_filer_server::HelyimFiler, AppendToEntryRequest, AppendToEntryResponse,
-    AssignVolumeRequest, AssignVolumeResponse, CollectionListRequest, CollectionListResponse,
-    CreateEntryRequest, CreateEntryResponse, DeleteCollectionRequest, DeleteCollectionResponse,
-    DeleteEntryRequest, DeleteEntryResponse, Entry as PbEntry, KvGetRequest, KvGetResponse,
-    KvPutRequest, KvPutResponse, ListEntriesRequest, ListEntriesResponse,
-    LookupDirectoryEntryRequest, LookupDirectoryEntryResponse, LookupVolumeRequest,
-    LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest, UpdateEntryResponse,
-};
+use helyim_proto::filer::{helyim_filer_server::HelyimFiler, AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse, CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse, DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse, Entry as PbEntry, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest, ListEntriesResponse, LookupDirectoryEntryRequest, LookupDirectoryEntryResponse, LookupVolumeRequest, LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest, UpdateEntryResponse, Location};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::error;
@@ -24,6 +16,7 @@ use crate::{
     proto::map_error_to_status,
     util::time::timestamp_to_time,
 };
+use crate::operation::{assign, AssignRequest};
 
 #[derive(Clone)]
 pub struct FilerOption {
@@ -32,6 +25,7 @@ pub struct FilerOption {
     default_replication: FastStr,
     redirect_on_read: bool,
     data_center: FastStr,
+    rack: FastStr,
     disable_dir_listing: bool,
     max_mb: u64,
     dir_listing_limit: u32,
@@ -285,7 +279,39 @@ impl HelyimFiler for FilerGrpcServer {
             data_center = self.option.data_center.to_string();
         }
 
-        todo!()
+        let mut rack = request.rack;
+        if rack.is_empty() {
+            rack = self.option.rack.to_string();
+        }
+
+        let assign_request = AssignRequest {
+            count: Some(request.count as u64),
+            replication: Some(request.replication),
+            collection: Some(request.collection),
+            ttl: Some(ttl_str),
+            data_center: Some(data_center),
+            rack: Some(rack),
+            preallocate: None,
+            data_node: None,
+        };
+
+        let assignment = assign(&self.filer.current_master(), assign_request).await;
+        let assignment = map_error_to_status(assignment)?;
+
+        let mut response = AssignVolumeResponse::default();
+
+        if !assignment.error.is_empty() {
+            response.error = assignment.error;
+            return Ok(Response::new(response));
+        }
+
+        response.file_id = assignment.fid;
+        response.count = assignment.count as i32;
+        response.location = Some(Location {
+            url: assignment.url,
+            public_url: assignment.public_url,
+        });
+        Ok(Response::new(response))
     }
 
     async fn lookup_volume(

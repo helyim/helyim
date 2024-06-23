@@ -151,12 +151,14 @@ message AssignVolumeRequest {
   string replication = 3;
   int32 ttl_sec = 4;
   string data_center = 5;
+  string rack = 6;
 }
 
 message AssignVolumeResponse {
   string file_id = 1;
-  string error = 8;
-  Location location = 9;
+  int32 count = 2;
+  string error = 3;
+  Location location = 4;
 }
 
 message LookupVolumeRequest {
@@ -170,7 +172,6 @@ message Locations {
 message Location {
   string url = 1;
   string public_url = 2;
-  string data_center = 3;
 }
 message LookupVolumeResponse {
   map<string, Locations> locations_map = 1;

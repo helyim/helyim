@@ -42,7 +42,7 @@ pub async fn assign_handler(
     let assignment = Assignment {
         fid: fid.to_string(),
         url: node.url(),
-        public_url: node.public_url.clone(),
+        public_url: node.public_url.to_string(),
         count,
         error: String::default(),
     };

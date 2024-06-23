@@ -22,6 +22,7 @@ pub mod deletion;
 pub mod entry;
 mod file_chunk;
 mod server;
+mod api;
 
 pub trait FilerStore: Send + Sync {
     fn name(&self) -> &str;
