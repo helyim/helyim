@@ -6,8 +6,11 @@ use helyim_proto::volume::{
 };
 
 use crate::{
-    storage::{api::StorageState, erasure_coding::EcVolumeError},
-    util::{grpc::volume_server_client, http::extractor::ErasureCodingExtractor},
+    storage::{
+        erasure_coding::EcVolumeError,
+        http::{extractor::ErasureCodingExtractor, StorageState},
+    },
+    util::grpc::volume_server_client,
 };
 
 pub async fn generate_ec_shards_handler(

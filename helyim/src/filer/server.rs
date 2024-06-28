@@ -2,7 +2,15 @@ use std::{collections::HashMap, path::MAIN_SEPARATOR, pin::Pin};
 
 use faststr::FastStr;
 use futures::Stream;
-use helyim_proto::filer::{helyim_filer_server::HelyimFiler, AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse, CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse, DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse, Entry as PbEntry, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest, ListEntriesResponse, LookupDirectoryEntryRequest, LookupDirectoryEntryResponse, LookupVolumeRequest, LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest, UpdateEntryResponse, Location};
+use helyim_proto::filer::{
+    helyim_filer_server::HelyimFiler, AppendToEntryRequest, AppendToEntryResponse,
+    AssignVolumeRequest, AssignVolumeResponse, CollectionListRequest, CollectionListResponse,
+    CreateEntryRequest, CreateEntryResponse, DeleteCollectionRequest, DeleteCollectionResponse,
+    DeleteEntryRequest, DeleteEntryResponse, Entry as PbEntry, KvGetRequest, KvGetResponse,
+    KvPutRequest, KvPutResponse, ListEntriesRequest, ListEntriesResponse, Location,
+    LookupDirectoryEntryRequest, LookupDirectoryEntryResponse, LookupVolumeRequest,
+    LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest, UpdateEntryResponse,
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::error;
@@ -13,10 +21,10 @@ use crate::{
         file_chunk::{compact_file_chunks, find_unused_file_chunks},
         FilerRef,
     },
+    operation::{assign, AssignRequest},
     proto::map_error_to_status,
     util::time::timestamp_to_time,
 };
-use crate::operation::{assign, AssignRequest};
 
 #[derive(Clone)]
 pub struct FilerOption {
@@ -45,7 +53,8 @@ impl HelyimFiler for FilerGrpcServer {
         let request = request.into_inner();
         let find_entry = self
             .filer
-            .find_entry(&format!("{}{}", request.directory, request.name));
+            .find_entry(&format!("{}{}", request.directory, request.name))
+            .await;
         match map_error_to_status(find_entry)? {
             Some(entry) => {
                 let attrs = map_error_to_status(entry_attr_to_pb(&entry))?;
@@ -92,12 +101,15 @@ impl HelyimFiler for FilerGrpcServer {
         let filer = self.filer.clone();
         tokio::spawn(async move {
             while limit > 0 {
-                match filer.list_directory_entries(
-                    &request.directory,
-                    &last_filename,
-                    include_last_file,
-                    pagination_limit,
-                ) {
+                match filer
+                    .list_directory_entries(
+                        &request.directory,
+                        &last_filename,
+                        include_last_file,
+                        pagination_limit,
+                    )
+                    .await
+                {
                     Ok(entries) => {
                         if entries.is_empty() {
                             break;
@@ -179,11 +191,14 @@ impl HelyimFiler for FilerGrpcServer {
         };
 
         let attr = map_error_to_status(pb_to_entry_attr(&attrs))?;
-        let create_entry = self.filer.create_entry(&Entry {
-            full_path,
-            attr,
-            chunks,
-        });
+        let create_entry = self
+            .filer
+            .create_entry(&Entry {
+                full_path,
+                attr,
+                chunks,
+            })
+            .await;
         map_error_to_status(create_entry)?;
         Ok(Response::new(CreateEntryResponse::default()))
     }
@@ -203,7 +218,7 @@ impl HelyimFiler for FilerGrpcServer {
             "{}{MAIN_SEPARATOR}{}",
             request.directory, request_entry.name
         );
-        let entry = match map_error_to_status(self.filer.find_entry(&full_path))? {
+        let entry = match map_error_to_status(self.filer.find_entry(&full_path).await)? {
             Some(entry) => entry,
             None => return Err(Status::not_found("")),
         };
@@ -234,7 +249,12 @@ impl HelyimFiler for FilerGrpcServer {
         if entry == new_entry {
             return Ok(Response::new(UpdateEntryResponse {}));
         }
-        if self.filer.update_entry(Some(&entry), &new_entry).is_ok() {
+        if self
+            .filer
+            .update_entry(Some(&entry), &new_entry)
+            .await
+            .is_ok()
+        {
             map_error_to_status(self.filer.delete_chunks(unused_chunks.as_ref()))?;
             map_error_to_status(self.filer.delete_chunks(garbages.as_ref()))?;
         }
@@ -254,11 +274,10 @@ impl HelyimFiler for FilerGrpcServer {
     ) -> Result<Response<DeleteEntryResponse>, Status> {
         let request = request.into_inner();
         let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, request.name);
-        let delete_entry = self.filer.delete_entry_meta_and_data(
-            &full_path,
-            request.is_recursive,
-            request.is_delete_data,
-        );
+        let delete_entry = self
+            .filer
+            .delete_entry_meta_and_data(&full_path, request.is_recursive, request.is_delete_data)
+            .await;
         map_error_to_status(delete_entry)?;
         Ok(Response::new(DeleteEntryResponse::default()))
     }

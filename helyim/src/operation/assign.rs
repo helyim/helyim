@@ -1,12 +1,12 @@
 use faststr::FastStr;
+use helyim_proto::directory::AssignRequest as PbAssignRequest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     storage::{ReplicaPlacement, Ttl, VolumeError},
     topology::volume_grow::VolumeGrowOption,
+    util::grpc::helyim_client,
 };
-use crate::util::grpc::helyim_client;
-use helyim_proto::directory::AssignRequest as PbAssignRequest;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,7 +82,7 @@ pub async fn assign(server: &str, request: AssignRequest) -> Result<Assignment, 
         data_node: request.data_node.unwrap_or_default(),
         // FIXME: what values should they be set to?
         memory_map_max_size_mb: u32::MAX,
-        writable_volume_count: 1
+        writable_volume_count: 1,
     };
 
     let response = client.assign(request).await?;

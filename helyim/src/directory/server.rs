@@ -23,8 +23,9 @@ use tracing::{error, info};
 
 use crate::{
     client::MasterClient,
-    directory::api::{
-        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, DirectoryState,
+    directory::http::{
+        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, require_leader,
+        DirectoryState,
     },
     errors::Result,
     proto::map_error_to_status,
@@ -38,12 +39,8 @@ use crate::{
         DataNodeRef, Topology, TopologyError, TopologyRef,
     },
     util::{
-        args::MasterOptions,
-        get_or_default,
-        grpc::grpc_port,
-        http::{default_handler, extractor::require_leader},
-        parser::parse_vid_fid,
-        sys::exit,
+        args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler,
+        parser::parse_vid_fid, sys::exit,
     },
 };
 

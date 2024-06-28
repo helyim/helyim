@@ -7,8 +7,6 @@ use std::{
 use fnv::FnvHasher;
 use helyim_proto::filer::FileChunk;
 
-mod manifest;
-
 pub fn total_size(chunks: &[FileChunk]) -> u64 {
     let mut size = 0;
     for chunk in chunks {

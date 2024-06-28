@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-mod api;
 mod crc;
 mod disk_location;
 
@@ -8,6 +7,8 @@ pub mod erasure_coding;
 
 mod file_id;
 pub use file_id::FileId;
+
+mod http;
 
 mod needle;
 pub use needle::{

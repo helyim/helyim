@@ -1,5 +1,5 @@
 mod assign;
-pub use assign::{AssignRequest, Assignment, assign};
+pub use assign::{assign, AssignRequest, Assignment};
 
 mod cluster;
 pub use cluster::{list_master, ClusterStatus};

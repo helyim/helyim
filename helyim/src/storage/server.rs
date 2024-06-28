@@ -35,18 +35,18 @@ use crate::{
     operation::{list_master, Looker},
     proto::save_volume_info,
     storage::{
-        api::{
+        erasure_coding::{
+            ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
+            write_data_file, write_ec_files, write_index_file_from_ec_index,
+            write_sorted_file_from_index, ShardId,
+        },
+        http::{
             delete_handler,
             erasure_coding::{
                 generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
                 rebuild_missing_ec_shards_handler,
             },
             get_or_head_handler, post_handler, status_handler, StorageState,
-        },
-        erasure_coding::{
-            ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file, to_ext,
-            write_data_file, write_ec_files, write_index_file_from_ec_index,
-            write_sorted_file_from_index, ShardId,
         },
         needle::NeedleMapType,
         store::{Store, StoreRef},

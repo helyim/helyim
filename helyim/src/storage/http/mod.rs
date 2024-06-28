@@ -30,22 +30,17 @@ use crate::{
     operation::{Looker, ParseUpload, Upload},
     storage::{
         crc,
+        http::extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
         needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
         store::StoreRef,
         NeedleError, Ttl, VolumeId, VolumeInfo,
     },
     util,
-    util::{
-        http::{
-            extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
-            HTTP_DATE_FORMAT,
-        },
-        parser::parse_url_path,
-        time::now,
-    },
+    util::{http::HTTP_DATE_FORMAT, parser::parse_url_path, time::now},
 };
 
 pub mod erasure_coding;
+mod extractor;
 
 #[derive(Clone)]
 pub struct StorageState {

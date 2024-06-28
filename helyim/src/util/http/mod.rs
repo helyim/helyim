@@ -1,5 +1,3 @@
-pub mod extractor;
-
 use std::time::Duration;
 
 use axum::response::Html;
@@ -36,6 +34,10 @@ pub async fn delete<U: AsRef<str>>(url: U, params: &[(&str, &str)]) -> Result<By
     let url = Url::parse_with_params(url.as_ref(), params)?;
     Ok(HTTP_CLIENT.delete(url).send().await?.bytes().await?)
 }
+
+/// axum handler and struct
+
+pub struct FormOrJson<T>(pub T);
 
 pub async fn default_handler() -> Html<&'static str> {
     Html(PHRASE)

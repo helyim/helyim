@@ -3,25 +3,25 @@ use std::{result::Result as StdResult, str::FromStr};
 use axum::{
     body::Body,
     extract::{FromRequest, Query, State},
-    http::{header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{
+        header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, Method, Request, Response,
+        StatusCode, Uri,
+    },
     middleware::Next,
     response::IntoResponse,
     Form, Json, RequestExt,
 };
-use axum_extra::{extract::TypedHeader, headers::Host};
 use axum_macros::FromRequest;
-use bytes::Bytes;
-use faststr::FastStr;
-use hyper::{body::Incoming, Method, Request, Response, Uri};
+use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
 use tracing::{error, info};
 
 use crate::{
-    directory::DirectoryState,
-    storage::VolumeId,
+    directory::http::DirectoryState,
     topology::{TopologyError, TopologyRef},
+    util::http::FormOrJson,
 };
 
 #[derive(Debug, FromRequest)]
@@ -29,52 +29,6 @@ pub struct GetOrHeadExtractor {
     pub uri: Uri,
     pub headers: HeaderMap,
 }
-
-#[derive(Debug, FromRequest)]
-pub struct PostExtractor {
-    // only the last field can implement `FromRequest`
-    // other fields must only implement `FromRequestParts`
-    pub uri: Uri,
-    pub headers: HeaderMap,
-    #[from_request(via(Query))]
-    pub query: StorageQuery,
-    pub body: Bytes,
-}
-
-#[derive(Debug, FromRequest)]
-pub struct DeleteExtractor {
-    // only the last field can implement `FromRequest`
-    // other fields must only implement `FromRequestParts`
-    pub uri: Uri,
-    #[from_request(via(TypedHeader))]
-    pub host: Host,
-    #[from_request(via(Query))]
-    pub query: StorageQuery,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StorageQuery {
-    pub r#type: Option<FastStr>,
-    // is chunked file
-    pub cm: Option<bool>,
-    pub ttl: Option<FastStr>,
-    // last modified
-    pub ts: Option<u64>,
-}
-
-#[derive(Debug, FromRequest)]
-pub struct ErasureCodingExtractor {
-    #[from_request(via(Query))]
-    pub query: ErasureCodingQuery,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ErasureCodingQuery {
-    pub volume: VolumeId,
-    pub collection: Option<FastStr>,
-}
-
-pub struct FormOrJson<T>(pub T);
 
 #[async_trait::async_trait]
 impl<T> FromRequest<DirectoryState> for FormOrJson<T>
@@ -133,18 +87,6 @@ where
     }
 }
 
-pub async fn require_leader(
-    State(state): State<DirectoryState>,
-    request: Request<Body>,
-    next: Next,
-) -> axum::response::Response {
-    let topology = &state.topology;
-    if !topology.is_leader().await {
-        return proxy_to_leader(request, topology).await.into_response();
-    }
-    next.run(request).await
-}
-
 async fn proxy_to_leader(
     mut req: Request<Body>,
     topology: &TopologyRef,
@@ -186,4 +128,16 @@ async fn proxy_to_leader(
         }
         None => Err(TopologyError::NoLeader),
     };
+}
+
+pub async fn require_leader(
+    State(state): State<DirectoryState>,
+    request: Request<Body>,
+    next: Next,
+) -> axum::response::Response {
+    let topology = &state.topology;
+    if !topology.is_leader().await {
+        return proxy_to_leader(request, topology).await.into_response();
+    }
+    next.run(request).await
 }
