@@ -15,6 +15,7 @@ pub struct Opts {
 pub enum Command {
     Master(MasterOptions),
     Volume(VolumeOptions),
+    Filer(FilerOptions),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -110,6 +111,28 @@ impl VolumeOptions {
             })
             .collect()
     }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct FilerOptions {
+    /// master server endpoint. Todo: change it to service discovery
+    #[arg(long, default_value("127.0.0.1:9333"))]
+    pub master_server: FastStr,
+    // data center
+    #[arg(long, default_value(""))]
+    pub data_center: FastStr,
+    // rack
+    #[arg(long, default_value(""))]
+    pub rack: FastStr,
+    // data node
+    #[arg(long, default_value(""))]
+    pub data_node: FastStr,
+    // monitor ip
+    #[arg(long, default_value("127.0.0.1"))]
+    pub ip: FastStr,
+    // monitor port
+    #[arg(long, default_value_t = 8888)]
+    pub port: u16,
 }
 
 #[derive(Args, Debug, Clone)]

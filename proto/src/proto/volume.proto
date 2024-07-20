@@ -2,6 +2,7 @@ syntax = "proto3";
 package volume;
 
 service VolumeServer {
+  // volumn
   rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {}
   rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {}
   rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {}
