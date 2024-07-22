@@ -26,7 +26,9 @@ use crate::{
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {
+    #[allow(dead_code)]  // todo: remove it
     pub uri: Uri,
+    #[allow(dead_code)]  // todo: remove it
     pub headers: HeaderMap,
 }
 

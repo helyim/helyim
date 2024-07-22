@@ -8,7 +8,7 @@ pub mod client;
 pub mod directory;
 
 pub mod errors;
-mod filer;
+pub mod filer;
 mod images;
 mod operation;
 mod proto;

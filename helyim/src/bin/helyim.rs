@@ -2,12 +2,10 @@ use std::time::Duration;
 
 use clap::Parser;
 use helyim::{
-    directory::{DirectoryServer, Sequencer, SequencerType},
-    storage::{NeedleMapType, VolumeServer},
-    util::{
-        args::{Command, LogOptions, MasterOptions, Opts, VolumeOptions},
+    directory::{DirectoryServer, Sequencer, SequencerType}, filer::FilerServer, storage::{NeedleMapType, VolumeServer}, util::{
+        args::{Command, FilerOptions, LogOptions, MasterOptions, Opts, VolumeOptions},
         sys::shutdown_signal,
-    },
+    }
 };
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
@@ -32,6 +30,17 @@ async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::err
     shutdown_signal().await;
     server.stop().await?;
 
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    Ok(())
+}
+
+async fn start_filer(filer_opts: FilerOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let mut server = FilerServer::new(filer_opts).await?;
+
+    server.start().await?;
+    shutdown_signal().await;
+    server.stop().await?;
+    
     tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }
@@ -89,6 +98,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             info!("starting volume....");
             start_volume(volume).await
+        },
+        Command::Filer(filer) => {
+            log_init(level, &log_opts, "filer")?;
+            
+            info!("starting filer....");
+            start_filer(filer).await
         }
     }
 }
