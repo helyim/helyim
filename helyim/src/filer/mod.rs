@@ -4,10 +4,13 @@ use std::{
 };
 
 use async_recursion::async_recursion;
+use axum::{response::{IntoResponse, Response}, Json};
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
+use hyper::StatusCode;
 use moka::sync::Cache;
+use serde_json::json;
 use tracing::{error, info};
 
 use crate::{
@@ -24,6 +27,7 @@ pub mod entry;
 mod file_chunk;
 mod http;
 mod server;
+pub use server::{FilerServer, start_filer_server};
 
 #[async_trait::async_trait]
 pub trait FilerStore: Send + Sync {
@@ -330,4 +334,15 @@ pub enum FilerError {
 
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl IntoResponse for FilerError {
+    fn into_response(self) -> Response {
+        let error = self.to_string();
+        let error = json!({
+            "error": error
+        });
+        let response = (StatusCode::BAD_REQUEST, Json(error));
+        response.into_response()
+    }
 }

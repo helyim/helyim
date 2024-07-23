@@ -15,7 +15,7 @@ pub fn total_size(chunks: &[FileChunk]) -> u64 {
     size
 }
 
-pub fn etag(chunks: &[FileChunk]) -> String {
+pub fn _etag(chunks: &[FileChunk]) -> String {
     if chunks.len() == 1 {
         return chunks[0].e_tag.clone();
     }
@@ -74,6 +74,7 @@ struct VisibleInterval {
     stop: i64,
     modified_time: i64,
     file_id: String,
+    #[allow(dead_code)]  // todo: remove it
     is_full_chunk: bool,
 }
 
@@ -177,6 +178,7 @@ fn merge_into_visibles<'a>(
     new_visibles.clone()
 }
 
+#[allow(dead_code)]  // todo: remove it
 pub struct ChunkView {
     fid: String,
     offset: i64,

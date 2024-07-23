@@ -1,47 +1,145 @@
-use std::{collections::HashMap, path::MAIN_SEPARATOR, pin::Pin};
+use std::{
+    collections::HashMap, net::SocketAddr, path::MAIN_SEPARATOR, pin::Pin,
+    result::Result as StdResult, time::Duration,
+};
 
+use axum::{
+    extract::DefaultBodyLimit,
+    routing::get,
+    Router,
+};
 use faststr::FastStr;
 use futures::Stream;
 use helyim_proto::filer::{
-    helyim_filer_server::HelyimFiler, AppendToEntryRequest, AppendToEntryResponse,
-    AssignVolumeRequest, AssignVolumeResponse, CollectionListRequest, CollectionListResponse,
-    CreateEntryRequest, CreateEntryResponse, DeleteCollectionRequest, DeleteCollectionResponse,
-    DeleteEntryRequest, DeleteEntryResponse, Entry as PbEntry, KvGetRequest, KvGetResponse,
-    KvPutRequest, KvPutResponse, ListEntriesRequest, ListEntriesResponse, Location,
-    LookupDirectoryEntryRequest, LookupDirectoryEntryResponse, LookupVolumeRequest,
-    LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest, UpdateEntryResponse,
+    helyim_filer_server::{HelyimFiler, HelyimFilerServer},
+    AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
+    CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse,
+    DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse,
+    Entry as PbEntry, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest,
+    ListEntriesResponse, Location, LookupDirectoryEntryRequest, LookupDirectoryEntryResponse,
+    LookupVolumeRequest, LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest,
+    UpdateEntryResponse,
 };
+use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::{Request, Response, Status};
-use tracing::error;
+use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
+use tracing::{error, info};
 
+use super::http::FilerState;
 use crate::{
+    errors::Result,
     filer::{
         entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
         file_chunk::{compact_file_chunks, find_unused_file_chunks},
-        FilerRef,
+        http::{get_or_head_handler, healthz_handler},
+        Filer, FilerRef,
     },
     operation::{assign, AssignRequest},
     proto::map_error_to_status,
-    util::time::timestamp_to_time,
+    util::{
+        args::FilerOptions, grpc::grpc_port, http::default_handler, sys::exit,
+        time::timestamp_to_time,
+    },
 };
 
-#[derive(Clone)]
-pub struct FilerOption {
-    pub masters: Vec<FastStr>,
-    collection: FastStr,
-    default_replication: FastStr,
-    redirect_on_read: bool,
-    data_center: FastStr,
-    rack: FastStr,
-    disable_dir_listing: bool,
-    max_mb: u64,
-    dir_listing_limit: u32,
+pub struct FilerServer {
+    options: FilerOptions,
+    filer: FilerRef,
+    shutdown: async_broadcast::Sender<()>,
+}
+
+impl FilerServer {
+    pub async fn new(filer_opts: FilerOptions) -> Result<FilerServer> {
+        let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
+
+        let filer = Filer::new(filer_opts.masters.clone());
+        let filer_server = FilerServer {
+            options: filer_opts.clone(),
+            filer: filer.clone(),
+            shutdown,
+        };
+        let addr = format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port)).parse()?;
+
+        tokio::spawn(async move {
+            info!("filer server starting up. binding addr: {addr}");
+
+            if let Err(err) = TonicServer::builder()
+                .add_service(HelyimFilerServer::new(FilerGrpcServer {
+                    filer,
+                    option: filer_opts,
+                }))
+                .serve_with_shutdown(addr, async {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+            {
+                error!("volume grpc server starting failed, {err}");
+                exit();
+            }
+        });
+
+        Ok(filer_server)
+    }
+
+    pub async fn stop(self) -> Result<()> {
+        self.shutdown.broadcast(()).await?;
+        Ok(())
+    }
+
+    pub async fn start(&mut self) -> Result<()> {
+        // http server
+        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
+        let shutdown_rx = self.shutdown.new_receiver();
+        tokio::spawn(start_filer_server(
+            FilerState {
+                filer: self.filer.clone(),
+            },
+            addr,
+            shutdown_rx,
+        ));
+        Ok(())
+    }
+}
+
+pub async fn start_filer_server(
+    state: FilerState,
+    addr: SocketAddr,
+    mut shutdown: async_broadcast::Receiver<()>,
+) {
+    let app = Router::new()
+        .route("/", get(get_or_head_handler).post(get_or_head_handler))
+        .route("/healthz", get(healthz_handler).post(healthz_handler))
+        .fallback(default_handler)
+        .layer((
+            CompressionLayer::new(),
+            DefaultBodyLimit::max(1024 * 1024),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ))
+        .with_state(state);
+
+    info!("filer api server is starting up. binding addr: {addr}");
+
+    match TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if let Err(err) = axum::serve(listener, app.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown.recv().await;
+                    info!("filer api server is shutting down gracefully");
+                })
+                .await
+            {
+                error!("filer api server is shutting down with error: {err}");
+                exit();
+            }
+        }
+        Err(err) => error!("binding directory api address {addr} failed, error: {err}"),
+    }
 }
 
 pub struct FilerGrpcServer {
     filer: FilerRef,
-    option: FilerOption,
+    option: FilerOptions,
 }
 
 #[tonic::async_trait]
@@ -49,7 +147,7 @@ impl HelyimFiler for FilerGrpcServer {
     async fn lookup_directory_entry(
         &self,
         request: Request<LookupDirectoryEntryRequest>,
-    ) -> Result<Response<LookupDirectoryEntryResponse>, Status> {
+    ) -> StdResult<Response<LookupDirectoryEntryResponse>, Status> {
         let request = request.into_inner();
         let find_entry = self
             .filer
@@ -76,12 +174,12 @@ impl HelyimFiler for FilerGrpcServer {
     }
 
     type ListEntriesStream =
-        Pin<Box<dyn Stream<Item = Result<ListEntriesResponse, Status>> + Send>>;
+        Pin<Box<dyn Stream<Item = StdResult<ListEntriesResponse, Status>> + Send>>;
 
     async fn list_entries(
         &self,
         request: Request<ListEntriesRequest>,
-    ) -> Result<Response<Self::ListEntriesStream>, Status> {
+    ) -> StdResult<Response<Self::ListEntriesStream>, Status> {
         let request = request.into_inner();
 
         let mut limit = request.limit;
@@ -171,7 +269,7 @@ impl HelyimFiler for FilerGrpcServer {
     async fn create_entry(
         &self,
         request: Request<CreateEntryRequest>,
-    ) -> Result<Response<CreateEntryResponse>, Status> {
+    ) -> StdResult<Response<CreateEntryResponse>, Status> {
         let request = request.into_inner();
         let entry = match request.entry {
             Some(entry) => entry,
@@ -206,7 +304,7 @@ impl HelyimFiler for FilerGrpcServer {
     async fn update_entry(
         &self,
         request: Request<UpdateEntryRequest>,
-    ) -> Result<Response<UpdateEntryResponse>, Status> {
+    ) -> StdResult<Response<UpdateEntryResponse>, Status> {
         let request = request.into_inner();
 
         let request_entry = match request.entry {
@@ -263,15 +361,15 @@ impl HelyimFiler for FilerGrpcServer {
 
     async fn append_to_entry(
         &self,
-        request: Request<AppendToEntryRequest>,
-    ) -> Result<Response<AppendToEntryResponse>, Status> {
+        _request: Request<AppendToEntryRequest>,
+    ) -> StdResult<Response<AppendToEntryResponse>, Status> {
         todo!()
     }
 
     async fn delete_entry(
         &self,
         request: Request<DeleteEntryRequest>,
-    ) -> Result<Response<DeleteEntryResponse>, Status> {
+    ) -> StdResult<Response<DeleteEntryResponse>, Status> {
         let request = request.into_inner();
         let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, request.name);
         let delete_entry = self
@@ -285,7 +383,7 @@ impl HelyimFiler for FilerGrpcServer {
     async fn assign_volume(
         &self,
         request: Request<AssignVolumeRequest>,
-    ) -> Result<Response<AssignVolumeResponse>, Status> {
+    ) -> StdResult<Response<AssignVolumeResponse>, Status> {
         let request = request.into_inner();
 
         let mut ttl_str = String::new();
@@ -335,40 +433,43 @@ impl HelyimFiler for FilerGrpcServer {
 
     async fn lookup_volume(
         &self,
-        request: Request<LookupVolumeRequest>,
-    ) -> Result<Response<LookupVolumeResponse>, Status> {
+        _request: Request<LookupVolumeRequest>,
+    ) -> StdResult<Response<LookupVolumeResponse>, Status> {
         todo!()
     }
 
     async fn collection_list(
         &self,
-        request: Request<CollectionListRequest>,
-    ) -> Result<Response<CollectionListResponse>, Status> {
+        _request: Request<CollectionListRequest>,
+    ) -> StdResult<Response<CollectionListResponse>, Status> {
         todo!()
     }
 
     async fn delete_collection(
         &self,
-        request: Request<DeleteCollectionRequest>,
-    ) -> Result<Response<DeleteCollectionResponse>, Status> {
+        _request: Request<DeleteCollectionRequest>,
+    ) -> StdResult<Response<DeleteCollectionResponse>, Status> {
         todo!()
     }
 
-    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
+    async fn ping(
+        &self,
+        _request: Request<PingRequest>,
+    ) -> StdResult<Response<PingResponse>, Status> {
         todo!()
     }
 
     async fn kv_get(
         &self,
-        request: Request<KvGetRequest>,
-    ) -> Result<Response<KvGetResponse>, Status> {
+        _request: Request<KvGetRequest>,
+    ) -> StdResult<Response<KvGetResponse>, Status> {
         todo!()
     }
 
     async fn kv_put(
         &self,
-        request: Request<KvPutRequest>,
-    ) -> Result<Response<KvPutResponse>, Status> {
+        _request: Request<KvPutRequest>,
+    ) -> StdResult<Response<KvPutResponse>, Status> {
         todo!()
     }
 }
