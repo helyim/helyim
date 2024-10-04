@@ -33,10 +33,10 @@ impl LocationMap {
         Err(ClientError::VolumeIdNotFound(vid))
     }
 
-    pub fn lookup_file_id(&self, file_id: &str) -> Result<FastStr, ClientError> {
+    pub fn lookup_file_id(&self, file_id: &str) -> Result<String, ClientError> {
         let (_, (vid, file_id)) = parse_vid_fid(file_id)?;
         let url = self.lookup_volume_server_url(vid)?;
-        Ok(FastStr::new(format!("http://{url}/{file_id}")))
+        Ok(format!("http://{url}/{file_id}"))
     }
 
     pub fn lookup_volume_server(&self, file_id: &str) -> Result<FastStr, ClientError> {

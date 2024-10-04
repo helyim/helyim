@@ -16,6 +16,7 @@ use crate::{
     raft::types::RaftError,
     storage::{erasure_coding::EcVolumeError, NeedleError, TtlError, VolumeError},
     topology::TopologyError,
+    util::http::HttpError,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -70,16 +71,12 @@ pub enum Error {
     InvalidHeaderName(#[from] InvalidHeaderName),
     #[error("Tostr error: {0}")]
     ToStr(#[from] ToStrError),
-    #[error("Url parse error: {0}")]
-    UrlParse(#[from] url::ParseError),
+    // #[error("Url parse error: {0}")]
+    // UrlParse(#[from] url::ParseError),
     #[error("Timeout")]
     Timeout,
-    #[error("Hyper error: {0}")]
-    Hyper(#[from] hyper::Error),
-    #[error("Axum http error: {0}")]
-    AxumHttp(#[from] axum::http::Error),
-    #[error("Reqwest error: {0}")]
-    Reqwest(#[from] reqwest::Error),
+    #[error("Http error: {0}")]
+    Http(#[from] HttpError),
 
     // tonic
     #[error("Tonic status: {0}")]

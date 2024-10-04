@@ -4,7 +4,10 @@ use std::{
 };
 
 use async_recursion::async_recursion;
-use axum::{response::{IntoResponse, Response}, Json};
+use axum::{
+    response::{IntoResponse, Response},
+    Json,
+};
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
 use helyim_proto::filer::FileId;
@@ -27,7 +30,9 @@ pub mod entry;
 mod file_chunk;
 mod http;
 mod server;
-pub use server::{FilerServer, start_filer_server};
+pub use server::{start_filer_server, FilerServer};
+
+use crate::util::http::HttpError;
 
 #[async_trait::async_trait]
 pub trait FilerStore: Send + Sync {
@@ -255,7 +260,9 @@ impl Filer {
 
                     if is_recursive {
                         for entry in entries.iter() {
-                            last_filename = file_name(entry.path());
+                            if let Some(filename) = file_name(entry.path()) {
+                                last_filename = filename;
+                            }
                             self.delete_entry_meta_and_data(
                                 entry.path(),
                                 is_recursive,
@@ -331,10 +338,17 @@ pub enum FilerError {
     StoreNotInitialized,
     #[error("Try send error: {0}")]
     TrySend(#[from] TrySendError<Option<FileId>>),
+    #[error("Http error: {0}")]
+    Http(#[from] HttpError),
+
+    #[error("Serde Json error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
 
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
 }
+
+unsafe impl Send for FilerError {}
 
 impl IntoResponse for FilerError {
     fn into_response(self) -> Response {

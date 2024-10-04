@@ -4,14 +4,12 @@ use axum::{
     body::Body,
     extract::{FromRequest, Query, State},
     http::{
-        header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, Method, Request, Response,
-        StatusCode, Uri,
+        header::CONTENT_TYPE, HeaderName, HeaderValue, Method, Request, Response, StatusCode, Uri,
     },
     middleware::Next,
     response::IntoResponse,
     Form, Json, RequestExt,
 };
-use axum_macros::FromRequest;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use serde::de::DeserializeOwned;
@@ -23,14 +21,6 @@ use crate::{
     topology::{TopologyError, TopologyRef},
     util::http::FormOrJson,
 };
-
-#[derive(Debug, FromRequest)]
-pub struct GetOrHeadExtractor {
-    #[allow(dead_code)]  // todo: remove it
-    pub uri: Uri,
-    #[allow(dead_code)]  // todo: remove it
-    pub headers: HeaderMap,
-}
 
 #[async_trait::async_trait]
 impl<T> FromRequest<DirectoryState> for FormOrJson<T>

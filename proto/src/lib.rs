@@ -20,7 +20,7 @@ pub mod filer {
     include!(concat!(env!("OUT_DIR"), "/filer.rs"));
 
     impl FileChunk {
-        pub fn get_fid_str(&self) -> String {
+        pub fn get_fid(&self) -> String {
             match self.fid.as_ref() {
                 Some(fid) => fid.to_fid_str(),
                 None => String::default(),

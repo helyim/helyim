@@ -36,7 +36,7 @@ pub fn compact_file_chunks(mut chunks: Vec<FileChunk>) -> (Vec<FileChunk>, Vec<F
     let mut compact = Vec::new();
     let mut garbage = Vec::new();
     for chunk in chunks {
-        match fids.get(&chunk.get_fid_str()) {
+        match fids.get(&chunk.get_fid()) {
             Some(_) => compact.push(chunk),
             None => garbage.push(chunk),
         }
@@ -74,7 +74,7 @@ struct VisibleInterval {
     stop: i64,
     modified_time: i64,
     file_id: String,
-    #[allow(dead_code)]  // todo: remove it
+    #[allow(dead_code)] // todo: remove it
     is_full_chunk: bool,
 }
 
@@ -178,7 +178,7 @@ fn merge_into_visibles<'a>(
     new_visibles.clone()
 }
 
-#[allow(dead_code)]  // todo: remove it
+#[allow(dead_code)] // todo: remove it
 pub struct ChunkView {
     fid: String,
     offset: i64,

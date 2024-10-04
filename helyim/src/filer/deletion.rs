@@ -14,7 +14,7 @@ use crate::{
 impl Filer {
     pub fn delete_chunks(&self, chunks: &[FileChunk]) -> Result<(), FilerError> {
         for chunk in chunks {
-            self.delete_file_id_tx.unbounded_send(chunk.fid.clone())?;
+            self.delete_file_id_tx.unbounded_send(chunk.fid)?;
         }
 
         Ok(())
@@ -52,7 +52,7 @@ impl Filer {
         self.delete_chunks(&to_delete)
     }
 
-    #[allow(dead_code)]  // todo: remove it
+    #[allow(dead_code)] // todo: remove it
     fn lookup(&self, vids: Vec<FastStr>) -> HashMap<FastStr, Lookup> {
         let mut map = HashMap::new();
         for vid in vids {

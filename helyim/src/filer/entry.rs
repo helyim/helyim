@@ -6,13 +6,14 @@ use std::{
 use faststr::FastStr;
 use helyim_proto::filer::{FileChunk, FuseAttributes};
 use rustix::process::{getgid, getuid};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     filer::file_chunk::total_size,
     util::time::{get_time, timestamp_to_time, TimeError},
 };
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Attr {
     pub mtime: SystemTime,
     pub crtime: SystemTime,
@@ -49,7 +50,7 @@ impl Attr {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub full_path: String,
     pub attr: Attr,

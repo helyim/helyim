@@ -127,13 +127,17 @@ async fn replicate_delete(
                 s.spawn(async {
                     let url = format!("http://{}{}", &location.url, path);
                     if let Err(err) = util::http::delete(&url, &params).await.and_then(|body| {
-                        let value: Value = serde_json::from_slice(&body)?;
-                        if let Some(err) = value["error"].as_str() {
-                            if !err.is_empty() {
-                                return Err(anyhow!("delete {} err: {err}", location.url));
+                        match serde_json::from_slice::<Value>(&body) {
+                            Ok(value) => {
+                                if let Some(err) = value["error"].as_str() {
+                                    if !err.is_empty() {
+                                        return Err(anyhow!("delete {} err: {err}", location.url));
+                                    }
+                                }
+                                Ok(())
                             }
+                            Err(err) => Err(anyhow!("replicate delete: serde json error: {err}")),
                         }
-                        Ok(())
                     }) {
                         error!("replicate delete failed, error: {err}");
                     }
@@ -209,14 +213,16 @@ async fn replicate_write(
                     let url = format!("http://{}{}", location.url, path);
                     if let Err(err) = util::http::post(&url, &params, data.clone())
                         .await
-                        .and_then(|body| {
-                            let value: Value = serde_json::from_slice(&body)?;
-                            if let Some(err) = value["error"].as_str() {
-                                if !err.is_empty() {
-                                    return Err(anyhow!("write {} err: {err}", location.url));
+                        .and_then(|body| match serde_json::from_slice::<Value>(&body) {
+                            Ok(value) => {
+                                if let Some(err) = value["error"].as_str() {
+                                    if !err.is_empty() {
+                                        return Err(anyhow!("write {} err: {err}", location.url));
+                                    }
                                 }
+                                Ok(())
                             }
-                            Ok(())
+                            Err(err) => Err(anyhow!("replicate write: serde json error: {err}")),
                         })
                     {
                         error!("replicate write failed, error: {err}");
@@ -280,7 +286,7 @@ async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle> {
 fn get_boundary(extractor: &PostExtractor) -> Result<String> {
     const BOUNDARY: &str = "boundary=";
 
-    return match extractor.headers.get(CONTENT_TYPE) {
+    match extractor.headers.get(CONTENT_TYPE) {
         Some(content_type) => {
             let ct = content_type.to_str()?;
             match ct.find(BOUNDARY) {
@@ -289,7 +295,7 @@ fn get_boundary(extractor: &PostExtractor) -> Result<String> {
             }
         }
         None => Err(anyhow!("no content type")),
-    };
+    }
 }
 
 async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload> {

@@ -57,6 +57,7 @@ parking_lot.workspace = true
 rand.workspace = true
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 regex.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -70,9 +71,6 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url.workspace = true
-
-# TODO: remove in the future
-reqwest = { version = "0.11", features = ["json"] }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

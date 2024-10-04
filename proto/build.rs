@@ -28,8 +28,14 @@ fn main() -> Result<()> {
             "helyim.HeartbeatResponse",
             "#[derive(::serde::Serialize, ::serde::Deserialize)]",
         )
-        .type_attribute("filer.FileId", "#[derive(Hash, Eq)]")
-        .type_attribute("filer.FileChunk", "#[derive(Hash, Eq)]")
-        .compile(&protos, includes)?;
+        .type_attribute(
+            "filer.FileId",
+            "#[derive(Hash, Eq, ::serde::Serialize, ::serde::Deserialize)]",
+        )
+        .type_attribute(
+            "filer.FileChunk",
+            "#[derive(Hash, Eq, ::serde::Serialize, ::serde::Deserialize)]",
+        )
+        .compile_protos(&protos, includes)?;
     Ok(())
 }

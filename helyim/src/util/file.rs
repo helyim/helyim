@@ -40,11 +40,10 @@ pub fn file_exists(filename: &str) -> Result<bool, std::io::Error> {
     }
 }
 
-pub fn file_name(path: &str) -> String {
+pub fn file_name(path: &str) -> Option<String> {
     let path = Path::new(path);
     path.file_name()
         .map(|name| name.to_string_lossy().to_string())
-        .unwrap()
 }
 
 pub fn join_path(paths: &[&str], index: usize) -> String {

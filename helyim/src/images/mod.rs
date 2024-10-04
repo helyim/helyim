@@ -2,8 +2,6 @@ use std::cell::OnceCell;
 
 use bytes::Bytes;
 
-use crate::errors::Result;
-
 pub struct Favicon {
     cell: OnceCell<Bytes>,
 }
@@ -16,11 +14,11 @@ impl Favicon {
             cell: OnceCell::new(),
         }
     }
-    pub fn bytes(&self) -> Result<&[u8]> {
+    pub fn bytes(&self) -> &[u8] {
         let buf = self
             .cell
             .get_or_init(|| Bytes::from_static(include_bytes!("favicon/favicon.ico")));
-        Ok(buf)
+        buf
     }
 }
 

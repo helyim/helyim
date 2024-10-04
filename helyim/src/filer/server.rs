@@ -3,11 +3,7 @@ use std::{
     result::Result as StdResult, time::Duration,
 };
 
-use axum::{
-    extract::DefaultBodyLimit,
-    routing::get,
-    Router,
-};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
 use helyim_proto::filer::{
@@ -91,9 +87,12 @@ impl FilerServer {
         // http server
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
+
+        let options = self.options.clone();
         tokio::spawn(start_filer_server(
             FilerState {
                 filer: self.filer.clone(),
+                options,
             },
             addr,
             shutdown_rx,
