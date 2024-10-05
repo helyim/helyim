@@ -112,7 +112,7 @@ impl DiskLocation {
 
                     match parse_collection_volume_id(base_name) {
                         Ok((vid, collection)) => {
-                            if let Some(m) = REGEX.find(&ext.to_string_lossy()) {
+                            if REGEX.find(&ext.to_string_lossy()).is_some() {
                                 if pre_volume_id == 0 || vid == pre_volume_id {
                                     same_volume_shards.push(filename);
                                 } else {
@@ -129,7 +129,7 @@ impl DiskLocation {
                                 continue;
                             }
                         }
-                        Err(err) => continue,
+                        Err(_err) => continue,
                     }
                 }
             }

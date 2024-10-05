@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use faststr::FastStr;
 
 pub mod args;

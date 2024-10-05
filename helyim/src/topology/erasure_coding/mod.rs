@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use helyim_proto::directory::VolumeEcShardInformationMessage;

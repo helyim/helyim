@@ -140,7 +140,7 @@ impl EcVolume {
     pub async fn locate_ec_shard_needle(
         &self,
         needle_id: NeedleId,
-        version: Version,
+        _version: Version,
     ) -> Result<(NeedleValue, Vec<Interval>), EcVolumeError> {
         let needle_value = self.find_needle_from_ecx(needle_id)?;
         let shard = &self.shards.read().await[0];

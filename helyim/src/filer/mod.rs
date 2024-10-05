@@ -14,6 +14,7 @@ use helyim_proto::filer::FileId;
 use hyper::StatusCode;
 use moka::sync::Cache;
 use serde_json::json;
+use tokio::task::JoinError;
 use tracing::{error, info};
 
 use crate::{
@@ -340,6 +341,11 @@ pub enum FilerError {
     TrySend(#[from] TrySendError<Option<FileId>>),
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
+    #[error("Rustix errno: {0}")]
+    Errno(#[from] rustix::io::Errno),
+
+    #[error("Tokio task join error: {0}")]
+    TokioJoin(#[from] JoinError),
 
     #[error("Serde Json error: {0}")]
     SerdeJson(#[from] serde_json::Error),

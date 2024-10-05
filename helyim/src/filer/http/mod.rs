@@ -1,15 +1,22 @@
+use std::{collections::HashMap, path::PathBuf};
+
 use axum::{
     body::Body,
     extract::State,
     http::{
-        header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_TYPE},
+        header::{ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE},
         HeaderValue, Method, Response,
     },
-    response::IntoResponse,
 };
+use bytes::{Bytes, BytesMut};
 use faststr::FastStr;
+use futures_util::StreamExt;
+use http_range::HttpRange;
 use hyper::StatusCode;
 use nom::Slice;
+use reqwest::multipart::{Form, Part};
+use rustix::path::Arg;
+use tonic::service::AxumBody;
 use tracing::{error, info, warn};
 
 mod extractor;
@@ -17,18 +24,19 @@ mod extractor;
 use crate::{
     filer::{
         entry::Entry,
-        file_chunk::total_size,
+        file_chunk::{etag, total_size, ChunkView},
         http::extractor::{GetOrHeadExtractor, ListDir},
         FilerError, FilerRef,
     },
     util::{
         args::FilerOptions,
         file::file_name,
-        http::{request, HttpError},
+        http::{
+            content_range, http_error, mime_header, ranges_mime_size, read_url, request, set_etag,
+            HttpError,
+        },
     },
 };
-
-const TOPICS_DIR: &str = "/topics";
 
 #[derive(Clone)]
 pub struct FilerState {
@@ -103,11 +111,18 @@ impl FilerState {
         response: &mut Response<Body>,
         entry: &Entry,
     ) -> Result<(), FilerError> {
-        let file_id = entry.chunks[0].get_fid();
-        let mut url = match self.filer.master_client.lookup_file_id(&file_id) {
+        let file_id = entry.chunks[0].fid.unwrap_or_default();
+        let mut url = match self
+            .filer
+            .master_client
+            .lookup_file_id(&file_id.to_fid_str())
+        {
             Ok(url) => url,
             Err(err) => {
-                error!("lookup file id: {file_id} failed, error: {err}");
+                error!(
+                    "lookup file id: {} failed, error: {err}",
+                    file_id.to_fid_str()
+                );
                 *response.status_mut() = StatusCode::NOT_FOUND;
                 return Ok(());
             }
@@ -123,24 +138,215 @@ impl FilerState {
             url = format!("{url}?{query}");
         }
 
-        let resp = request(
-            url,
+        match request(
+            &url,
             extractor.method,
             &[],
             extractor.body,
             extractor.headers,
         )
-        .await?;
+        .await
+        {
+            Ok(resp) => {
+                *response.status_mut() = resp.status();
+                *response.headers_mut() = resp.headers().clone();
+                *response.body_mut() = Body::from(resp.bytes().await.map_err(HttpError::Reqwest)?);
+                Ok(())
+            }
+            Err(err) => {
+                error!("failing to connect to volume server: {url}, error: {err}");
+                Err(FilerError::Http(err))
+            }
+        }
+    }
 
-        *response.status_mut() = resp.status();
-
-        for (name, value) in resp.headers() {
-            response.headers_mut().insert(name.clone(), value.clone());
+    async fn handle_chunks(
+        &self,
+        extractor: GetOrHeadExtractor,
+        response: &mut Response<Body>,
+        entry: &mut Entry,
+    ) -> Result<(), FilerError> {
+        let mut mime_type = entry.mime.to_string();
+        if mime_type.is_empty() {
+            let path = PathBuf::from(&entry.full_path);
+            if let Some(ext) = path.extension() {
+                if !ext.is_empty() {
+                    mime_type = mime_guess::from_ext(ext.as_str()?)
+                        .first_or_octet_stream()
+                        .to_string();
+                }
+            }
         }
 
-        *response.body_mut() = Body::from(resp.bytes().await.map_err(HttpError::Reqwest)?);
+        if !mime_type.is_empty() {
+            response.headers_mut().insert(
+                CONTENT_TYPE,
+                HeaderValue::from_str(&mime_type).map_err(HttpError::InvalidHeaderValue)?,
+            );
+        }
 
-        todo!()
+        set_etag(response, &etag(entry.chunks.as_slice()))
+            .map_err(HttpError::InvalidHeaderValue)?;
+
+        let total_size = total_size(entry.chunks.as_slice());
+
+        let range = match extractor.headers.get("Range") {
+            Some(range) => range,
+            None => return Ok(()),
+        };
+
+        if range.is_empty() {
+            response
+                .headers_mut()
+                .insert(CONTENT_LENGTH, HeaderValue::from(total_size));
+
+            match self.write_content(entry, 0, total_size).await {
+                Ok(data) => {
+                    *response.body_mut() = AxumBody::from(data);
+                }
+                Err(err) => {
+                    http_error(response, StatusCode::INTERNAL_SERVER_ERROR, err.to_string())?;
+                }
+            }
+            return Ok(());
+        }
+        let ranges = match HttpRange::parse(range.to_str().map_err(HttpError::ToStr)?, total_size) {
+            Ok(ranges) => ranges,
+            Err(_) => {
+                http_error(
+                    response,
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    "Http range parsed error".to_string(),
+                )?;
+                return Ok(());
+            }
+        };
+        let ranges_sum: u64 = ranges.iter().map(|r| r.length).sum();
+        if ranges_sum > total_size {
+            return Ok(());
+        }
+
+        if ranges.is_empty() {
+            return Ok(());
+        }
+
+        if ranges.len() == 1 {
+            let ra = ranges[0];
+            response
+                .headers_mut()
+                .insert(CONTENT_LENGTH, HeaderValue::from(ra.length));
+            response.headers_mut().insert(
+                CONTENT_RANGE,
+                HeaderValue::from_str(&content_range(ra, total_size))
+                    .map_err(HttpError::InvalidHeaderValue)?,
+            );
+            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+
+            if let Err(err) = self.write_content(entry, ra.start as i64, ra.length).await {
+                http_error(response, StatusCode::INTERNAL_SERVER_ERROR, err.to_string())?;
+            }
+            return Ok(());
+        }
+
+        // process multiple ranges
+        for ra in ranges.iter() {
+            if ra.start > total_size {
+                http_error(
+                    response,
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    "Out Of Range".to_string(),
+                )?;
+                return Ok(());
+            }
+        }
+
+        let send_size = ranges_mime_size(&ranges, &mime_type, total_size)?;
+
+        let mut form = Form::new();
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(&format!(
+                "multipart/byteranges; boundary={}",
+                form.boundary()
+            ))
+            .map_err(HttpError::InvalidHeaderValue)?,
+        );
+
+        let (_, outputs) = async_scoped::TokioScope::scope_and_block(|s| {
+            for range in ranges.iter() {
+                s.spawn(async {
+                    let headers = match mime_header(*range, &mime_type, total_size) {
+                        Ok(headers) => headers,
+                        Err(err) => {
+                            error!("create mime headers error: {err}");
+                            return Err(FilerError::Http(err));
+                        }
+                    };
+                    let data = match self
+                        .write_content(entry, range.start as i64, range.length)
+                        .await
+                    {
+                        Ok(data) => data,
+                        Err(err) => {
+                            error!("write content error: {err}");
+                            return Err(err);
+                        }
+                    };
+                    let part = Part::bytes(data.to_vec()).headers(headers);
+                    let name = format!("{}-{}", range.start, range.length);
+
+                    Ok((name, part))
+                });
+            }
+        });
+
+        let mut body = BytesMut::new();
+        for output in outputs {
+            let (name, part) = output??;
+            let mut stream = form.part_stream(name, part);
+            while let Some(Ok(data)) = stream.next().await {
+                body.extend_from_slice(&data);
+            }
+        }
+
+        if response.headers().get(CONTENT_ENCODING).is_none() {
+            response
+                .headers_mut()
+                .insert(CONTENT_LENGTH, HeaderValue::from(send_size));
+        }
+
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+        *response.body_mut() = Body::from(body.freeze());
+
+        Ok(())
+    }
+
+    async fn write_content(
+        &self,
+        entry: &Entry,
+        offset: i64,
+        size: u64,
+    ) -> Result<Bytes, FilerError> {
+        let chunk_views = ChunkView::view_from_chunks(entry.chunks.as_slice(), offset, size);
+
+        let mut file_id_map = HashMap::new();
+
+        for chunk_view in chunk_views.iter() {
+            let url = self
+                .filer
+                .master_client
+                .lookup_file_id(&chunk_view.fid.to_fid_str())?;
+            file_id_map.insert(chunk_view.fid, url);
+        }
+
+        let mut buf = BytesMut::new();
+        for chunk_view in chunk_views.iter() {
+            if let Some(url) = file_id_map.get(&chunk_view.fid) {
+                buf.extend_from_slice(&read_url(url, chunk_view.offset, chunk_view.size).await?);
+            }
+        }
+
+        Ok(buf.freeze())
     }
 }
 
@@ -154,7 +360,7 @@ pub async fn get_or_head_handler(
     }
 
     let mut response = Response::new(Body::empty());
-    match state.filer.find_entry(&path).await {
+    match state.filer.find_entry(path).await {
         Err(err) => {
             if path == "/" {
                 return state.list_directory_handler(extractor).await;
@@ -171,7 +377,7 @@ pub async fn get_or_head_handler(
             *response.status_mut() = StatusCode::NOT_FOUND;
             return Ok(response);
         }
-        Ok(Some(entry)) => {
+        Ok(Some(mut entry)) => {
             if entry.is_directory() {
                 if state.options.disable_dir_listing {
                     *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
@@ -197,21 +403,16 @@ pub async fn get_or_head_handler(
                 return Ok(response);
             }
 
-            if entry.chunks.len() == 1 {}
+            if entry.chunks.len() == 1 {
+                state
+                    .handle_single_chunk(extractor, &mut response, &entry)
+                    .await?;
+            } else {
+                state
+                    .handle_chunks(extractor, &mut response, &mut entry)
+                    .await?;
+            }
         }
     }
-    todo!()
-}
-
-pub async fn healthz_handler(
-    State(state): State<FilerState>,
-) -> Result<Response<Body>, FilerError> {
-    let filer_store = state.filer.filer_store()?;
-    match filer_store.find_entry(TOPICS_DIR).await {
-        Err(err) if matches!(err, FilerError::NotFound) => {
-            warn!("filerHealthzHandler FindEntry: {}", err);
-            Ok(StatusCode::SERVICE_UNAVAILABLE.into_response())
-        }
-        _ => Ok(StatusCode::OK.into_response()),
-    }
+    Ok(response)
 }

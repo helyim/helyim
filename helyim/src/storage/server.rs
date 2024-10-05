@@ -184,7 +184,7 @@ impl VolumeServer {
                         shutdown.clone(),
                     ) => {
                         match ret {
-                            Err(VolumeError::LeaderChanged(new, old)) => {
+                            Err(VolumeError::LeaderChanged(new, _old)) => {
                                 if !new.is_empty() {
                                     new_leader = new;
                                 }
@@ -508,7 +508,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
     async fn volume_ec_shards_copy(
         &self,
-        request: Request<VolumeEcShardsCopyRequest>,
+        _request: Request<VolumeEcShardsCopyRequest>,
     ) -> StdResult<Response<VolumeEcShardsCopyResponse>, Status> {
         todo!()
     }
@@ -590,14 +590,14 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
     async fn volume_ec_shards_mount(
         &self,
-        request: Request<VolumeEcShardsMountRequest>,
+        _request: Request<VolumeEcShardsMountRequest>,
     ) -> StdResult<Response<VolumeEcShardsMountResponse>, Status> {
         todo!()
     }
 
     async fn volume_ec_shards_unmount(
         &self,
-        request: Request<VolumeEcShardsUnmountRequest>,
+        _request: Request<VolumeEcShardsUnmountRequest>,
     ) -> StdResult<Response<VolumeEcShardsUnmountResponse>, Status> {
         todo!()
     }
@@ -684,7 +684,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
         for location in self.store.locations().iter() {
             if let Some(volume) = location.find_ec_volume(request.volume_id) {
-                let (needle_value, intervals) = volume
+                let (needle_value, _intervals) = volume
                     .locate_ec_shard_needle(request.file_key, request.version as Version)
                     .await?;
                 if needle_value.size.is_deleted() {
@@ -726,7 +726,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
 
     async fn batch_delete(
         &self,
-        request: Request<BatchDeleteRequest>,
+        _request: Request<BatchDeleteRequest>,
     ) -> StdResult<Response<BatchDeleteResponse>, Status> {
         todo!()
     }

@@ -136,7 +136,10 @@ async fn replicate_delete(
                                 }
                                 Ok(())
                             }
-                            Err(err) => Err(anyhow!("replicate delete: serde json error: {err}")),
+                            Err(err) => {
+                                error!("replicate delete: serde json error: {err}");
+                                Err(anyhow!("replicate delete: serde json error: {err}"))
+                            }
                         }
                     }) {
                         error!("replicate delete failed, error: {err}");
@@ -222,7 +225,10 @@ async fn replicate_write(
                                 }
                                 Ok(())
                             }
-                            Err(err) => Err(anyhow!("replicate write: serde json error: {err}")),
+                            Err(err) => {
+                                error!("replicate write: serde json error: {err}");
+                                Err(anyhow!("replicate write: serde json error: {err}"))
+                            }
                         })
                     {
                         error!("replicate write failed, error: {err}");

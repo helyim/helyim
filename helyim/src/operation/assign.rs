@@ -70,7 +70,6 @@ impl AssignRequest {
     }
 }
 
-#[allow(dead_code)] // todo: remove it
 pub async fn assign(server: &str, request: AssignRequest) -> Result<Assignment, VolumeError> {
     let client = helyim_client(server)?;
     let request = PbAssignRequest {

@@ -28,7 +28,7 @@ use crate::{
     filer::{
         entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
         file_chunk::{compact_file_chunks, find_unused_file_chunks},
-        http::{get_or_head_handler, healthz_handler},
+        http::get_or_head_handler,
         Filer, FilerRef,
     },
     operation::{assign, AssignRequest},
@@ -108,7 +108,6 @@ pub async fn start_filer_server(
 ) {
     let app = Router::new()
         .route("/", get(get_or_head_handler).post(get_or_head_handler))
-        .route("/healthz", get(healthz_handler).post(healthz_handler))
         .fallback(default_handler)
         .layer((
             CompressionLayer::new(),
@@ -275,7 +274,7 @@ impl HelyimFiler for FilerGrpcServer {
             None => return Err(Status::invalid_argument("entry must be set")),
         };
         let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, entry.name);
-        let (chunks, garbages) = compact_file_chunks(entry.chunks);
+        let (chunks, garbages) = compact_file_chunks(&entry.chunks);
         map_error_to_status(self.filer.delete_chunks(garbages.as_ref()))?;
 
         let attrs = match entry.attributes {
@@ -321,7 +320,7 @@ impl HelyimFiler for FilerGrpcServer {
         };
 
         let unused_chunks = find_unused_file_chunks(&entry.chunks, &request_entry.chunks);
-        let (chunks, garbages) = compact_file_chunks(entry.chunks.clone());
+        let (chunks, garbages) = compact_file_chunks(&entry.chunks);
 
         let mut new_entry = Entry {
             full_path,

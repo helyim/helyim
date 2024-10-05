@@ -452,9 +452,8 @@ pub async fn batch_vacuum_volume_commit(
     let mut commit_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCommitRequest { volume_id };
-        let response = data_node.vacuum_volume_commit(request).await;
-        match response {
-            Ok(response) => {
+        match data_node.vacuum_volume_commit(request).await {
+            Ok(_) => {
                 info!(
                     "commit volume {}:{volume_id} success.",
                     data_node.public_url
@@ -480,7 +479,6 @@ pub async fn batch_vacuum_volume_commit(
     commit_success
 }
 
-#[allow(dead_code)]
 async fn batch_vacuum_volume_cleanup(volume_id: VolumeId, data_nodes: &[DataNodeRef]) -> bool {
     let mut cleanup_success = true;
     for data_node in data_nodes {

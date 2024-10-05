@@ -42,7 +42,6 @@ mod replica_placement;
 
 pub use replica_placement::ReplicaPlacement;
 
-#[allow(dead_code)]
 pub mod vacuum;
 mod volume_info;
 

@@ -53,7 +53,7 @@ curl http://localhost:9333/dir/assign
 {"fid":"6,16b7578a5","url":"127.0.0.1:8080","public_url":"127.0.0.1:8080","count":1,"error":""}
 ```
 
-Second, to store the file content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
+Second, to store the file content, send a HTTP multipart POST request to `url + '/' + fid` from the response:
 
 ```bash
 curl -F file=@./sun.jpg http://127.0.0.1:8080/6,16b7578a5

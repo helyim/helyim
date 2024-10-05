@@ -1,13 +1,24 @@
 use std::time::Duration;
 
-use axum::response::Html;
+use axum::{
+    body::Body as AxumBody,
+    http::{
+        header::{InvalidHeaderValue, ToStrError, CONTENT_RANGE, X_CONTENT_TYPE_OPTIONS},
+        HeaderValue, Response as AxumResponse, StatusCode,
+    },
+    response::Html,
+};
 use bytes::Bytes;
-use hyper::{HeaderMap, Method};
+use http_range::HttpRange;
+use hyper::{header::CONTENT_TYPE, HeaderMap, Method};
 use once_cell::sync::Lazy;
-use reqwest::{Body, Response};
+use reqwest::{
+    multipart::{Form, Part},
+    Body, Response,
+};
 use url::Url;
 
-use crate::{images::FAVICON_ICO, PHRASE};
+use crate::{anyhow, images::FAVICON_ICO, PHRASE};
 
 pub const HTTP_DATE_FORMAT: &str = "%a, %d %b %Y %H:%M:%S GMT";
 
@@ -84,6 +95,105 @@ pub enum HttpError {
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
+    #[error("InvalidHeaderValue: {0}")]
+    InvalidHeaderValue(#[from] InvalidHeaderValue),
+    #[error("ToStr error: {0}")]
+    ToStr(#[from] ToStrError),
+    #[error("Mime FromStr error: {0}")]
+    FromStr(#[from] mime::FromStrError),
+
     #[error("Url parse error: {0}")]
     UrlParse(#[from] url::ParseError),
+}
+
+pub fn set_etag(res: &mut AxumResponse<AxumBody>, etag: &str) -> Result<(), InvalidHeaderValue> {
+    if !etag.is_empty() {
+        if etag.starts_with("\"") {
+            res.headers_mut()
+                .insert("ETag", HeaderValue::from_str(etag)?);
+        } else {
+            res.headers_mut().insert(
+                "ETag",
+                HeaderValue::from_str(format!("\"{etag}\"").as_str())?,
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn read_url(file_url: &str, offset: i64, size: u32) -> Result<Bytes, HttpError> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Range",
+        HeaderValue::from_str(&format!("bytes={offset}-{}", offset + size as i64))?,
+    );
+
+    let response = request(file_url, Method::GET, &[], Bytes::new(), headers).await?;
+    if response.status().as_u16() >= 400 {
+        return Err(anyhow!("GET {} error: {}", file_url, response.status()));
+    }
+
+    Ok(response.bytes().await?)
+}
+
+pub fn http_error(
+    response: &mut AxumResponse<AxumBody>,
+    status: StatusCode,
+    error: String,
+) -> Result<(), HttpError> {
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str("text/plain; charset=utf-8")?,
+    );
+    response.headers_mut().insert(
+        X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_str("text/plain; charset=utf-8")?,
+    );
+
+    *response.status_mut() = status;
+    *response.body_mut() = AxumBody::from(error);
+
+    Ok(())
+}
+
+pub fn content_range(range: HttpRange, size: u64) -> String {
+    format!(
+        "bytes {}-{}/{}",
+        range.start,
+        range.start + range.length - 1,
+        size
+    )
+}
+
+pub fn ranges_mime_size(
+    ranges: &[HttpRange],
+    content_type: &str,
+    content_size: u64,
+) -> Result<u64, HttpError> {
+    let mut form = Form::new();
+    let mut encode_size = 0;
+    for ra in ranges {
+        let part = Part::bytes(&[]).headers(mime_header(*ra, content_type, content_size)?);
+        form = form.part("", part);
+        encode_size += ra.length;
+    }
+
+    if let Some(len) = form.compute_length() {
+        encode_size += len;
+    }
+    Ok(encode_size)
+}
+
+pub fn mime_header(
+    range: HttpRange,
+    content_type: &str,
+    content_size: u64,
+) -> Result<HeaderMap, HttpError> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_str(content_type)?);
+    headers.insert(
+        CONTENT_RANGE,
+        HeaderValue::from_str(&content_range(range, content_size))?,
+    );
+    Ok(headers)
 }

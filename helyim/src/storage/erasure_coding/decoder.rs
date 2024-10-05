@@ -51,12 +51,12 @@ pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<()> {
 
 pub fn find_data_filesize(base_filename: &str) -> Result<u64> {
     // TODO: handle version
-    let version = read_ec_volume_version(base_filename)?;
+    let _version = read_ec_volume_version(base_filename)?;
     let mut data_filesize = 0;
     iterate_ecx_file(
         base_filename,
         Some(
-            |needle_id, offset: Offset, size: Size| -> StdResult<(), std::io::Error> {
+            |_needle_id, offset: Offset, size: Size| -> StdResult<(), std::io::Error> {
                 if size.is_deleted() {
                     return Ok(());
                 }

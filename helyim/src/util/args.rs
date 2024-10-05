@@ -149,8 +149,6 @@ pub struct FilerOptions {
 
 #[derive(Args, Debug, Clone)]
 pub struct LogOptions {
-    #[arg(long, default_value("./target/logs"))]
+    #[arg(long, default_value(""))]
     pub log_path: FastStr,
-    #[arg(long, default_value("stdout"))]
-    pub log_output: FastStr,
 }

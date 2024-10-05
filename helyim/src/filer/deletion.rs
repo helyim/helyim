@@ -52,7 +52,6 @@ impl Filer {
         self.delete_chunks(&to_delete)
     }
 
-    #[allow(dead_code)] // todo: remove it
     fn lookup(&self, vids: Vec<FastStr>) -> HashMap<FastStr, Lookup> {
         let mut map = HashMap::new();
         for vid in vids {
@@ -73,7 +72,6 @@ impl Filer {
     }
 }
 
-#[allow(dead_code)]
 fn lookup_by_master_client(
     master_client: &MasterClient,
     vids: Vec<String>,

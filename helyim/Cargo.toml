@@ -37,8 +37,11 @@ downcast-rs.workspace = true
 faststr = { workspace = true, features = ["serde"] }
 fnv.workspace = true
 futures.workspace = true
+futures-util.workspace = true
 ginepro.workspace = true
 helyim-proto = { path = "../proto", version = "0.1.0" }
+http-body.workspace = true
+http-range.workspace = true
 hyper = { workspace = true, features = ["full"] }
 hyper-util.workspace = true
 indexmap.workspace = true
@@ -47,6 +50,7 @@ kanal.workspace = true
 leapfrog.workspace = true
 libflate.workspace = true
 lru.workspace = true
+mime.workspace = true
 mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
 multer.workspace = true
@@ -54,10 +58,11 @@ nom.workspace = true
 openraft = { workspace = true, features = ["serde", "storage-v2"] }
 once_cell.workspace = true
 parking_lot.workspace = true
+percent-encoding.workspace = true
 rand.workspace = true
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 regex.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -65,6 +70,7 @@ sonyflake.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
+tokio-util.workspace = true
 tonic.workspace = true
 tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
 tracing.workspace = true
