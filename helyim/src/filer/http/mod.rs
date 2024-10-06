@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    io::{ErrorKind, Read},
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use axum::{
     body::Body,
@@ -8,33 +13,39 @@ use axum::{
         HeaderValue, Method, Response,
     },
 };
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
 use futures_util::StreamExt;
+use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
 use hyper::StatusCode;
 use nom::Slice;
 use reqwest::multipart::{Form, Part};
-use rustix::path::Arg;
-use tonic::service::AxumBody;
+use rustix::{
+    path::Arg,
+    process::{getgid, getuid},
+};
 use tracing::{error, info, warn};
 
 mod extractor;
 
 use crate::{
+    anyhow,
     filer::{
-        entry::Entry,
+        entry::{Attr, Entry},
         file_chunk::{etag, total_size, ChunkView},
-        http::extractor::{GetOrHeadExtractor, ListDir},
+        http::extractor::{FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor},
         FilerError, FilerRef,
     },
+    operation::{assign, upload, AssignRequest},
     util::{
         args::FilerOptions,
         file::file_name,
         http::{
-            content_range, http_error, mime_header, ranges_mime_size, read_url, request, set_etag,
+            content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
             HttpError,
         },
+        time::now,
     },
 };
 
@@ -111,18 +122,11 @@ impl FilerState {
         response: &mut Response<Body>,
         entry: &Entry,
     ) -> Result<(), FilerError> {
-        let file_id = entry.chunks[0].fid.unwrap_or_default();
-        let mut url = match self
-            .filer
-            .master_client
-            .lookup_file_id(&file_id.to_fid_str())
-        {
+        let file_id = &entry.chunks[0].fid;
+        let mut url = match self.filer.master_client.lookup_file_id(file_id) {
             Ok(url) => url,
             Err(err) => {
-                error!(
-                    "lookup file id: {} failed, error: {err}",
-                    file_id.to_fid_str()
-                );
+                error!("lookup file id: {} failed, error: {err}", file_id);
                 *response.status_mut() = StatusCode::NOT_FOUND;
                 return Ok(());
             }
@@ -141,9 +145,10 @@ impl FilerState {
         match request(
             &url,
             extractor.method,
-            &[],
-            extractor.body,
-            extractor.headers,
+            None,
+            Some(extractor.body),
+            Some(extractor.headers),
+            None,
         )
         .await
         {
@@ -202,7 +207,7 @@ impl FilerState {
 
             match self.write_content(entry, 0, total_size).await {
                 Ok(data) => {
-                    *response.body_mut() = AxumBody::from(data);
+                    *response.body_mut() = Body::from(data);
                 }
                 Err(err) => {
                     http_error(response, StatusCode::INTERNAL_SERVER_ERROR, err.to_string())?;
@@ -260,7 +265,7 @@ impl FilerState {
             }
         }
 
-        let send_size = ranges_mime_size(&ranges, &mime_type, total_size)?;
+        let send_size = ranges_mime_size(&ranges, &mime_type, total_size).await?;
 
         let mut form = Form::new();
         response.headers_mut().insert(
@@ -275,10 +280,10 @@ impl FilerState {
         let (_, outputs) = async_scoped::TokioScope::scope_and_block(|s| {
             for range in ranges.iter() {
                 s.spawn(async {
-                    let headers = match mime_header(*range, &mime_type, total_size) {
+                    let headers = match range_header(*range, total_size) {
                         Ok(headers) => headers,
                         Err(err) => {
-                            error!("create mime headers error: {err}");
+                            error!("create range headers error: {err}");
                             return Err(FilerError::Http(err));
                         }
                     };
@@ -292,8 +297,11 @@ impl FilerState {
                             return Err(err);
                         }
                     };
-                    let part = Part::bytes(data.to_vec()).headers(headers);
-                    let name = format!("{}-{}", range.start, range.length);
+                    let part = Part::bytes(data.to_vec())
+                        .mime_str(&mime_type)
+                        .map_err(HttpError::Reqwest)?
+                        .headers(headers);
+                    let name = format!("{}-{}", range.start, range.start + range.length - 1);
 
                     Ok((name, part))
                 });
@@ -332,11 +340,8 @@ impl FilerState {
         let mut file_id_map = HashMap::new();
 
         for chunk_view in chunk_views.iter() {
-            let url = self
-                .filer
-                .master_client
-                .lookup_file_id(&chunk_view.fid.to_fid_str())?;
-            file_id_map.insert(chunk_view.fid, url);
+            let url = self.filer.master_client.lookup_file_id(&chunk_view.fid)?;
+            file_id_map.insert(&chunk_view.fid, url);
         }
 
         let mut buf = BytesMut::new();
@@ -347,6 +352,201 @@ impl FilerState {
         }
 
         Ok(buf.freeze())
+    }
+
+    async fn do_auto_chunk(
+        &self,
+        response: &mut Response<Body>,
+        mut extractor: PostExtractor,
+        content_len: u64,
+        chunk_size: u32,
+        replication: FastStr,
+        collection: FastStr,
+        data_center: FastStr,
+    ) -> Result<FilerPostResult, FilerError> {
+        let part = match extractor.multipart.next_field().await {
+            Ok(Some(part)) => part,
+            Ok(None) => {
+                error!("get nothing from multipart");
+                return Err(anyhow!("get nothing from multipart"));
+            }
+            Err(err) => {
+                error!("get multipart error: {err}");
+                return Err(HttpError::Multipart(err).into());
+            }
+        };
+
+        let filename = match part.file_name() {
+            Some(name) => FastStr::new(name),
+            None => FastStr::empty(),
+        };
+
+        let mut file_chunks = vec![];
+        let mut total_bytes_read = 0;
+        let tmp_buffer_size = 2048;
+        let mut tmp_buffer = vec![0u8; tmp_buffer_size];
+        let mut chunk_buf = vec![0u8; chunk_size as usize + tmp_buffer_size];
+        let mut chunk_buf_offset = 0;
+        let mut chunk_offset = 0;
+
+        let mut read_fully = false;
+        let mut read_err = None;
+
+        let mut result = FilerPostResult {
+            name: filename.clone(),
+            ..Default::default()
+        };
+
+        let part_bytes = part.bytes().await.map_err(HttpError::Multipart)?;
+        let mut part_reader = part_bytes.reader();
+
+        while total_bytes_read < content_len {
+            tmp_buffer.clear();
+
+            let bytes_read = match part_reader.read(&mut tmp_buffer) {
+                Ok(bytes_read) => bytes_read,
+                Err(err) => {
+                    if err.kind() == ErrorKind::UnexpectedEof {
+                        read_fully = true;
+                    }
+                    read_err = Some(err);
+                    0
+                }
+            };
+
+            let bytes_to_copy = &tmp_buffer[..bytes_read];
+            chunk_buf[chunk_buf_offset..chunk_buf_offset + bytes_read]
+                .copy_from_slice(bytes_to_copy);
+            chunk_buf_offset += bytes_read;
+
+            if chunk_buf_offset >= chunk_size as usize
+                || read_fully
+                || (chunk_buf_offset > 0 && bytes_read == 0)
+            {
+                let (file_id, url) = self
+                    .assign_new_file_info(
+                        response,
+                        &extractor,
+                        &replication,
+                        &collection,
+                        &data_center,
+                    )
+                    .await?;
+
+                let chunk_name = format!("{}_chunk_{}", filename, file_chunks.len() + 1);
+                match upload(
+                    &url,
+                    chunk_name,
+                    chunk_buf[..chunk_buf_offset].to_vec(),
+                    "application/octet-stream",
+                    None,
+                )
+                .await
+                {
+                    Ok(upload) => {
+                        info!(
+                            "chunk upload result. name: {}, size: {}, fid: {file_id}",
+                            upload.name, upload.size
+                        );
+
+                        let chunk = FileChunk {
+                            fid: file_id,
+                            offset: chunk_offset,
+                            size: chunk_buf_offset as u64,
+                            mtime: now().as_millis() as i64,
+                            ..Default::default()
+                        };
+
+                        file_chunks.push(chunk);
+
+                        // reset variables for the next chunk
+                        chunk_buf_offset = 0;
+                        chunk_offset = total_bytes_read as i64 + bytes_read as i64;
+                    }
+                    Err(err) => {
+                        error!("chunk upload failed, fid: {file_id}, error: {err}");
+                        return Err(err.into());
+                    }
+                }
+            }
+
+            total_bytes_read += bytes_read as u64;
+            if bytes_read == 0 || read_fully {
+                break;
+            }
+
+            if let Some(err) = read_err {
+                return Err(err.into());
+            }
+        }
+
+        let mut path = extractor.uri.path().to_string();
+        if path.ends_with("/") && !filename.is_empty() {
+            path = format!("{path}{filename}");
+        }
+
+        info!("saving entry, path: {path}");
+
+        let now = SystemTime::now();
+        let ttl = match extractor.query.ttl {
+            Some(ttl) => ttl.parse()?,
+            None => 0,
+        };
+        let entry = Entry {
+            full_path: path.clone(),
+            attr: Attr {
+                mtime: now,
+                crtime: now,
+                mode: 0o600,
+                uid: getuid().as_raw(),
+                gid: getgid().as_raw(),
+                mime: FastStr::empty(),
+                replication,
+                collection,
+                ttl,
+                username: FastStr::empty(),
+                group_names: vec![],
+            },
+            chunks: file_chunks,
+        };
+
+        if let Err(err) = self.filer.create_entry(&entry).await {
+            self.filer.delete_chunks(&entry.chunks)?;
+            result.error = FastStr::new(err.to_string());
+            error!("failed to write {path} to filer server， error: {err}");
+            return Err(err);
+        }
+        Ok(result)
+    }
+
+    async fn assign_new_file_info(
+        &self,
+        response: &mut Response<Body>,
+        extractor: &PostExtractor,
+        replication: &str,
+        collection: &str,
+        data_center: &str,
+    ) -> Result<(String, String), FilerError> {
+        let request = AssignRequest {
+            count: Some(1),
+            replication: Some(replication.to_string()),
+            collection: Some(collection.to_string()),
+            ttl: extractor.query.ttl.as_ref().map(|ttl| ttl.to_string()),
+            data_center: Some(data_center.to_string()),
+            ..Default::default()
+        };
+        match assign(&self.filer.current_master(), request).await {
+            Ok(assign) => {
+                let url = format!("http://{}/{}/", assign.url, assign.fid);
+                Ok((assign.fid, url))
+            }
+            Err(err) => {
+                error!("assign file id error: {err}");
+                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                *response.body_mut() = Body::from("assign file id error".to_string());
+                Err(FilerError::Box(Box::new(err)))
+            }
+        }
     }
 }
 
@@ -415,4 +615,24 @@ pub async fn get_or_head_handler(
         }
     }
     Ok(response)
+}
+
+pub async fn post_handler(
+    State(state): State<FilerState>,
+    extractor: PostExtractor,
+) -> Result<Response<Body>, FilerError> {
+    let replication = match extractor.query.replication {
+        Some(replication) => replication.clone(),
+        None => state.options.default_replication.clone(),
+    };
+    let collection = match extractor.query.collection {
+        Some(collection) => collection.clone(),
+        None => state.options.collection.clone(),
+    };
+    let data_center = match extractor.query.data_center {
+        Some(data_center) => data_center.clone(),
+        None => state.options.data_center.clone(),
+    };
+
+    todo!()
 }

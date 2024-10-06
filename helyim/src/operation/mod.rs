@@ -8,4 +8,4 @@ pub mod lookup;
 pub use lookup::Looker;
 
 mod upload;
-pub use upload::{ParseUpload, Upload};
+pub use upload::{upload, ParseUpload, UploadResult};

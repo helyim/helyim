@@ -1,8 +1,9 @@
 use std::{collections::HashMap, time::Duration};
 
 use faststr::FastStr;
-use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
-use helyim_proto::filer::{FileChunk, FileId};
+use futures::channel::mpsc::UnboundedReceiver;
+use futures_util::StreamExt;
+use helyim_proto::filer::FileChunk;
 use tracing::info;
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
 impl Filer {
     pub fn delete_chunks(&self, chunks: &[FileChunk]) -> Result<(), FilerError> {
         for chunk in chunks {
-            self.delete_file_id_tx.unbounded_send(chunk.fid)?;
+            self.delete_file_id_tx.unbounded_send(chunk.fid.clone())?;
         }
 
         Ok(())
@@ -92,7 +93,7 @@ fn lookup_by_master_client(
     Ok(map)
 }
 
-pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<Option<FileId>>) {
+pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<String>) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
 
     let mut file_ids = vec![];
@@ -104,7 +105,7 @@ pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<Option<FileId>>)
                     // TODO: delete files with lookup volume id
                 }
             }
-            Some(file_id) = rx.next() => {
+            file_id = rx.next() => {
                 file_ids.push(file_id);
                 if file_ids.len() > 100_000 {
                     info!("deleting file ids[len={}]", file_ids.len());

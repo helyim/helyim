@@ -5,7 +5,7 @@ use std::{
 };
 
 use fnv::FnvHasher;
-use helyim_proto::filer::{FileChunk, FileId};
+use helyim_proto::filer::FileChunk;
 
 pub fn total_size(chunks: &[FileChunk]) -> u64 {
     let mut size = 0;
@@ -36,11 +36,9 @@ pub fn compact_file_chunks(chunks: &[FileChunk]) -> (Vec<FileChunk>, Vec<FileChu
     let mut compact = Vec::new();
     let mut garbage = Vec::new();
     for chunk in chunks {
-        if let Some(fid) = chunk.fid {
-            match fids.get(&fid) {
-                Some(_) => compact.push(chunk.clone()),
-                None => garbage.push(chunk.clone()),
-            }
+        match fids.get(&chunk.fid) {
+            Some(_) => compact.push(chunk.clone()),
+            None => garbage.push(chunk.clone()),
         }
     }
 
@@ -54,15 +52,11 @@ pub fn find_unused_file_chunks(
     let mut unused = vec![];
     let mut file_ids = HashMap::new();
     for interval in new_chunks {
-        if let Some(fid) = &interval.fid {
-            file_ids.insert(fid, true);
-        }
+        file_ids.insert(&interval.fid, true);
     }
     for chunk in old_chunks {
-        if let Some(fid) = &chunk.fid {
-            if file_ids.contains_key(&fid) {
-                unused.push(chunk.clone());
-            }
+        if file_ids.contains_key(&chunk.fid) {
+            unused.push(chunk.clone());
         }
     }
     unused
@@ -70,12 +64,12 @@ pub fn find_unused_file_chunks(
 
 /// Find non-overlapping visible intervals visible interval
 /// map to one file chunk
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct VisibleInterval {
     start: i64,
     stop: i64,
     modified_time: i64,
-    file_id: FileId,
+    file_id: String,
     is_full_chunk: bool,
 }
 
@@ -84,7 +78,7 @@ impl VisibleInterval {
         start: i64,
         stop: i64,
         modified_time: i64,
-        file_id: FileId,
+        file_id: String,
         is_full_chunk: bool,
     ) -> Self {
         Self {
@@ -115,15 +109,11 @@ fn merge_into_visibles<'a>(
     new_visibles: &'a mut Vec<VisibleInterval>,
     chunk: &FileChunk,
 ) -> Option<&'a Vec<VisibleInterval>> {
-    let fid = match chunk.fid.as_ref() {
-        Some(fid) => fid,
-        None => return None,
-    };
     let new_v = VisibleInterval::new(
         chunk.offset,
         chunk.offset + chunk.size as i64,
         chunk.mtime,
-        *fid,
+        chunk.fid.clone(),
         true,
     );
 
@@ -146,7 +136,7 @@ fn merge_into_visibles<'a>(
                 v.start,
                 chunk.offset,
                 v.modified_time,
-                v.file_id,
+                v.file_id.clone(),
                 false,
             ));
         }
@@ -157,23 +147,23 @@ fn merge_into_visibles<'a>(
                 chunk_stop,
                 v.stop,
                 v.modified_time,
-                v.file_id,
+                v.file_id.clone(),
                 false,
             ));
         }
 
         if chunk_stop <= v.start || v.stop <= chunk.offset {
-            new_visibles.push(*v);
+            new_visibles.push(v.clone());
         }
     }
 
-    new_visibles.push(new_v);
+    new_visibles.push(new_v.clone());
 
     for i in (0..new_visibles.len()).rev() {
         if i > 0 && new_v.start < new_visibles[i - 1].start {
-            new_visibles[i] = new_visibles[i - 1];
+            new_visibles[i] = new_visibles[i - 1].clone();
         } else {
-            new_visibles[i] = new_v;
+            new_visibles[i] = new_v.clone();
             break;
         }
     }
@@ -182,7 +172,7 @@ fn merge_into_visibles<'a>(
 }
 
 pub struct ChunkView {
-    pub fid: FileId,
+    pub fid: String,
     pub offset: i64,
     pub size: u32,
     pub logic_offset: i64,
@@ -201,7 +191,7 @@ impl ChunkView {
                     chunk.is_full_chunk && chunk.start == offset && chunk.stop <= stop;
                 let min = min(chunk.stop, stop);
                 views.push(ChunkView {
-                    fid: chunk.file_id,
+                    fid: chunk.file_id.clone(),
                     offset: offset - chunk.start,
                     size: (min - offset) as u32,
                     logic_offset: offset,

@@ -77,19 +77,19 @@ message Entry {
 }
 
 message FileChunk {
-  FileId fid = 1;
+  string fid = 1;
   int64 offset = 2;
   uint64 size = 3;
   int64 mtime = 4;
   string e_tag = 5;
-  FileId source_fid = 6;
+  string source_fid = 6;
 }
 
-message FileId {
-  uint32 volume_id = 1;
-  uint64 file_key = 2;
-  fixed32 cookie = 3;
-}
+//message FileId {
+//  uint32 volume_id = 1;
+//  uint64 file_key = 2;
+//  fixed32 cookie = 3;
+//}
 
 message FuseAttributes {
   uint64 file_size = 1;

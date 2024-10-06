@@ -1,4 +1,5 @@
 use std::{
+    num::ParseIntError,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -10,7 +11,6 @@ use axum::{
 };
 use faststr::FastStr;
 use futures::channel::mpsc::{unbounded, TrySendError, UnboundedSender};
-use helyim_proto::filer::FileId;
 use hyper::StatusCode;
 use moka::sync::Cache;
 use serde_json::json;
@@ -59,7 +59,7 @@ pub trait FilerStore: Send + Sync {
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
-    delete_file_id_tx: UnboundedSender<Option<FileId>>,
+    delete_file_id_tx: UnboundedSender<String>,
     master_client: MasterClient,
     // dir_buckets_path: FastStr,
     // fsync_buckets: Vec<FastStr>,
@@ -338,11 +338,13 @@ pub enum FilerError {
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
     #[error("Try send error: {0}")]
-    TrySend(#[from] TrySendError<Option<FileId>>),
+    TrySend(#[from] TrySendError<String>),
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
     #[error("Rustix errno: {0}")]
     Errno(#[from] rustix::io::Errno),
+    #[error("Parse int error: {0}")]
+    ParseInt(#[from] ParseIntError),
 
     #[error("Tokio task join error: {0}")]
     TokioJoin(#[from] JoinError),
@@ -352,6 +354,8 @@ pub enum FilerError {
 
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("error: {0}")]
+    Box(#[from] Box<dyn std::error::Error + Sync + Send>),
 }
 
 unsafe impl Send for FilerError {}

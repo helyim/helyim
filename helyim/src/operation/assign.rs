@@ -18,7 +18,7 @@ pub struct Assignment {
     pub error: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssignRequest {
     pub count: Option<u64>,

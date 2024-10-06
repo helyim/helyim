@@ -27,7 +27,7 @@ use tracing::{error, info};
 use crate::{
     anyhow,
     errors::Result,
-    operation::{Looker, ParseUpload, Upload},
+    operation::{Looker, ParseUpload, UploadResult},
     storage::{
         crc,
         http::extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
@@ -154,7 +154,7 @@ async fn replicate_delete(
 pub async fn post_handler(
     State(state): State<StorageState>,
     extractor: PostExtractor,
-) -> Result<Json<Upload>> {
+) -> Result<Json<UploadResult>> {
     let (vid, _, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
@@ -166,7 +166,7 @@ pub async fn post_handler(
 
     let size =
         replicate_write(&state, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
-    let mut upload = Upload {
+    let mut upload = UploadResult {
         size,
         ..Default::default()
     };
