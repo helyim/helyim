@@ -7,7 +7,7 @@ use std::{
 
 use axum::{
     body::Body,
-    extract:: State,
+    extract::State,
     http::{
         header::{ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE},
         HeaderValue, Method, Response,
@@ -42,8 +42,8 @@ use crate::{
         args::FilerOptions,
         file::file_name,
         http::{
-            content_range, http_error, range_header, ranges_mime_size, read_url, request,
-            set_etag, HttpError,
+            content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
+            HttpError,
         },
         time::now,
     },

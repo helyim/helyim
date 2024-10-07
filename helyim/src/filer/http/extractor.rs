@@ -1,8 +1,7 @@
 use axum::{
-    extract::Query,
+    extract::{Multipart, Query},
     http::{HeaderMap, Method, Uri},
 };
-use axum::extract::Multipart;
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
