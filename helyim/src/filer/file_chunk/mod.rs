@@ -17,11 +17,11 @@ pub fn total_size(chunks: &[FileChunk]) -> u64 {
 
 pub fn etag(chunks: &[FileChunk]) -> String {
     if chunks.len() == 1 {
-        return chunks[0].e_tag.clone();
+        return chunks[0].etag.clone();
     }
     let mut hasher = FnvHasher::default();
     for chunk in chunks {
-        hasher.write(chunk.e_tag.as_bytes());
+        hasher.write(chunk.etag.as_bytes());
     }
     format!("{:x}", hasher.finish())
 }

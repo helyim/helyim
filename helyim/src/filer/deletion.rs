@@ -7,7 +7,6 @@ use helyim_proto::filer::FileChunk;
 use tracing::info;
 
 use crate::{
-    client::{ClientError, MasterClient},
     filer::{entry::Entry, Filer, FilerError},
     operation::lookup::{Location, Lookup},
 };
@@ -71,26 +70,6 @@ impl Filer {
         }
         map
     }
-}
-
-fn lookup_by_master_client(
-    master_client: &MasterClient,
-    vids: Vec<String>,
-) -> Result<HashMap<String, Lookup>, ClientError> {
-    let mut map = HashMap::with_capacity(vids.len());
-    for vid in vids {
-        let mut locations = Vec::new();
-        if let Some(locs) = master_client.get_locations(&vid) {
-            for loc in locs.iter() {
-                locations.push(Location {
-                    url: loc.url.to_string(),
-                    public_url: loc.public_url.to_string(),
-                });
-            }
-            map.insert(vid.clone(), Lookup::ok(vid, locations));
-        }
-    }
-    Ok(map)
 }
 
 pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<String>) {
