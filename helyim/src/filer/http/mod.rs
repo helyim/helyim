@@ -7,7 +7,7 @@ use std::{
 
 use axum::{
     body::Body,
-    extract::State,
+    extract:: State,
     http::{
         header::{ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE},
         HeaderValue, Method, Response,
@@ -42,8 +42,8 @@ use crate::{
         args::FilerOptions,
         file::file_name,
         http::{
-            content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
-            HttpError,
+            content_range, http_error, range_header, ranges_mime_size, read_url, request,
+            set_etag, HttpError,
         },
         time::now,
     },
@@ -354,10 +354,75 @@ impl FilerState {
         Ok(buf.freeze())
     }
 
+    async fn auto_chunk(
+        &self,
+        response: &mut Response<Body>,
+        extractor: &mut PostExtractor,
+        replication: FastStr,
+        collection: FastStr,
+        data_center: FastStr,
+    ) -> Result<bool, FilerError> {
+        if extractor.method != Method::POST {
+            info!(
+                "auto chunking not supported for method {}",
+                extractor.method
+            );
+            return Ok(false);
+        }
+
+        let mut max_mb = extractor.query.max_mb.unwrap_or_default();
+        if max_mb <= 0 && self.options.max_mb > 0 {
+            max_mb = self.options.max_mb;
+        }
+        if max_mb <= 0 {
+            info!("auto chunking is not enabled");
+            return Ok(false);
+        }
+        info!("auto chunking level set to {max_mb} (MB)");
+
+        let chunk_size = 1024 * 1024 * max_mb;
+        let mut content_len = 0;
+
+        if let Some(len) = extractor.headers.get(CONTENT_LENGTH) {
+            content_len = len.to_str().map_err(HttpError::ToStr)?.parse()?;
+            if content_len <= chunk_size {
+                info!("content-length: {content_len} is less than the chunk size: {chunk_size}");
+                return Ok(false);
+            }
+        }
+        if content_len <= 0 {
+            info!("content-length value is missing or unexpected, auto chunking will be skipped");
+            return Ok(false);
+        }
+
+        match self
+            .do_auto_chunk(
+                response,
+                extractor,
+                content_len as u64,
+                chunk_size as u32,
+                replication,
+                collection,
+                data_center,
+            )
+            .await
+        {
+            Ok(reply) => {
+                *response.status_mut() = StatusCode::CREATED;
+                *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+            }
+            Err(err) => {
+                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                *response.body_mut() = Body::from(err.to_string());
+            }
+        }
+        Ok(true)
+    }
+
     async fn do_auto_chunk(
         &self,
         response: &mut Response<Body>,
-        mut extractor: PostExtractor,
+        extractor: &mut PostExtractor,
         content_len: u64,
         chunk_size: u32,
         replication: FastStr,
@@ -377,8 +442,8 @@ impl FilerState {
         };
 
         let filename = match part.file_name() {
-            Some(name) => FastStr::new(name),
-            None => FastStr::empty(),
+            Some(name) => name.to_string(),
+            None => String::new(),
         };
 
         let mut file_chunks = vec![];
@@ -426,7 +491,7 @@ impl FilerState {
                 let (file_id, url) = self
                     .assign_new_file_info(
                         response,
-                        &extractor,
+                        extractor,
                         &replication,
                         &collection,
                         &data_center,
@@ -488,7 +553,7 @@ impl FilerState {
         info!("saving entry, path: {path}");
 
         let now = SystemTime::now();
-        let ttl = match extractor.query.ttl {
+        let ttl = match &extractor.query.ttl {
             Some(ttl) => ttl.parse()?,
             None => 0,
         };
@@ -512,7 +577,7 @@ impl FilerState {
 
         if let Err(err) = self.filer.create_entry(&entry).await {
             self.filer.delete_chunks(&entry.chunks)?;
-            result.error = FastStr::new(err.to_string());
+            result.error = err.to_string();
             error!("failed to write {path} to filer server， error: {err}");
             return Err(err);
         }
@@ -619,20 +684,162 @@ pub async fn get_or_head_handler(
 
 pub async fn post_handler(
     State(state): State<FilerState>,
-    extractor: PostExtractor,
+    mut extractor: PostExtractor,
 ) -> Result<Response<Body>, FilerError> {
-    let replication = match extractor.query.replication {
+    let replication = match &extractor.query.replication {
         Some(replication) => replication.clone(),
         None => state.options.default_replication.clone(),
     };
-    let collection = match extractor.query.collection {
+    let collection = match &extractor.query.collection {
         Some(collection) => collection.clone(),
         None => state.options.collection.clone(),
     };
-    let data_center = match extractor.query.data_center {
+    let data_center = match &extractor.query.data_center {
         Some(data_center) => data_center.clone(),
         None => state.options.data_center.clone(),
     };
 
-    todo!()
+    let mut response = Response::new(Body::empty());
+    let auto_chunked = state
+        .auto_chunk(
+            &mut response,
+            &mut extractor,
+            replication.clone(),
+            collection.clone(),
+            data_center.clone(),
+        )
+        .await?;
+    if auto_chunked {
+        return Ok(response);
+    }
+
+    // let (file_id, url) = state
+    //     .assign_new_file_info(
+    //         &mut response,
+    //         &extractor,
+    //         &replication,
+    //         &collection,
+    //         &data_center,
+    //     )
+    //     .await?;
+    //
+    // if file_id.is_empty() || url.is_empty() {
+    //     error!(
+    //         "failed to allocate volume for {}, collection: {collection}, data_center: \
+    //          {data_center}",
+    //         extractor.uri
+    //     );
+    //     return Ok(response);
+    // }
+    //
+    // let mut url = Url::parse(&url).map_err(HttpError::UrlParse)?;
+    // let cm = extractor.query.cm.unwrap_or_default();
+    // if cm {
+    //     url.query_pairs_mut().append_pair("cm", "true");
+    // }
+    //
+    // let resp = match request(
+    //     &url,
+    //     extractor.method,
+    //     None,
+    //     Some(extractor.body),
+    //     Some(extractor.headers),
+    //     None,
+    // )
+    // .await
+    // {
+    //     Ok(resp) => resp,
+    //     Err(err) => {
+    //         error!(
+    //             "failed to connect to volume server: {}, error: {err}",
+    //             extractor.uri
+    //         );
+    //         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    //         *response.body_mut() = Body::from(err.to_string());
+    //         return Ok(response);
+    //     }
+    // };
+    //
+    // let etag = get_etag(resp.headers())?;
+    // let upload: UploadResult =
+    //     serde_json::from_slice(&resp.bytes().await.map_err(HttpError::Reqwest)?)?;
+    // if !upload.error.is_empty() {
+    //     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    //     *response.body_mut() = Body::from(upload.error);
+    //     return Ok(response);
+    // }
+    //
+    // let mut path = extractor.uri.path().to_string();
+    // if path.ends_with("/") {
+    //     if !upload.name.is_empty() {
+    //         path = format!("{path}{}", upload.name);
+    //     } else {
+    //         state
+    //             .filer
+    //             .delete_file_id_tx
+    //             .unbounded_send(file_id.clone())?;
+    //         info!("can not to write to folder: {path} without a filename");
+    //         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    //         *response.body_mut() =
+    //             Body::from(format!("can not write to folder {path} without a filename"));
+    //         return Ok(response);
+    //     }
+    // }
+    //
+    // let mut crtime = SystemTime::now();
+    // if let Ok(Some(existing_entry)) = state.filer.find_entry(&path).await {
+    //     if existing_entry.is_directory() {
+    //         path = format!("{path}/{}", upload.name);
+    //     } else {
+    //         crtime = existing_entry.crtime;
+    //     }
+    // }
+    //
+    // let mut entry = Entry {
+    //     full_path: path.clone(),
+    //     attr: Attr {
+    //         mtime: SystemTime::now(),
+    //         crtime,
+    //         mode: 0o660,
+    //         uid: getuid().as_raw(),
+    //         gid: getgid().as_raw(),
+    //         mime: Default::default(),
+    //         replication,
+    //         collection,
+    //         ttl: extractor.query.ttl.unwrap_or_default().parse()?,
+    //         username: Default::default(),
+    //         group_names: vec![],
+    //     },
+    //     chunks: vec![FileChunk {
+    //         fid: file_id.clone(),
+    //         size: upload.size as u64,
+    //         mtime: now().as_millis() as i64,
+    //         e_tag: etag.clone(),
+    //         ..Default::default()
+    //     }],
+    // };
+    //
+    // let mime = mime_guess::from_path(&path);
+    // entry.attr.mime = FastStr::new(mime.first_or_octet_stream().type_().as_str());
+    //
+    // if let Err(err) = state.filer.create_entry(&entry).await {
+    //     state.filer.delete_chunks(&entry.chunks)?;
+    //     error!("failed to write {path} to filer server, error: {err}");
+    //     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    //     *response.body_mut() = Body::from(err.to_string());
+    //     return Ok(response);
+    // }
+    //
+    // let reply = FilerPostResult {
+    //     name: upload.name,
+    //     size: upload.size as u32,
+    //     error: upload.error,
+    //     fid: file_id,
+    //     url: url.to_string(),
+    // };
+    //
+    // set_etag(&mut response, &etag).map_err(HttpError::InvalidHeaderValue)?;
+    // *response.status_mut() = StatusCode::CREATED;
+    // *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+    Ok(response)
 }

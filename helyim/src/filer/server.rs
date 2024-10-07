@@ -22,7 +22,7 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
-use super::http::FilerState;
+use super::http::{post_handler, FilerState};
 use crate::{
     errors::Result,
     filer::{
@@ -107,7 +107,12 @@ pub async fn start_filer_server(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     let app = Router::new()
-        .route("/", get(get_or_head_handler).post(get_or_head_handler))
+        .route(
+            "/",
+            get(get_or_head_handler)
+                .head(get_or_head_handler)
+                .post(post_handler),
+        )
         .fallback(default_handler)
         .layer((
             CompressionLayer::new(),

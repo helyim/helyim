@@ -1,7 +1,8 @@
 use axum::{
-    extract::{Multipart, Query},
+    extract::Query,
     http::{HeaderMap, Method, Uri},
 };
+use axum::extract::Multipart;
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
@@ -51,13 +52,15 @@ pub struct PostQuery {
     pub collection: Option<FastStr>,
     pub data_center: Option<FastStr>,
     pub ttl: Option<FastStr>,
+    pub max_mb: Option<i32>,
+    pub cm: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct FilerPostResult {
-    pub name: FastStr,
+    pub name: String,
     pub size: u32,
-    pub error: FastStr,
-    pub fid: FastStr,
-    pub url: FastStr,
+    pub error: String,
+    pub fid: String,
+    pub url: String,
 }

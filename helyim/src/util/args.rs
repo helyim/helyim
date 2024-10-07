@@ -141,7 +141,7 @@ pub struct FilerOptions {
     pub disable_dir_listing: bool,
     // split file lager than this size
     #[arg(long, default_value_t = 32)]
-    pub max_mb: u32,
+    pub max_mb: i32,
     // sub dir listing size
     #[arg(long, default_value_t = 100_000)]
     pub dir_listing_limit: u32,
