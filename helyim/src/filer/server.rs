@@ -1,6 +1,10 @@
 use std::{
-    collections::HashMap, net::SocketAddr, path::MAIN_SEPARATOR, pin::Pin,
-    result::Result as StdResult, time::Duration,
+    collections::HashMap,
+    net::SocketAddr,
+    path::MAIN_SEPARATOR,
+    pin::Pin,
+    result::Result as StdResult,
+    time::{Duration, SystemTime},
 };
 
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
@@ -11,23 +15,24 @@ use helyim_proto::filer::{
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
     CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse,
     DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse,
-    Entry as PbEntry, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ListEntriesRequest,
-    ListEntriesResponse, Location, LookupDirectoryEntryRequest, LookupDirectoryEntryResponse,
-    LookupVolumeRequest, LookupVolumeResponse, PingRequest, PingResponse, UpdateEntryRequest,
+    Entry as PbEntry, KeepConnectedRequest, KeepConnectedResponse, ListEntriesRequest,
+    ListEntriesResponse, Location, Locations, LookupDirectoryEntryRequest,
+    LookupDirectoryEntryResponse, LookupVolumeRequest, LookupVolumeResponse, UpdateEntryRequest,
     UpdateEntryResponse,
 };
+use rustix::process::{getgid, getuid};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
-use super::http::{post_handler, FilerState};
+use super::http::{delete_handler, post_handler, FilerState};
 use crate::{
     errors::Result,
     filer::{
-        entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
-        file_chunk::{compact_file_chunks, find_unused_file_chunks},
+        entry::{entry_attr_to_pb, pb_to_entry_attr, Attr, Entry},
+        file_chunk::{compact_file_chunks, find_unused_file_chunks, total_size},
         http::get_or_head_handler,
         Filer, FilerRef,
     },
@@ -111,7 +116,9 @@ pub async fn start_filer_server(
             "/",
             get(get_or_head_handler)
                 .head(get_or_head_handler)
-                .post(post_handler),
+                .post(post_handler)
+                .put(post_handler)
+                .delete(delete_handler),
         )
         .fallback(default_handler)
         .layer((
@@ -364,9 +371,53 @@ impl HelyimFiler for FilerGrpcServer {
 
     async fn append_to_entry(
         &self,
-        _request: Request<AppendToEntryRequest>,
+        request: Request<AppendToEntryRequest>,
     ) -> StdResult<Response<AppendToEntryResponse>, Status> {
-        todo!()
+        let mut request = request.into_inner();
+
+        let path = if request.directory.ends_with("/") {
+            format!("{}{}", request.directory, request.entry_name)
+        } else {
+            format!("{}/{}", request.directory, request.entry_name)
+        };
+
+        let mut offset = 0;
+        let mut entry = match self.filer.find_entry(&path).await {
+            Ok(Some(entry)) => {
+                offset = total_size(&entry.chunks) as i64;
+                entry
+            }
+            _ => Entry {
+                full_path: path,
+                attr: Attr {
+                    mtime: SystemTime::now(),
+                    crtime: SystemTime::now(),
+                    mode: 0o644,
+                    uid: getuid().as_raw(),
+                    gid: getgid().as_raw(),
+                    mime: Default::default(),
+                    replication: Default::default(),
+                    collection: Default::default(),
+                    ttl: 0,
+                    username: Default::default(),
+                    group_names: vec![],
+                },
+                chunks: vec![],
+            },
+        };
+
+        for chunk in request.chunks.iter_mut() {
+            chunk.offset = offset;
+            offset += chunk.size as i64;
+        }
+
+        entry.chunks.extend(request.chunks);
+
+        self.filer
+            .create_entry(&entry)
+            .await
+            .map_err(|err| Status::internal(err.to_string()))?;
+        Ok(Response::new(AppendToEntryResponse {}))
     }
 
     async fn delete_entry(
@@ -436,9 +487,28 @@ impl HelyimFiler for FilerGrpcServer {
 
     async fn lookup_volume(
         &self,
-        _request: Request<LookupVolumeRequest>,
+        request: Request<LookupVolumeRequest>,
     ) -> StdResult<Response<LookupVolumeResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+        let mut locations = HashMap::new();
+        for vid in request.volume_ids {
+            let mut locs = vec![];
+            match self.filer.master_client.get_locations(&vid) {
+                Some(locations) => {
+                    for loc in locations.iter() {
+                        locs.push(Location {
+                            url: loc.url.to_string(),
+                            public_url: loc.public_url.to_string(),
+                        });
+                    }
+                }
+                None => continue,
+            }
+            locations.insert(vid, Locations { locations: locs });
+        }
+        Ok(Response::new(LookupVolumeResponse {
+            locations_map: locations,
+        }))
     }
 
     async fn collection_list(
@@ -455,24 +525,13 @@ impl HelyimFiler for FilerGrpcServer {
         todo!()
     }
 
-    async fn ping(
-        &self,
-        _request: Request<PingRequest>,
-    ) -> StdResult<Response<PingResponse>, Status> {
-        todo!()
-    }
+    type KeepConnectedStream =
+        Pin<Box<dyn Stream<Item = StdResult<KeepConnectedResponse, Status>> + Send>>;
 
-    async fn kv_get(
+    async fn keep_connected(
         &self,
-        _request: Request<KvGetRequest>,
-    ) -> StdResult<Response<KvGetResponse>, Status> {
-        todo!()
-    }
-
-    async fn kv_put(
-        &self,
-        _request: Request<KvPutRequest>,
-    ) -> StdResult<Response<KvPutResponse>, Status> {
+        _request: Request<Streaming<KeepConnectedRequest>>,
+    ) -> StdResult<Response<Self::KeepConnectedStream>, Status> {
         todo!()
     }
 }

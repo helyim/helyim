@@ -46,12 +46,10 @@ impl LocationMap {
     }
 
     pub fn get_locations(&self, vid: &str) -> Option<Ref<VolumeId, Vec<Location>>> {
-        let parse = vid.parse();
-        if parse.is_err() {
-            return None;
+        match vid.parse() {
+            Ok(vid) => self.get_locations_by_vid(vid),
+            Err(_err) => None,
         }
-        let vid = parse.unwrap();
-        self.get_locations_by_vid(vid)
     }
 
     pub fn get_locations_by_vid(&self, vid: VolumeId) -> Option<Ref<VolumeId, Vec<Location>>> {

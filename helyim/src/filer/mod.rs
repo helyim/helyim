@@ -61,9 +61,6 @@ pub struct Filer {
     directories: Option<Cache<FastStr, Entry>>,
     delete_file_id_tx: UnboundedSender<String>,
     master_client: MasterClient,
-    // dir_buckets_path: FastStr,
-    // fsync_buckets: Vec<FastStr>,
-    // buckets: FilerBuckets,
 }
 
 impl Filer {

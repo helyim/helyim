@@ -63,3 +63,15 @@ pub struct FilerPostResult {
     pub fid: String,
     pub url: String,
 }
+
+#[derive(Debug, FromRequest)]
+pub struct DeleteExtractor {
+    pub uri: Uri,
+    #[from_request(via(Query))]
+    pub query: DeleteQuery,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteQuery {
+    pub recursive: Option<bool>,
+}

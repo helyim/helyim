@@ -34,7 +34,9 @@ use crate::{
     filer::{
         entry::{Attr, Entry},
         file_chunk::{etag, total_size, ChunkView},
-        http::extractor::{FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor},
+        http::extractor::{
+            DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
+        },
         FilerError, FilerRef,
     },
     operation::{assign, upload, AssignRequest},
@@ -841,5 +843,29 @@ pub async fn post_handler(
     // set_etag(&mut response, &etag).map_err(HttpError::InvalidHeaderValue)?;
     // *response.status_mut() = StatusCode::CREATED;
     // *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+    Ok(response)
+}
+
+pub async fn delete_handler(
+    State(state): State<FilerState>,
+    extractor: DeleteExtractor,
+) -> Result<Response<Body>, FilerError> {
+    let recursive = extractor.query.recursive.unwrap_or_default();
+    let path = extractor.uri.path();
+    let mut response = Response::new(Body::empty());
+    match state
+        .filer
+        .delete_entry_meta_and_data(path, recursive, true)
+        .await
+    {
+        Ok(_) => {
+            *response.status_mut() = StatusCode::NO_CONTENT;
+        }
+        Err(err) => {
+            error!("deleting {path} error: {err}");
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            *response.body_mut() = Body::from(err.to_string());
+        }
+    }
     Ok(response)
 }
