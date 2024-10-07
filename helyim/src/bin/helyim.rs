@@ -1,3 +1,6 @@
+// remove after https://github.com/rust-lang/rust-clippy/pull/13464 fixed
+#![allow(clippy::needless_return)]
+
 use std::{io::stdout, time::Duration};
 
 use clap::Parser;
