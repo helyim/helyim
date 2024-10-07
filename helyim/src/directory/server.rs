@@ -493,7 +493,7 @@ impl Helyim for DirectoryGrpcServer {
     ) -> StdResult<Response<AssignResponse>, Status> {
         let mut request = request.into_inner();
         if !self.topology.is_leader().await {
-            return Err(Status::internal("not leader"));
+            return Err(Status::unavailable("not leader"));
         }
 
         if request.count == 0 {
@@ -511,7 +511,7 @@ impl Helyim for DirectoryGrpcServer {
             collection: FastStr::new(request.collection),
             replica_placement,
             ttl,
-            preallocate: self.preallocate as i64,
+            preallocate: self.preallocate,
             data_center: FastStr::new(request.data_center),
             rack: FastStr::new(request.rack),
             data_node: FastStr::new(request.data_node),

@@ -52,7 +52,7 @@ impl AssignRequest {
             option.ttl = Ttl::new(&ttl)?;
         }
         if let Some(preallocate) = self.preallocate {
-            option.preallocate = preallocate;
+            option.preallocate = preallocate as u64;
         }
         if let Some(collection) = self.collection {
             option.collection = FastStr::new(collection);

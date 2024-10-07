@@ -16,6 +16,7 @@ use hyper::{
     header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE},
     HeaderMap, Method,
 };
+use hyper::header::RANGE;
 use once_cell::sync::Lazy;
 use reqwest::{
     header::ETAG,
@@ -132,13 +133,10 @@ pub enum HttpError {
 pub fn set_etag(res: &mut AxumResponse<AxumBody>, etag: &str) -> Result<(), InvalidHeaderValue> {
     if !etag.is_empty() {
         if etag.starts_with("\"") {
-            res.headers_mut()
-                .insert("ETag", HeaderValue::from_str(etag)?);
+            res.headers_mut().insert(ETAG, HeaderValue::from_str(etag)?);
         } else {
-            res.headers_mut().insert(
-                "ETag",
-                HeaderValue::from_str(format!("\"{etag}\"").as_str())?,
-            );
+            res.headers_mut()
+                .insert(ETAG, HeaderValue::from_str(format!("\"{etag}\"").as_str())?);
         }
     }
     Ok(())
@@ -160,7 +158,7 @@ pub fn get_etag(headers: &HeaderMap) -> Result<String, HttpError> {
 pub async fn read_url(file_url: &str, offset: i64, size: u32) -> Result<Bytes, HttpError> {
     let mut headers = HeaderMap::new();
     headers.insert(
-        "Range",
+        RANGE,
         HeaderValue::from_str(&format!("bytes={offset}-{}", offset + size as i64))?,
     );
 
@@ -191,7 +189,7 @@ pub fn http_error(
     );
     response.headers_mut().insert(
         X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_str("text/plain; charset=utf-8")?,
+        HeaderValue::from_str("nosniff")?,
     );
 
     *response.status_mut() = status;

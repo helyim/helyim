@@ -230,7 +230,7 @@ impl Store {
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
-        preallocate: i64,
+        preallocate: u64,
     ) -> Result<()> {
         debug!(
             "add volume: {}, collection: {}, ttl: {}, replica placement: {}",
@@ -277,7 +277,7 @@ impl Store {
         needle_map_type: NeedleMapType,
         replica_placement: String,
         ttl: String,
-        preallocate: i64,
+        preallocate: u64,
     ) -> Result<()> {
         let rp = ReplicaPlacement::new(&replica_placement)?;
         let ttl = Ttl::new(&ttl)?;

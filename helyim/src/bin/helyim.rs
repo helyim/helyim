@@ -57,7 +57,7 @@ async fn start_filer(filer_opts: FilerOptions) -> Result<(), Box<dyn std::error:
 fn log_init(
     level: Level,
     opts: &LogOptions,
-    log_prefix: &str,
+    log_prefix: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env_filter =
         EnvFilter::from_default_env().add_directive(format!("helyim={level}").parse()?);
@@ -93,21 +93,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_opts = opts.log.clone();
     match opts.command {
         Command::Master(mut master) => {
-            let log_prefix = &format!("master-{}-{}", master.ip, master.port);
+            let log_prefix = format!("master-{}-{}", master.ip, master.port);
             log_init(level, &log_opts, log_prefix)?;
             master.check_raft_peers();
             info!("starting master server....");
             start_master(master).await
         }
         Command::Volume(volume) => {
-            let log_prefix = &format!("volume-{}-{}", volume.ip, volume.port);
+            let log_prefix = format!("volume-{}-{}", volume.ip, volume.port);
             log_init(level, &log_opts, log_prefix)?;
 
             info!("starting volume....");
             start_volume(volume).await
         }
         Command::Filer(filer) => {
-            let log_prefix = &format!("filer-{}-{}", filer.ip, filer.port);
+            let log_prefix = format!("filer-{}-{}", filer.ip, filer.port);
             log_init(level, &log_opts, log_prefix)?;
 
             info!("starting filer....");

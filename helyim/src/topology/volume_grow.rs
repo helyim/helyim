@@ -233,7 +233,7 @@ pub struct VolumeGrowOption {
     pub collection: FastStr,
     pub replica_placement: ReplicaPlacement,
     pub ttl: Ttl,
-    pub preallocate: i64,
+    pub preallocate: u64,
     pub data_center: FastStr,
     pub rack: FastStr,
     pub data_node: FastStr,

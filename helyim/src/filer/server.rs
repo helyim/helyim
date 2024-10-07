@@ -328,7 +328,12 @@ impl HelyimFiler for FilerGrpcServer {
         );
         let entry = match map_error_to_status(self.filer.find_entry(&full_path).await)? {
             Some(entry) => entry,
-            None => return Err(Status::not_found("")),
+            None => {
+                return Err(Status::not_found(format!(
+                    "entry {} not found under {}",
+                    request_entry.name, request.directory
+                )))
+            }
         };
 
         let unused_chunks = find_unused_file_chunks(&entry.chunks, &request_entry.chunks);

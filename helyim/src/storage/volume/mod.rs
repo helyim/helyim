@@ -165,7 +165,7 @@ impl Volume {
         needle_map_type: NeedleMapType,
         replica_placement: ReplicaPlacement,
         ttl: Ttl,
-        _preallocate: i64,
+        _preallocate: u64,
     ) -> Result<Volume, VolumeError> {
         let sb = SuperBlock {
             replica_placement,
