@@ -11,7 +11,7 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
 use helyim_proto::filer::{
-    helyim_filer_server::{HelyimFiler, HelyimFilerServer},
+    filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
     CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse,
     DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse,
@@ -286,6 +286,7 @@ impl HelyimFiler for FilerGrpcServer {
             None => return Err(Status::invalid_argument("entry must be set")),
         };
         let full_path = format!("{}{MAIN_SEPARATOR}{}", request.directory, entry.name);
+        // TODO: sort entry chunks
         let (chunks, garbages) = compact_file_chunks(&entry.chunks);
         map_error_to_status(self.filer.delete_chunks(garbages.as_ref()))?;
 
@@ -469,6 +470,7 @@ impl HelyimFiler for FilerGrpcServer {
             rack: Some(rack),
             preallocate: None,
             data_node: None,
+            writable_volume_count: None,
         };
 
         let assignment = assign(&self.filer.current_master(), assign_request).await;

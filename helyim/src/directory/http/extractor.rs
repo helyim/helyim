@@ -92,7 +92,7 @@ async fn proxy_to_leader(
                 .map(|v| v.as_str())
                 .unwrap_or(path);
 
-            let uri = format!("http://{addr}{}", path_query);
+            let uri = format!("http://{addr}{path_query}");
             info!("This server is not the leader, will redirect to {uri}");
 
             match Uri::try_from(uri) {

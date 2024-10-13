@@ -19,7 +19,6 @@ use futures_util::StreamExt;
 use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
 use hyper::StatusCode;
-use nom::Slice;
 use reqwest::multipart::{Form, Part};
 use rustix::{
     path::Arg,
@@ -45,7 +44,7 @@ use crate::{
         file::file_name,
         http::{
             content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
-            HttpError,
+            trim_trailing_slash, HttpError,
         },
         time::now,
     },
@@ -171,7 +170,7 @@ impl FilerState {
         &self,
         extractor: GetOrHeadExtractor,
         response: &mut Response<Body>,
-        entry: &mut Entry,
+        entry: &Entry,
     ) -> Result<(), FilerError> {
         let mut mime_type = entry.mime.to_string();
         if mime_type.is_empty() {
@@ -621,10 +620,7 @@ pub async fn get_or_head_handler(
     State(state): State<FilerState>,
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>, FilerError> {
-    let mut path = extractor.uri.path();
-    if path.ends_with("/") && path.len() > 1 {
-        path = path.slice(..path.len() - 1);
-    }
+    let path = trim_trailing_slash(extractor.uri.path());
 
     let mut response = Response::new(Body::empty());
     match state.filer.find_entry(path).await {
@@ -644,7 +640,7 @@ pub async fn get_or_head_handler(
             *response.status_mut() = StatusCode::NOT_FOUND;
             return Ok(response);
         }
-        Ok(Some(mut entry)) => {
+        Ok(Some(entry)) => {
             if entry.is_directory() {
                 if state.options.disable_dir_listing {
                     *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
@@ -676,7 +672,7 @@ pub async fn get_or_head_handler(
                     .await?;
             } else {
                 state
-                    .handle_chunks(extractor, &mut response, &mut entry)
+                    .handle_chunks(extractor, &mut response, &entry)
                     .await?;
             }
         }

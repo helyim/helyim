@@ -29,6 +29,7 @@ pub struct AssignRequest {
     pub data_center: Option<String>,
     pub rack: Option<String>,
     pub data_node: Option<String>,
+    pub writable_volume_count: Option<i32>,
 }
 
 impl AssignRequest {
@@ -72,6 +73,11 @@ impl AssignRequest {
 
 pub async fn assign(server: &str, request: AssignRequest) -> Result<Assignment, VolumeError> {
     let client = helyim_client(server)?;
+
+    let mut writable_volume_count = request.writable_volume_count.unwrap_or_default();
+    if writable_volume_count < 0 {
+        writable_volume_count = 0;
+    }
     let request = PbAssignRequest {
         count: request.count.unwrap_or_default(),
         replication: request.replication.unwrap_or_default(),
@@ -80,9 +86,9 @@ pub async fn assign(server: &str, request: AssignRequest) -> Result<Assignment, 
         data_center: request.data_center.unwrap_or_default(),
         rack: request.rack.unwrap_or_default(),
         data_node: request.data_node.unwrap_or_default(),
+        writable_volume_count: writable_volume_count as u32,
         // FIXME: what values should they be set to?
         memory_map_max_size_mb: u32::MAX,
-        writable_volume_count: 1,
     };
 
     let response = client.assign(request).await?;

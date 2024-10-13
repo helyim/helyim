@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use faststr::FastStr;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -25,30 +28,26 @@ impl Filer {
         old_entry: Option<&Entry>,
         new_entry: Option<&Entry>,
     ) -> Result<(), FilerError> {
-        if old_entry.is_none() {
-            return Ok(());
-        }
-        let old_entry = old_entry.unwrap();
+        let old_entry = match old_entry {
+            Some(entry) => entry,
+            None => return Ok(()),
+        };
 
-        if new_entry.is_none() {
-            self.delete_chunks(&old_entry.chunks)?;
-        }
+        let new_entry = match new_entry {
+            Some(entry) => entry,
+            None => {
+                self.delete_chunks(&old_entry.chunks)?;
+                return Ok(());
+            }
+        };
 
-        let mut to_delete = Vec::new();
-        for old_chunk in old_entry.chunks.iter() {
-            let mut found = false;
-            if let Some(new_entry) = new_entry {
-                for new_chunk in new_entry.chunks.iter() {
-                    if old_chunk.fid == new_chunk.fid {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                to_delete.push(old_chunk.clone());
-            }
-        }
+        let new_fids: HashSet<_> = new_entry.chunks.iter().map(|chunk| &chunk.fid).collect();
+        let to_delete: Vec<FileChunk> = old_entry
+            .chunks
+            .iter()
+            .filter(|old_chunk| !new_fids.contains(&old_chunk.fid))
+            .cloned()
+            .collect();
         self.delete_chunks(&to_delete)
     }
 

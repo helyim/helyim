@@ -212,6 +212,7 @@ impl Filer {
         }
         let store = self.filer_store()?;
         store.find_entry(path).await
+        // TODO: sort entry chunks
     }
 
     pub async fn list_directory_entries(
@@ -222,7 +223,7 @@ impl Filer {
         limit: u32,
     ) -> Result<Vec<Entry>, FilerError> {
         let mut path = path;
-        if path.starts_with('/') && path.len() > 1 {
+        if path.ends_with('/') && path.len() > 1 {
             path = &path[..path.len() - 1];
         }
         let store = self.filer_store()?;
@@ -359,11 +360,17 @@ unsafe impl Send for FilerError {}
 
 impl IntoResponse for FilerError {
     fn into_response(self) -> Response {
-        let error = self.to_string();
+        let status_code = match self {
+            FilerError::NotFound => StatusCode::NOT_FOUND,
+            FilerError::IsDirectory(_) | FilerError::IsFile(_) => StatusCode::CONFLICT,
+            FilerError::StoreNotInitialized => StatusCode::SERVICE_UNAVAILABLE,
+            FilerError::MasterClient(_) => StatusCode::BAD_GATEWAY,
+            _ => StatusCode::BAD_REQUEST,
+        };
         let error = json!({
-            "error": error
+            "error": self.to_string()
         });
-        let response = (StatusCode::BAD_REQUEST, Json(error));
+        let response = (status_code, Json(error));
         response.into_response()
     }
 }

@@ -13,10 +13,9 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use http_range::HttpRange;
 use hyper::{
-    header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE},
+    header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE, RANGE},
     HeaderMap, Method,
 };
-use hyper::header::RANGE;
 use once_cell::sync::Lazy;
 use reqwest::{
     header::ETAG,
@@ -132,7 +131,7 @@ pub enum HttpError {
 
 pub fn set_etag(res: &mut AxumResponse<AxumBody>, etag: &str) -> Result<(), InvalidHeaderValue> {
     if !etag.is_empty() {
-        if etag.starts_with("\"") {
+        if etag.starts_with("W/\"") || etag.starts_with("\"") {
             res.headers_mut().insert(ETAG, HeaderValue::from_str(etag)?);
         } else {
             res.headers_mut()
@@ -146,6 +145,7 @@ pub fn get_etag(headers: &HeaderMap) -> Result<String, HttpError> {
     let etag = match headers.get(ETAG) {
         Some(etag) => etag
             .to_str()?
+            .trim_start_matches("W/\"")
             .trim_start_matches("\"")
             .trim_end_matches("\"")
             .to_string(),
@@ -172,7 +172,7 @@ pub async fn read_url(file_url: &str, offset: i64, size: u32) -> Result<Bytes, H
     )
     .await?;
     if response.status().as_u16() >= 400 {
-        return Err(anyhow!("GET {} error: {}", file_url, response.status()));
+        return Err(anyhow!("GET {file_url} error: {}", response.status()));
     }
 
     Ok(response.bytes().await?)
@@ -187,10 +187,9 @@ pub fn http_error(
         CONTENT_TYPE,
         HeaderValue::from_str("text/plain; charset=utf-8")?,
     );
-    response.headers_mut().insert(
-        X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_str("nosniff")?,
-    );
+    response
+        .headers_mut()
+        .insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_str("nosniff")?);
 
     *response.status_mut() = status;
     *response.body_mut() = AxumBody::from(error);
@@ -236,4 +235,12 @@ pub fn range_header(range: HttpRange, content_size: u64) -> Result<HeaderMap, Ht
         HeaderValue::from_str(&content_range(range, content_size))?,
     );
     Ok(headers)
+}
+
+pub fn trim_trailing_slash(path: &str) -> &str {
+    if path.ends_with('/') && path.len() > 1 {
+        &path[..path.len() - 1]
+    } else {
+        path
+    }
 }

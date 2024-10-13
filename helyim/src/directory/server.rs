@@ -493,7 +493,7 @@ impl Helyim for DirectoryGrpcServer {
     ) -> StdResult<Response<AssignResponse>, Status> {
         let mut request = request.into_inner();
         if !self.topology.is_leader().await {
-            return Err(Status::unavailable("not leader"));
+            return Err(Status::unavailable("This node is not leader"));
         }
 
         if request.count == 0 {

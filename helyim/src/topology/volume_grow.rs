@@ -217,17 +217,6 @@ impl VolumeGrowth {
     }
 }
 
-impl VolumeGrowth {
-    pub async fn grow_by_type(
-        &self,
-        option: &VolumeGrowOption,
-        topology: &Topology,
-    ) -> Result<usize, VolumeError> {
-        let count = self.find_volume_count(option.replica_placement.copy_count());
-        self.grow_by_count_and_type(count, option, topology).await
-    }
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct VolumeGrowOption {
     pub collection: FastStr,

@@ -10,7 +10,10 @@ use helyim_proto::filer::FileChunk;
 pub fn total_size(chunks: &[FileChunk]) -> u64 {
     let mut size = 0;
     for chunk in chunks {
-        size = max(chunk.offset as u64 + chunk.size, size);
+        match (chunk.offset as u64).checked_add(chunk.size) {
+            Some(sum) => size = max(sum, size),
+            None => size = u64::MAX,
+        }
     }
     size
 }
@@ -55,7 +58,7 @@ pub fn find_unused_file_chunks(
         file_ids.insert(&interval.fid, true);
     }
     for chunk in old_chunks {
-        if file_ids.contains_key(&chunk.fid) {
+        if !file_ids.contains_key(&chunk.fid) {
             unused.push(chunk.clone());
         }
     }
@@ -157,16 +160,8 @@ fn merge_into_visibles<'a>(
         }
     }
 
-    new_visibles.push(new_v.clone());
-
-    for i in (0..new_visibles.len()).rev() {
-        if i > 0 && new_v.start < new_visibles[i - 1].start {
-            new_visibles[i] = new_visibles[i - 1].clone();
-        } else {
-            new_visibles[i] = new_v.clone();
-            break;
-        }
-    }
+    new_visibles.push(new_v);
+    new_visibles.sort_by(|a, b| a.start.cmp(&b.start));
 
     Some(new_visibles)
 }

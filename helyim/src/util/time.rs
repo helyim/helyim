@@ -18,7 +18,7 @@ pub fn timestamp_to_time(timestamp: u64) -> Result<SystemTime, TimeError> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum TimeError {
-    #[error("Invalid timestamp {0}")]
+    #[error("Invalid timestamp: {0}")]
     InvalidTimestamp(u64),
     #[error("SystemTime error: {0}")]
     SystemTime(#[from] SystemTimeError),

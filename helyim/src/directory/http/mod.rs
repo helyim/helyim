@@ -25,10 +25,12 @@ pub async fn assign_handler(
     State(state): State<DirectoryState>,
     FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> Result<Json<Assignment>, VolumeError> {
+    // TODO: how to handle when user requested with a negative number?
     let count = match request.count {
         Some(n) if n > 1 => n,
         _ => 1,
     };
+    let writable_volume_count = request.writable_volume_count.unwrap_or_default();
     let option = request.volume_grow_option(&state.options.default_replication)?;
 
     if !state.topology.has_writable_volume(&option).await {
@@ -37,7 +39,11 @@ pub async fn assign_handler(
         }
         state
             .volume_grow
-            .grow_by_type(&option, state.topology.as_ref())
+            .automatic_grow_by_type(
+                &option,
+                state.topology.as_ref(),
+                writable_volume_count as usize,
+            )
             .await?;
     }
     let (fid, count, node) = state.topology.pick_for_write(count, &option).await?;

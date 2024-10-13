@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use bytes::Bytes;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE},
+    header::{HeaderMap, HeaderName, HeaderValue},
     multipart::{Form, Part},
     Method,
 };
@@ -55,16 +55,9 @@ pub async fn upload(
     pairs: Option<HashMap<&str, &str>>,
 ) -> Result<UploadResult, HttpError> {
     let part = Part::bytes(bytes).file_name(filename).mime_str(mtype)?;
-    let form = Form::new().part("", part);
+    let form = Form::new().part("part1", part);
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_str(&format!(
-            "multipart/form-data; boundary={}",
-            form.boundary()
-        ))?,
-    );
 
     if let Some(pairs) = pairs {
         for (k, v) in pairs {
