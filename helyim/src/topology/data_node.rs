@@ -25,6 +25,7 @@ use crate::{
 pub struct DataNode {
     pub ip: FastStr,
     pub port: u16,
+    pub url: FastStr,
     pub public_url: FastStr,
     pub last_seen: i64,
     node: Arc<NodeImpl>,
@@ -54,12 +55,15 @@ impl DataNode {
         public_url: FastStr,
         max_volume_count: i64,
     ) -> DataNode {
+        let url = format!("{id}:{port}");
         let node = Arc::new(NodeImpl::new(id));
         node.set_max_volume_count(max_volume_count);
 
+        let url = FastStr::new(url);
         DataNode {
             ip,
             port,
+            url,
             public_url,
             last_seen: 0,
             node,
@@ -69,8 +73,8 @@ impl DataNode {
         }
     }
 
-    pub fn url(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
+    pub fn url(&self) -> FastStr {
+        self.url.clone()
     }
 
     pub async fn delta_update_volumes(

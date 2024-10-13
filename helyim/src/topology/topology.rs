@@ -388,7 +388,7 @@ impl Topology {
                     match data_node.downcast_arc::<DataNode>() {
                         Ok(data_node) => {
                             let mut location = VolumeLocation::new();
-                            location.url = data_node.url();
+                            location.url = data_node.url().to_string();
                             location.public_url = data_node.public_url.to_string();
 
                             for volume in data_node.volumes.iter() {

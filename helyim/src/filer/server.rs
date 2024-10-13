@@ -161,7 +161,10 @@ impl HelyimFiler for FilerGrpcServer {
         let request = request.into_inner();
         let find_entry = self
             .filer
-            .find_entry(&format!("{}{}", request.directory, request.name))
+            .find_entry(&format!(
+                "{}{MAIN_SEPARATOR}{}",
+                request.directory, request.name
+            ))
             .await;
         match map_error_to_status(find_entry)? {
             Some(entry) => {
@@ -463,11 +466,11 @@ impl HelyimFiler for FilerGrpcServer {
 
         let assign_request = AssignRequest {
             count: Some(request.count as u64),
-            replication: Some(request.replication),
-            collection: Some(request.collection),
-            ttl: Some(ttl_str),
-            data_center: Some(data_center),
-            rack: Some(rack),
+            replication: Some(FastStr::new(request.replication)),
+            collection: Some(FastStr::new(request.collection)),
+            ttl: Some(FastStr::new(ttl_str)),
+            data_center: Some(FastStr::new(data_center)),
+            rack: Some(FastStr::new(rack)),
             preallocate: None,
             data_node: None,
             writable_volume_count: None,
@@ -479,15 +482,15 @@ impl HelyimFiler for FilerGrpcServer {
         let mut response = AssignVolumeResponse::default();
 
         if !assignment.error.is_empty() {
-            response.error = assignment.error;
+            response.error = assignment.error.to_string();
             return Ok(Response::new(response));
         }
 
-        response.file_id = assignment.fid;
+        response.file_id = assignment.fid.to_string();
         response.count = assignment.count as i32;
         response.location = Some(Location {
-            url: assignment.url,
-            public_url: assignment.public_url,
+            url: assignment.url.to_string(),
+            public_url: assignment.public_url.to_string(),
         });
         Ok(Response::new(response))
     }

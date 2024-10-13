@@ -229,6 +229,10 @@ impl FilerState {
         };
         let ranges_sum: u64 = ranges.iter().map(|r| r.length).sum();
         if ranges_sum > total_size {
+            // The total number of bytes in all the ranges
+            // is larger than the size of the file by
+            // itself, so this is probably an attack, or a
+            // dumb client.  Ignore the range request.
             return Ok(());
         }
 
@@ -393,6 +397,11 @@ impl FilerState {
         }
         if content_len <= 0 {
             info!("content-length value is missing or unexpected, auto chunking will be skipped");
+            http_error(
+                response,
+                StatusCode::LENGTH_REQUIRED,
+                "Content-Length is required for auto-chunking".to_string(),
+            )?;
             return Ok(false);
         }
 
@@ -493,9 +502,9 @@ impl FilerState {
                     .assign_new_file_info(
                         response,
                         extractor,
-                        &replication,
-                        &collection,
-                        &data_center,
+                        replication.clone(),
+                        collection.clone(),
+                        data_center.clone(),
                     )
                     .await?;
 
@@ -516,7 +525,7 @@ impl FilerState {
                         );
 
                         let chunk = FileChunk {
-                            fid: file_id,
+                            fid: file_id.to_string(),
                             offset: chunk_offset,
                             size: chunk_buf_offset as u64,
                             mtime: now().as_millis() as i64,
@@ -589,22 +598,22 @@ impl FilerState {
         &self,
         response: &mut Response<Body>,
         extractor: &PostExtractor,
-        replication: &str,
-        collection: &str,
-        data_center: &str,
-    ) -> Result<(String, String), FilerError> {
+        replication: FastStr,
+        collection: FastStr,
+        data_center: FastStr,
+    ) -> Result<(FastStr, FastStr), FilerError> {
         let request = AssignRequest {
             count: Some(1),
-            replication: Some(replication.to_string()),
-            collection: Some(collection.to_string()),
-            ttl: extractor.query.ttl.as_ref().map(|ttl| ttl.to_string()),
-            data_center: Some(data_center.to_string()),
+            replication: Some(replication),
+            collection: Some(collection),
+            ttl: extractor.query.ttl.clone(),
+            data_center: Some(data_center),
             ..Default::default()
         };
         match assign(&self.filer.current_master(), request).await {
             Ok(assign) => {
                 let url = format!("http://{}/{}/", assign.url, assign.fid);
-                Ok((assign.fid, url))
+                Ok((assign.fid, FastStr::new(url)))
             }
             Err(err) => {
                 error!("assign file id error: {err}");

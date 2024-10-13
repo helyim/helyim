@@ -1,5 +1,6 @@
 use std::{num::ParseIntError, time::Duration};
 
+use faststr::FastStr;
 use helyim_proto::directory::{
     lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
@@ -16,39 +17,39 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LookupRequest {
-    pub volume_id: String,
-    pub collection: Option<String>,
+    pub volume_id: FastStr,
+    pub collection: Option<FastStr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Location {
-    pub url: String,
-    pub public_url: String,
+    pub url: FastStr,
+    pub public_url: FastStr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lookup {
-    pub volume_id: String,
+    pub volume_id: FastStr,
     pub locations: Vec<Location>,
-    pub error: String,
+    pub error: FastStr,
 }
 
 impl Lookup {
-    pub fn ok<S: ToString>(vid: S, locations: Vec<Location>) -> Self {
+    pub fn ok<S: AsRef<str>>(vid: S, locations: Vec<Location>) -> Self {
         Self {
-            volume_id: vid.to_string(),
+            volume_id: FastStr::new(vid),
             locations,
-            error: String::default(),
+            error: FastStr::empty(),
         }
     }
 
-    pub fn error<S: ToString>(error: S) -> Self {
+    pub fn error<S: AsRef<str>>(error: S) -> Self {
         Self {
-            volume_id: String::default(),
+            volume_id: FastStr::empty(),
             locations: vec![],
-            error: error.to_string(),
+            error: FastStr::new(error),
         }
     }
 }

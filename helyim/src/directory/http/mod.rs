@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use axum::{extract::State, Json};
 pub use extractor::require_leader;
+use faststr::FastStr;
 
 use crate::{
     operation::{
@@ -48,11 +49,11 @@ pub async fn assign_handler(
     }
     let (fid, count, node) = state.topology.pick_for_write(count, &option).await?;
     let assignment = Assignment {
-        fid: fid.to_string(),
+        fid: FastStr::new(fid.to_string()),
         url: node.url(),
-        public_url: node.public_url.to_string(),
+        public_url: node.public_url.clone(),
         count,
-        error: String::default(),
+        error: FastStr::empty(),
     };
     Ok(Json(assignment))
 }
@@ -64,9 +65,9 @@ pub async fn lookup_handler(
     if request.volume_id.is_empty() {
         return Err(VolumeError::String("volume_id can't be empty".to_string()));
     }
-    let mut volume_id = request.volume_id;
+    let mut volume_id: &str = &request.volume_id;
     if let Some(idx) = volume_id.rfind(',') {
-        volume_id = volume_id[..idx].to_string();
+        volume_id = &volume_id[..idx];
     }
     let mut locations = vec![];
     let data_nodes = state
@@ -81,7 +82,7 @@ pub async fn lookup_handler(
             for dn in nodes.iter() {
                 locations.push(Location {
                     url: dn.url(),
-                    public_url: dn.public_url.to_string(),
+                    public_url: dn.public_url.clone(),
                 });
             }
 

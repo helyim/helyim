@@ -425,7 +425,7 @@ impl Helyim for DirectoryGrpcServer {
                     for dn in nodes.iter() {
                         let public_url = dn.public_url.to_string();
                         locations.push(Location {
-                            url: dn.url(),
+                            url: dn.url().to_string(),
                             public_url,
                         });
                     }
@@ -470,7 +470,7 @@ impl Helyim for DirectoryGrpcServer {
             let mut locations = Vec::new();
             for data_node in shard_locations {
                 locations.push(Location {
-                    url: data_node.url(),
+                    url: data_node.url().to_string(),
                     public_url: data_node.public_url.to_string(),
                 });
             }
@@ -539,7 +539,7 @@ impl Helyim for DirectoryGrpcServer {
         let (fid, count, data_node) = map_error_to_status(pick_for_write)?;
         Ok(Response::new(AssignResponse {
             fid: fid.to_string(),
-            url: data_node.url(),
+            url: data_node.url().to_string(),
             public_url: data_node.public_url.to_string(),
             count,
             error: Default::default(),
@@ -589,7 +589,7 @@ async fn update_volume_layout(
     data_node: &DataNodeRef,
 ) -> StdResult<(), VolumeError> {
     let mut volume_location = VolumeLocation::new();
-    volume_location.url = data_node.url();
+    volume_location.url = data_node.url().to_string();
     volume_location.public_url = data_node.public_url.to_string();
 
     if !heartbeat.new_volumes.is_empty() || !heartbeat.deleted_volumes.is_empty() {
@@ -731,7 +731,7 @@ async fn remove_data_node(
         topology.unregister_data_node(&data_node).await;
 
         let mut volume_location = VolumeLocation::new();
-        volume_location.url = data_node.url();
+        volume_location.url = data_node.url().to_string();
         volume_location.public_url = data_node.public_url.to_string();
 
         for volume in data_node.volumes.iter() {

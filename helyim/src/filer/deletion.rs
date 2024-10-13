@@ -58,8 +58,8 @@ impl Filer {
             if let Some(locs) = self.master_client.get_locations(&vid) {
                 for loc in locs.iter() {
                     locations.push(Location {
-                        url: loc.url.to_string(),
-                        public_url: loc.public_url.to_string(),
+                        url: loc.url.clone(),
+                        public_url: loc.public_url.clone(),
                     });
                 }
 
