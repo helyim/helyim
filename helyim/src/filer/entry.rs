@@ -58,6 +58,25 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn new<S: ToString>(path: S) -> Entry {
+        Self {
+            full_path: path.to_string(),
+            attr: Attr {
+                mtime: SystemTime::now(),
+                crtime: SystemTime::now(),
+                mode: 0o644,
+                uid: getuid().as_raw(),
+                gid: getgid().as_raw(),
+                mime: Default::default(),
+                replication: Default::default(),
+                collection: Default::default(),
+                ttl: 0,
+                username: Default::default(),
+                group_names: vec![],
+            },
+            chunks: vec![],
+        }
+    }
     pub fn path(&self) -> &str {
         &self.full_path
     }

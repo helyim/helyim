@@ -1,10 +1,6 @@
 use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    path::MAIN_SEPARATOR,
-    pin::Pin,
-    result::Result as StdResult,
-    time::{Duration, SystemTime},
+    collections::HashMap, net::SocketAddr, path::MAIN_SEPARATOR, pin::Pin,
+    result::Result as StdResult, time::Duration,
 };
 
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
@@ -20,7 +16,6 @@ use helyim_proto::filer::{
     LookupDirectoryEntryResponse, LookupVolumeRequest, LookupVolumeResponse, UpdateEntryRequest,
     UpdateEntryResponse,
 };
-use rustix::process::{getgid, getuid};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
@@ -31,7 +26,7 @@ use super::http::{delete_handler, post_handler, FilerState};
 use crate::{
     errors::Result,
     filer::{
-        entry::{entry_attr_to_pb, pb_to_entry_attr, Attr, Entry},
+        entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
         file_chunk::{compact_file_chunks, find_unused_file_chunks, total_size},
         http::get_or_head_handler,
         Filer, FilerRef,
@@ -330,9 +325,9 @@ impl HelyimFiler for FilerGrpcServer {
             "{}{MAIN_SEPARATOR}{}",
             request.directory, request_entry.name
         );
-        let entry = match map_error_to_status(self.filer.find_entry(&full_path).await)? {
-            Some(entry) => entry,
-            None => {
+        let entry = match self.filer.find_entry(&full_path).await {
+            Ok(Some(entry)) => entry,
+            _ => {
                 return Err(Status::not_found(format!(
                     "entry {} not found under {}",
                     request_entry.name, request.directory
@@ -396,23 +391,7 @@ impl HelyimFiler for FilerGrpcServer {
                 offset = total_size(&entry.chunks) as i64;
                 entry
             }
-            _ => Entry {
-                full_path: path,
-                attr: Attr {
-                    mtime: SystemTime::now(),
-                    crtime: SystemTime::now(),
-                    mode: 0o644,
-                    uid: getuid().as_raw(),
-                    gid: getgid().as_raw(),
-                    mime: Default::default(),
-                    replication: Default::default(),
-                    collection: Default::default(),
-                    ttl: 0,
-                    username: Default::default(),
-                    group_names: vec![],
-                },
-                chunks: vec![],
-            },
+            _ => Entry::new(path),
         };
 
         for chunk in request.chunks.iter_mut() {
@@ -422,10 +401,7 @@ impl HelyimFiler for FilerGrpcServer {
 
         entry.chunks.extend(request.chunks);
 
-        self.filer
-            .create_entry(&entry)
-            .await
-            .map_err(|err| Status::internal(err.to_string()))?;
+        map_error_to_status(self.filer.create_entry(&entry).await)?;
         Ok(Response::new(AppendToEntryResponse {}))
     }
 

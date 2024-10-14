@@ -13,6 +13,7 @@ use axum::{
         HeaderValue, Method, Response,
     },
 };
+use axum::http::header::RANGE;
 use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
 use futures_util::StreamExt;
@@ -61,10 +62,7 @@ impl FilerState {
         &self,
         extractor: GetOrHeadExtractor,
     ) -> Result<Response<Body>, FilerError> {
-        let mut path = extractor.uri.path();
-        if path.ends_with('/') && path.len() > 1 {
-            path = &path[..path.len() - 1];
-        }
+        let mut path = trim_trailing_slash(extractor.uri.path());
 
         let mut limit = extractor.list_dir.limit;
         if limit == 0 {
@@ -196,7 +194,7 @@ impl FilerState {
 
         let total_size = total_size(entry.chunks.as_slice());
 
-        let range = match extractor.headers.get("Range") {
+        let range = match extractor.headers.get(RANGE) {
             Some(range) => range,
             None => return Ok(()),
         };
