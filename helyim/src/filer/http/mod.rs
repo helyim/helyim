@@ -18,7 +18,7 @@ use axum::{
 use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
 use futures_util::StreamExt;
-use helyim_common::time::now;
+use helyim_common::{anyhow, time::now};
 use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
 use hyper::StatusCode;
@@ -32,7 +32,6 @@ use tracing::{error, info, warn};
 mod extractor;
 
 use crate::{
-    anyhow,
     filer::{
         entry::{Attr, Entry},
         file_chunk::{etag, total_size, ChunkView},

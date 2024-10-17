@@ -9,6 +9,7 @@ use std::{
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use helyim_common::{
+    anyhow,
     consts::needle::MAX_POSSIBLE_VOLUME_SIZE,
     ttl::Ttl,
     types::{Size, VolumeId},
@@ -20,7 +21,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    anyhow,
     errors::{Error, Result},
     storage::{
         disk_location::DiskLocation,

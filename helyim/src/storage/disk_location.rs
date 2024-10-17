@@ -6,19 +6,16 @@ use dashmap::{
 };
 use faststr::FastStr;
 use futures::future::join_all;
-use helyim_common::{ttl::Ttl, types::VolumeId};
+use helyim_common::{anyhow, ttl::Ttl, types::VolumeId};
 use nom::{bytes::complete::take_till, character::complete::char, combinator::opt, sequence::pair};
 use tokio::task::JoinHandle;
 use tracing::info;
 
-use crate::{
-    anyhow,
-    storage::{
-        erasure_coding::EcVolume,
-        needle::NeedleMapType,
-        volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
-        VolumeError,
-    },
+use crate::storage::{
+    erasure_coding::EcVolume,
+    needle::NeedleMapType,
+    volume::{ReplicaPlacement, Volume, DATA_FILE_SUFFIX},
+    VolumeError,
 };
 
 pub struct DiskLocation {

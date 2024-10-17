@@ -11,7 +11,7 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
-use helyim_common::images::FAVICON_ICO;
+use helyim_common::{anyhow, images::FAVICON_ICO};
 use http_range::HttpRange;
 use hyper::{
     header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE, RANGE},
@@ -26,7 +26,7 @@ use reqwest::{
 };
 use url::Url;
 
-use crate::{anyhow, PHRASE};
+use crate::PHRASE;
 
 pub const HTTP_DATE_FORMAT: &str = "%a, %d %b %Y %H:%M:%S GMT";
 

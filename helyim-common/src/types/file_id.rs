@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use helyim_common::types::{NeedleId, VolumeId};
+use crate::types::{NeedleId, VolumeId};
 
 #[derive(Copy, Clone)]
 pub struct FileId {

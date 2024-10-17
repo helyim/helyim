@@ -2,9 +2,6 @@ mod disk_location;
 
 pub mod erasure_coding;
 
-mod file_id;
-pub use file_id::FileId;
-
 mod http;
 
 mod needle;

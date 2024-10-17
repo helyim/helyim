@@ -3,11 +3,12 @@ use std::{
     fs::{read, write},
 };
 
+use helyim_common::anyhow;
 use helyim_proto::volume::VolumeInfo;
 use tonic::Status;
 use tracing::error;
 
-use crate::{anyhow, storage::VolumeError, util::file::check_file};
+use crate::{storage::VolumeError, util::file::check_file};
 
 pub fn maybe_load_volume_info(filename: &str) -> Result<Option<VolumeInfo>, VolumeError> {
     match check_file(filename)? {

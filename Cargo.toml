@@ -9,7 +9,7 @@ members = [
     "helyim-filer",
     "helyim-proto",
     "helyim-store",
-    "helyim-topology",
+    "helyim-topology", "helyim-client",
 ]
 
 [workspace.package]

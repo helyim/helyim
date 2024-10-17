@@ -7,6 +7,9 @@ use crate::consts::needle::{
     NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE, TOMBSTONE_FILE_SIZE,
 };
 
+mod file_id;
+pub use file_id::FileId;
+
 macro_rules! def_needle_type {
     ($type_name:ident, $typ:ty) => {
         #[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
