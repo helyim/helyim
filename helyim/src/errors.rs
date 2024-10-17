@@ -9,12 +9,13 @@ use axum::{
     Json,
 };
 use futures::channel::mpsc::TrySendError;
+use helyim_common::ttl::TtlError;
 use serde_json::json;
 use tracing::error;
 
 use crate::{
     raft::types::RaftError,
-    storage::{erasure_coding::EcVolumeError, NeedleError, TtlError, VolumeError},
+    storage::{erasure_coding::EcVolumeError, NeedleError, VolumeError},
     topology::TopologyError,
     util::http::HttpError,
 };
@@ -60,9 +61,6 @@ pub enum Error {
 
     #[error("Errno: {0}")]
     Errno(#[from] rustix::io::Errno),
-
-    #[error("Snowflake error: {0}")]
-    Snowflake(#[from] sonyflake::Error),
 
     // http
     #[error("Invalid header value: {0}")]

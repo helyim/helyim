@@ -9,14 +9,16 @@ use axum::{
     body::Body,
     extract::State,
     http::{
-        header::{ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE},
+        header::{
+            ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
+        },
         HeaderValue, Method, Response,
     },
 };
-use axum::http::header::RANGE;
 use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
 use futures_util::StreamExt;
+use helyim_common::time::now;
 use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
 use hyper::StatusCode;
@@ -47,7 +49,6 @@ use crate::{
             content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
             trim_trailing_slash, HttpError,
         },
-        time::now,
     },
 };
 

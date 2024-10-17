@@ -2,14 +2,16 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_common::ttl::Ttl;
+use helyim_proto::volume::AllocateVolumeRequest;
 use rand::Rng;
 use tracing::{debug, error};
 
 use crate::{
-    storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
+    storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
     topology::{
         node::{downcast_node, Node},
-        DataNodeRef, Topology,
+        DataNodeRef, Topology, TopologyError,
     },
 };
 
@@ -39,7 +41,7 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: &Topology,
-    ) -> Result<Vec<DataNodeRef>, VolumeError> {
+    ) -> Result<Vec<DataNodeRef>, TopologyError> {
         let mut ret = vec![];
         let rp = option.replica_placement;
 
@@ -145,10 +147,10 @@ impl VolumeGrowth {
         &self,
         option: &VolumeGrowOption,
         topology: &Topology,
-    ) -> Result<usize, VolumeError> {
+    ) -> Result<usize, TopologyError> {
         let nodes = self.find_empty_slots(option, topology).await?;
         let len = nodes.len();
-        let vid = topology.next_volume_id().await?;
+        let vid = topology.next_volume_id().await;
         self.grow(vid, option, topology, nodes).await?;
         Ok(len)
     }
@@ -158,7 +160,7 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: &Topology,
         mut target_count: usize,
-    ) -> Result<usize, VolumeError> {
+    ) -> Result<usize, TopologyError> {
         let copy_count = option.replica_placement.copy_count();
         if target_count == 0 {
             target_count = self.find_volume_count(copy_count);
@@ -172,7 +174,7 @@ impl VolumeGrowth {
         count: usize,
         option: &VolumeGrowOption,
         topology: &Topology,
-    ) -> Result<usize, VolumeError> {
+    ) -> Result<usize, TopologyError> {
         let mut grow_count = 0;
         for _ in 0..count {
             grow_count += self.find_and_grow(option, topology).await?;
@@ -187,11 +189,9 @@ impl VolumeGrowth {
         option: &VolumeGrowOption,
         topology: &Topology,
         nodes: Vec<DataNodeRef>,
-    ) -> Result<(), VolumeError> {
+    ) -> Result<(), TopologyError> {
         for dn in nodes {
-            // FIXME: the follow macro maybe removed after tonic support hyper 1.0
-            #[cfg(not(test))]
-            dn.allocate_volume(helyim_proto::volume::AllocateVolumeRequest {
+            dn.allocate_volume(AllocateVolumeRequest {
                 volume_id: vid,
                 collection: option.collection.to_string(),
                 replication: option.replica_placement.to_string(),
@@ -232,7 +232,7 @@ async fn randomly_pick_nodes<F>(
     children: &DashMap<FastStr, Arc<dyn Node>>,
     filter: F,
     nodes_num: usize,
-) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), VolumeError>
+) -> Result<(Arc<dyn Node>, Vec<Option<Arc<dyn Node>>>), TopologyError>
 where
     F: Fn(&Arc<dyn Node>) -> bool,
 {
@@ -246,7 +246,7 @@ where
         }
     }
     if candidates.is_empty() {
-        return Err(VolumeError::NoFreeSpace(
+        return Err(TopologyError::NoFreeSpace(
             "find main node failed".to_string(),
         ));
     }
@@ -286,7 +286,7 @@ where
 
     if !ret {
         error!("failed to pick {nodes_num} node from rest");
-        return Err(VolumeError::NoFreeSpace(
+        return Err(TopologyError::NoFreeSpace(
             "not enough node found".to_string(),
         ));
     }

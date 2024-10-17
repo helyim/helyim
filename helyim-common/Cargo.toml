@@ -1,0 +1,31 @@
+[package]
+name = "helyim-common"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[dependencies]
+bytes.workspace = true
+hyper.workspace = true
+hyper-util = { workspace = true, features = ["client", "client-legacy"] }
+nom.workspace = true
+parking_lot.workspace = true
+pin-project-lite.workspace = true
+
+rustix = { workspace = true, features = ["fs", "process"] }
+serde = { workspace = true, features = ["derive"] }
+sonyflake.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tower.workspace = true
+turmoil.workspace = true
+
+[dev-dependencies]
+
+

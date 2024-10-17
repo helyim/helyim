@@ -11,7 +11,7 @@ use crate::{
         AssignRequest, Assignment, ClusterStatus,
     },
     storage::VolumeError,
-    topology::{node::Node, volume_grow::VolumeGrowth, Topology, TopologyRef},
+    topology::{node::Node, volume_grow::VolumeGrowth, Topology, TopologyError, TopologyRef},
     util::{args::MasterOptions, http::FormOrJson},
 };
 
@@ -25,7 +25,7 @@ pub struct DirectoryState {
 pub async fn assign_handler(
     State(state): State<DirectoryState>,
     FormOrJson(request): FormOrJson<AssignRequest>,
-) -> Result<Json<Assignment>, VolumeError> {
+) -> Result<Json<Assignment>, TopologyError> {
     // TODO: how to handle when user requested with a negative number?
     let count = match request.count {
         Some(n) if n > 1 => n,
@@ -36,7 +36,7 @@ pub async fn assign_handler(
 
     if !state.topology.has_writable_volume(&option).await {
         if state.topology.free_space() <= 0 {
-            return Err(VolumeError::NoFreeSpace("no free volumes".to_string()));
+            return Err(TopologyError::NoFreeSpace("no free volumes".to_string()));
         }
         state
             .volume_grow
@@ -135,6 +135,7 @@ mod tests {
     use serde_json::Value;
     use tracing::{info_span, Instrument};
     use turmoil::Builder;
+    use helyim_common::connector;
 
     use crate::{
         directory::http::{
@@ -145,7 +146,6 @@ mod tests {
         topology::volume_grow::VolumeGrowth,
         util::{
             args::{MasterOptions, RaftOptions},
-            connector,
             http::default_handler,
         },
     };

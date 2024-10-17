@@ -14,12 +14,12 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::{
-    storage::{erasure_coding::DATA_SHARDS_COUNT, VolumeError, VolumeId},
+    storage::{erasure_coding::DATA_SHARDS_COUNT, VolumeId},
     topology::{
         data_center::{DataCenter, DataCenterRef},
         data_node::DataNode,
         rack::{Rack, RackRef},
-        DataNodeRef,
+        DataNodeRef, TopologyError,
     },
 };
 
@@ -90,7 +90,7 @@ impl Display for NodeType {
 pub trait Node: DowncastSync {
     fn id(&self) -> &str;
     fn free_space(&self) -> i64;
-    fn reserve_one_volume(&self, rand: i64) -> Result<DataNodeRef, VolumeError>;
+    fn reserve_one_volume(&self, rand: i64) -> Result<DataNodeRef, TopologyError>;
     async fn adjust_max_volume_count(&self, max_volume_count_delta: i64);
     async fn adjust_volume_count(&self, volume_count_delta: i64);
     async fn adjust_ec_shard_count(&self, ec_shard_count_delta: i64);
@@ -134,7 +134,7 @@ impl Node for NodeImpl {
         free_volume_slot_count
     }
 
-    fn reserve_one_volume(&self, mut rand: i64) -> Result<DataNodeRef, VolumeError> {
+    fn reserve_one_volume(&self, mut rand: i64) -> Result<DataNodeRef, TopologyError> {
         for child in self.children.iter() {
             let free_space = child.free_space();
             if free_space <= 0 {
@@ -150,7 +150,7 @@ impl Node for NodeImpl {
             }
         }
 
-        Err(VolumeError::NoFreeSpace(format!(
+        Err(TopologyError::NoFreeSpace(format!(
             "no free volumes found {}, node type: {}",
             self.id(),
             self.node_type()
@@ -277,7 +277,10 @@ macro_rules! impl_node {
                 self.node.free_space()
             }
 
-            fn reserve_one_volume(&self, rand: i64) -> StdResult<DataNodeRef, VolumeError> {
+            fn reserve_one_volume(
+                &self,
+                rand: i64,
+            ) -> StdResult<DataNodeRef, crate::topology::TopologyError> {
                 self.node.reserve_one_volume(rand)
             }
 
@@ -350,19 +353,19 @@ macro_rules! impl_node {
     };
 }
 
-pub fn downcast_node(node: Arc<dyn Node>) -> Result<DataNodeRef, VolumeError> {
+pub fn downcast_node(node: Arc<dyn Node>) -> Result<DataNodeRef, TopologyError> {
     node.downcast_arc::<DataNode>()
-        .map_err(|_| VolumeError::WrongNodeType)
+        .map_err(|_| TopologyError::WrongNodeType)
 }
 
-pub fn downcast_rack(node: Arc<dyn Node>) -> Result<RackRef, VolumeError> {
+pub fn downcast_rack(node: Arc<dyn Node>) -> Result<RackRef, TopologyError> {
     node.downcast_arc::<Rack>()
-        .map_err(|_| VolumeError::WrongNodeType)
+        .map_err(|_| TopologyError::WrongNodeType)
 }
 
-pub fn downcast_data_center(node: Arc<dyn Node>) -> Result<DataCenterRef, VolumeError> {
+pub fn downcast_data_center(node: Arc<dyn Node>) -> Result<DataCenterRef, TopologyError> {
     node.downcast_arc::<DataCenter>()
-        .map_err(|_| VolumeError::WrongNodeType)
+        .map_err(|_| TopologyError::WrongNodeType)
 }
 
 #[cfg(test)]

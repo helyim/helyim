@@ -19,7 +19,7 @@ use tracing::{error, info};
 use crate::{
     directory::http::DirectoryState,
     topology::{TopologyError, TopologyRef},
-    util::http::FormOrJson,
+    util::http::{FormOrJson, HttpError},
 };
 
 #[async_trait::async_trait]
@@ -101,21 +101,24 @@ async fn proxy_to_leader(
 
                     let stream = TcpStream::connect(&*addr).await?;
                     let io = TokioIo::new(stream);
-                    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+                    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+                        .await
+                        .map_err(HttpError::Hyper)?;
                     tokio::task::spawn(async move {
                         if let Err(err) = conn.await {
                             println!("Connection failed: {:?}", err);
                         }
                     });
 
-                    let mut response = sender.send_request(req).await?;
+                    let mut response = sender.send_request(req).await.map_err(HttpError::Hyper)?;
                     response.headers_mut().insert(
-                        HeaderName::from_str("HTTP_X_FORWARDED_FOR")?,
-                        HeaderValue::from_str(&addr)?,
+                        HeaderName::from_str("HTTP_X_FORWARDED_FOR")
+                            .map_err(HttpError::InvalidHeaderName)?,
+                        HeaderValue::from_str(&addr).map_err(HttpError::InvalidHeaderValue)?,
                     );
                     Ok(response)
                 }
-                Err(err) => Err(TopologyError::InvalidUrl(err)),
+                Err(err) => Err(HttpError::InvalidUri(err))?,
             }
         }
         None => Err(TopologyError::NoLeader),

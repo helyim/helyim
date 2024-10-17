@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_common::ttl::Ttl;
 use serde::Serialize;
 
 use crate::{
-    storage::{ReplicaPlacement, Ttl, VolumeId},
+    storage::{ReplicaPlacement, VolumeId},
     topology::{
         volume_layout::{VolumeLayout, VolumeLayoutRef},
         DataNodeRef,
@@ -67,9 +68,10 @@ mod tests {
     use std::sync::Arc;
 
     use faststr::FastStr;
+    use helyim_common::ttl::Ttl;
 
     use crate::{
-        storage::{ReplicaPlacement, Ttl, VolumeInfo, CURRENT_VERSION},
+        storage::{ReplicaPlacement, VolumeInfo, CURRENT_VERSION},
         topology::{collection::Collection, data_node::DataNode},
     };
 

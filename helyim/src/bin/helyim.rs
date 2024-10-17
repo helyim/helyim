@@ -5,13 +5,14 @@ use std::{io::stdout, time::Duration};
 
 use clap::Parser;
 use helyim::{
-    directory::{DirectoryServer, Sequencer, SequencerType},
+    directory::DirectoryServer,
     filer::FilerServer,
     storage::{NeedleMapType, VolumeServer},
-    util::{
-        args::{Command, FilerOptions, LogOptions, MasterOptions, Opts, VolumeOptions},
-        sys::shutdown_signal,
-    },
+    util::args::{Command, FilerOptions, LogOptions, MasterOptions, Opts, VolumeOptions},
+};
+use helyim_common::{
+    sequence::{Sequencer, SequencerType},
+    sys::shutdown_signal,
 };
 use tracing::{info, Level};
 use tracing_subscriber::{

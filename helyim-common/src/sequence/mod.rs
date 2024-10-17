@@ -1,5 +1,3 @@
-use crate::errors::Result;
-
 mod memory;
 pub use memory::MemorySequencer;
 
@@ -7,8 +5,14 @@ mod snowflake;
 pub use snowflake::SnowflakeSequencer;
 
 pub trait Sequence {
-    fn next_file_id(&self, count: u64) -> Result<u64>;
+    fn next_file_id(&self, count: u64) -> Result<u64, SequenceError>;
     fn set_max(&self, value: u64);
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SequenceError {
+    #[error("Snowflake error: {0}")]
+    Snowflake(#[from] sonyflake::Error),
 }
 
 #[derive(Copy, Clone)]
@@ -24,7 +28,7 @@ pub enum Sequencer {
 }
 
 impl Sequencer {
-    pub fn new(typ: SequencerType) -> Result<Self> {
+    pub fn new(typ: SequencerType) -> Result<Self, SequenceError> {
         match typ {
             SequencerType::Snowflake => Ok(Sequencer::Snowflake(SnowflakeSequencer::new()?)),
             SequencerType::Memory => Ok(Sequencer::Memory(MemorySequencer::new())),
@@ -33,7 +37,7 @@ impl Sequencer {
 }
 
 impl Sequence for Sequencer {
-    fn next_file_id(&self, count: u64) -> Result<u64> {
+    fn next_file_id(&self, count: u64) -> Result<u64, SequenceError> {
         match self {
             Sequencer::Memory(memory) => memory.next_file_id(count),
             Sequencer::Snowflake(snowflake) => snowflake.next_file_id(count),

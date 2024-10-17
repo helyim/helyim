@@ -6,6 +6,7 @@ use std::{
 use async_stream::stream;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
+use helyim_common::sys::exit;
 use helyim_proto::{
     directory::HeartbeatRequest,
     volume::{
@@ -59,7 +60,6 @@ use crate::{
         file::file_exists,
         grpc::{grpc_port, helyim_client},
         http::{default_handler, favicon_handler},
-        sys::exit,
     },
 };
 

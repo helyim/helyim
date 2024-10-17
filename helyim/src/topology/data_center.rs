@@ -5,11 +5,11 @@ use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
-    storage::{VolumeError, VolumeId},
+    storage::VolumeId,
     topology::{
         node::{downcast_rack, Node, NodeImpl, NodeType},
         rack::{Rack, RackRef},
-        DataNodeRef,
+        DataNodeRef, TopologyError,
     },
 };
 
@@ -24,7 +24,7 @@ impl DataCenter {
         Self { node }
     }
 
-    pub async fn get_or_create_rack(&self, id: &str) -> Result<RackRef, VolumeError> {
+    pub async fn get_or_create_rack(&self, id: &str) -> Result<RackRef, TopologyError> {
         match self.children().get(id) {
             Some(rack) => downcast_rack(rack.clone()),
             None => {

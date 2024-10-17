@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::{directory::Sequence, errors::Result};
+use crate::sequence::{Sequence, SequenceError};
 
 #[derive(Clone)]
 pub struct MemorySequencer {
@@ -24,7 +24,7 @@ impl Default for MemorySequencer {
 }
 
 impl Sequence for MemorySequencer {
-    fn next_file_id(&self, count: u64) -> Result<u64> {
+    fn next_file_id(&self, count: u64) -> Result<u64, SequenceError> {
         let mut counter = self.counter.lock();
         let file_id = *counter;
         *counter += count;

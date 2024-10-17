@@ -145,6 +145,9 @@ pub enum ClientError {
 
     #[error("Keep connected to {0} error: {1}")]
     KeepConnected(FastStr, Status),
+
+    #[error("Tonic error: {0}")]
+    Tonic(#[from] Status),
 }
 
 impl From<nom::Err<NomError<&str>>> for ClientError {

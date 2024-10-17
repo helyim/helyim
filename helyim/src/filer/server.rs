@@ -6,6 +6,7 @@ use std::{
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
+use helyim_common::{sys::exit, time::timestamp_to_time};
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
@@ -33,10 +34,7 @@ use crate::{
     },
     operation::{assign, AssignRequest},
     proto::map_error_to_status,
-    util::{
-        args::FilerOptions, grpc::grpc_port, http::default_handler, sys::exit,
-        time::timestamp_to_time,
-    },
+    util::{args::FilerOptions, grpc::grpc_port, http::default_handler},
 };
 
 pub struct FilerServer {

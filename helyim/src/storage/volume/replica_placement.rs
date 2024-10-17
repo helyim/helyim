@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::storage::VolumeError;
+use crate::topology::TopologyError;
 
 /// The meaning of replication type
 ///
@@ -34,14 +34,14 @@ pub struct ReplicaPlacement {
 }
 
 impl ReplicaPlacement {
-    pub fn from_u8(u: u8) -> Result<ReplicaPlacement, VolumeError> {
+    pub fn from_u8(u: u8) -> Result<ReplicaPlacement, TopologyError> {
         let s = format!("{:03}", u);
         ReplicaPlacement::new(&s)
     }
 
-    pub fn new(s: &str) -> Result<ReplicaPlacement, VolumeError> {
+    pub fn new(s: &str) -> Result<ReplicaPlacement, TopologyError> {
         if s.len() != 3 {
-            return Err(VolumeError::ReplicaPlacement(String::from(s)));
+            return Err(TopologyError::ReplicaPlacement(s.to_string()));
         }
 
         let bytes = s.as_bytes();

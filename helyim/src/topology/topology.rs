@@ -1,15 +1,16 @@
 use std::{collections::BTreeMap, result::Result as StdResult, sync::Arc, time::Duration};
 
 use axum::{
-    http::{
-        header::{InvalidHeaderName, InvalidHeaderValue},
-        StatusCode,
-    },
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_common::{
+    sequence::{Sequence, SequenceError, Sequencer},
+    ttl::{Ttl, TtlError},
+};
 use helyim_proto::directory::{
     VolumeInformationMessage, VolumeLocation, VolumeShortInformationMessage,
 };
@@ -21,10 +22,9 @@ use tracing::{debug, error, info};
 
 use crate::{
     raft::{types::NodeId, RaftServer},
-    sequence::{Sequence, Sequencer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
-        ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo,
+        ReplicaPlacement, VolumeId, VolumeInfo,
     },
     topology::{
         collection::Collection,
@@ -36,6 +36,7 @@ use crate::{
         volume_layout::VolumeLayoutRef,
         DataNodeRef,
     },
+    util::http::HttpError,
 };
 
 #[derive(Serialize)]
@@ -84,7 +85,7 @@ impl Topology {
     pub async fn get_or_create_data_center(
         &self,
         name: &str,
-    ) -> Result<DataCenterRef, VolumeError> {
+    ) -> Result<DataCenterRef, TopologyError> {
         match self.children().get(name) {
             Some(data_center) => downcast_data_center(data_center.clone()),
             None => {
@@ -124,11 +125,8 @@ impl Topology {
         &self,
         count: u64,
         option: &VolumeGrowOption,
-    ) -> StdResult<(FileId, u64, DataNodeRef), VolumeError> {
-        let file_id = self
-            .sequencer
-            .next_file_id(count)
-            .map_err(|err| VolumeError::Box(Box::new(err)))?;
+    ) -> StdResult<(FileId, u64, DataNodeRef), TopologyError> {
+        let file_id = self.sequencer.next_file_id(count)?;
 
         let (volume_id, node) = {
             let layout =
@@ -146,7 +144,7 @@ impl Topology {
         dc_name: &str,
         rack_name: &str,
         data_node: &DataNodeRef,
-    ) -> Result<(), VolumeError> {
+    ) -> Result<(), TopologyError> {
         if data_node.parent().await.is_some() {
             return Ok(());
         }
@@ -253,7 +251,7 @@ impl Topology {
         }
     }
 
-    pub async fn next_volume_id(&self) -> Result<VolumeId, VolumeError> {
+    pub async fn next_volume_id(&self) -> VolumeId {
         let vid = self.max_volume_id();
         let next = vid + 1;
         if let Some(raft) = self.raft.read().await.as_ref() {
@@ -264,7 +262,7 @@ impl Topology {
                 }
             });
         }
-        Ok(next)
+        next
     }
 
     pub fn set_max_sequence(&self, seq: u64) {
@@ -427,14 +425,26 @@ pub enum TopologyError {
     #[error("This raft cluster has no leader")]
     NoLeader,
 
-    #[error("Hyper error: {0}")]
-    Hyper(#[from] hyper::Error),
-    #[error("Invalid header value: {0}")]
-    InvalidHeaderValue(#[from] InvalidHeaderValue),
-    #[error("Invalid header name: {0}")]
-    InvalidHeaderName(#[from] InvalidHeaderName),
-    #[error("Invalid uri: {0}")]
-    InvalidUrl(#[from] hyper::http::uri::InvalidUri),
+    #[error("No writable volumes.")]
+    NoWritableVolumes,
+    #[error("Volume {0} is not found.")]
+    VolumeNotFound(VolumeId),
+    #[error("No free space: {0}")]
+    NoFreeSpace(String),
+    #[error("Invalid replica placement: {0}")]
+    ReplicaPlacement(String),
+    #[error("Wrong node type")]
+    WrongNodeType,
+
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
+    #[error("Sequence error: {0}")]
+    Sequence(#[from] SequenceError),
+
+    #[error("Http error: {0}")]
+    Http(#[from] HttpError),
+    #[error("Tonic error: {0}")]
+    Tonic(#[from] Status),
 }
 
 impl IntoResponse for TopologyError {
@@ -480,11 +490,10 @@ pub(crate) mod tests {
     use std::{collections::HashMap, fs::File, sync::Arc};
 
     use faststr::FastStr;
+    use helyim_common::sequence::{MemorySequencer, Sequencer};
     use serde::Deserialize;
 
     use crate::{
-        directory::Sequencer,
-        sequence::MemorySequencer,
         storage::{VolumeInfo, CURRENT_VERSION},
         topology::{
             data_center::DataCenter, data_node::DataNode, node::Node, rack::Rack, Topology,

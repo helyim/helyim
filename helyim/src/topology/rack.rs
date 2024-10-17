@@ -5,7 +5,7 @@ use faststr::FastStr;
 use serde::Serialize;
 
 use crate::{
-    storage::{VolumeError, VolumeId},
+    storage::VolumeId,
     topology::{
         data_node::DataNode,
         node::{downcast_node, Node, NodeImpl, NodeType},

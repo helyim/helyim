@@ -1,10 +1,11 @@
 use faststr::FastStr;
+use helyim_common::ttl::Ttl;
 use helyim_proto::directory::AssignRequest as PbAssignRequest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    storage::{ReplicaPlacement, Ttl, VolumeError},
-    topology::volume_grow::VolumeGrowOption,
+    storage::{ReplicaPlacement, VolumeError},
+    topology::{volume_grow::VolumeGrowOption, TopologyError},
     util::grpc::helyim_client,
 };
 
@@ -36,7 +37,7 @@ impl AssignRequest {
     pub fn volume_grow_option(
         self,
         default_replication: &str,
-    ) -> Result<VolumeGrowOption, VolumeError> {
+    ) -> Result<VolumeGrowOption, TopologyError> {
         let mut option = VolumeGrowOption::default();
         match self.replication {
             Some(replication) => {

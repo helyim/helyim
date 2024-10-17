@@ -10,15 +10,12 @@ pub mod directory;
 
 pub mod errors;
 pub mod filer;
-mod images;
 mod operation;
 mod proto;
 
 pub mod raft;
 
 pub mod storage;
-
-mod sequence;
 mod topology;
 pub mod util;
 

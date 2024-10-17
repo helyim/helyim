@@ -14,9 +14,10 @@ use helyim_proto::volume::{
     VacuumVolumeCompactResponse,
 };
 use serde::Serialize;
+use tonic::Status;
 
 use crate::{
-    storage::{erasure_coding::EcVolumeInfo, VolumeError, VolumeId, VolumeInfo},
+    storage::{erasure_coding::EcVolumeInfo, VolumeId, VolumeInfo},
     topology::node::{Node, NodeImpl, NodeType},
     util::grpc::volume_server_client,
 };
@@ -177,7 +178,7 @@ impl DataNode {
     pub async fn allocate_volume(
         &self,
         request: AllocateVolumeRequest,
-    ) -> StdResult<AllocateVolumeResponse, VolumeError> {
+    ) -> StdResult<AllocateVolumeResponse, Status> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
         let response = client.allocate_volume(request).await?;
@@ -187,7 +188,7 @@ impl DataNode {
     pub async fn vacuum_volume_check(
         &self,
         request: VacuumVolumeCheckRequest,
-    ) -> StdResult<VacuumVolumeCheckResponse, VolumeError> {
+    ) -> StdResult<VacuumVolumeCheckResponse, Status> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
         let response = client.vacuum_volume_check(request).await?;
@@ -197,7 +198,7 @@ impl DataNode {
     pub async fn vacuum_volume_compact(
         &self,
         request: VacuumVolumeCompactRequest,
-    ) -> StdResult<VacuumVolumeCompactResponse, VolumeError> {
+    ) -> StdResult<VacuumVolumeCompactResponse, Status> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
         let response = client.vacuum_volume_compact(request).await?;
@@ -207,7 +208,7 @@ impl DataNode {
     pub async fn vacuum_volume_commit(
         &self,
         request: VacuumVolumeCommitRequest,
-    ) -> StdResult<VacuumVolumeCommitResponse, VolumeError> {
+    ) -> StdResult<VacuumVolumeCommitResponse, Status> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
         let response = client.vacuum_volume_commit(request).await?;
@@ -217,7 +218,7 @@ impl DataNode {
     pub async fn vacuum_volume_cleanup(
         &self,
         request: VacuumVolumeCleanupRequest,
-    ) -> StdResult<VacuumVolumeCleanupResponse, VolumeError> {
+    ) -> StdResult<VacuumVolumeCleanupResponse, Status> {
         let addr = self.url();
         let client = volume_server_client(&addr)?;
         let response = client.vacuum_volume_cleanup(request).await?;
@@ -232,9 +233,10 @@ pub type DataNodeRef = Arc<DataNode>;
 #[cfg(test)]
 mod test {
     use faststr::FastStr;
+    use helyim_common::ttl::Ttl;
 
     use crate::{
-        storage::{ReplicaPlacement, Ttl, VolumeId, VolumeInfo, CURRENT_VERSION},
+        storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
         topology::{data_node::DataNode, node::Node},
     };
 

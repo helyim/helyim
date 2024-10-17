@@ -5,12 +5,12 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes};
+use helyim_common::ttl::{Ttl, TtlError};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 use crate::storage::{
     crc,
-    ttl::Ttl,
     types::{Cookie, Offset, Size},
     version::{Version, CURRENT_VERSION, VERSION2},
     NeedleId, VolumeId,
@@ -23,8 +23,6 @@ pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMap
 
 mod needle_value_map;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
-
-use crate::storage::ttl::TtlError;
 
 pub const TOMBSTONE_FILE_SIZE: i32 = -1;
 pub const NEEDLE_HEADER_SIZE: u32 = 16;

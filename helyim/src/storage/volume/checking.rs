@@ -65,11 +65,12 @@ mod tests {
     use faststr::FastStr;
     use rand::random;
     use tempfile::Builder;
+    use helyim_common::ttl::Ttl;
 
     use crate::storage::{
         crc,
         volume::{checking::check_volume_data_integrity, Volume},
-        FileId, Needle, NeedleMapType, ReplicaPlacement, Ttl,
+        FileId, Needle, NeedleMapType, ReplicaPlacement,
     };
 
     #[test]

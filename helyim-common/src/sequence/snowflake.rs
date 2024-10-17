@@ -1,4 +1,4 @@
-use crate::{directory::Sequence, errors::Result};
+use crate::sequence::{Sequence, SequenceError};
 
 #[derive(Clone)]
 pub struct SnowflakeSequencer {
@@ -6,7 +6,7 @@ pub struct SnowflakeSequencer {
 }
 
 impl SnowflakeSequencer {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, sonyflake::Error> {
         Ok(Self {
             flake: sonyflake::Sonyflake::new()?,
         })
@@ -14,7 +14,7 @@ impl SnowflakeSequencer {
 }
 
 impl Sequence for SnowflakeSequencer {
-    fn next_file_id(&self, _count: u64) -> Result<u64> {
+    fn next_file_id(&self, _count: u64) -> Result<u64, SequenceError> {
         Ok(self.flake.next_id()?)
     }
 

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use dashmap::{mapref::one::RefMut, DashMap};
+use helyim_common::ttl::Ttl;
 use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    storage::{ReplicaPlacement, Ttl, VolumeError, VolumeId, VolumeInfo, CURRENT_VERSION},
-    topology::{data_node::DataNodeRef, node::Node, volume_grow::VolumeGrowOption},
+    storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
+    topology::{data_node::DataNodeRef, node::Node, volume_grow::VolumeGrowOption, TopologyError},
 };
 
 #[derive(Serialize)]
@@ -64,9 +65,9 @@ impl VolumeLayout {
     pub async fn pick_for_write(
         &self,
         option: &VolumeGrowOption,
-    ) -> Result<(VolumeId, Vec<DataNodeRef>), VolumeError> {
+    ) -> Result<(VolumeId, Vec<DataNodeRef>), TopologyError> {
         if self.writable_volumes.read().await.is_empty() {
-            return Err(VolumeError::NoWritableVolumes);
+            return Err(TopologyError::NoWritableVolumes);
         }
 
         if option.data_center.is_empty() {
@@ -74,7 +75,7 @@ impl VolumeLayout {
             let vid = self.writable_volumes.read().await[rand::thread_rng().gen_range(0..len)];
             return match self.locations.get(&vid) {
                 Some(data_nodes) => Ok((vid, data_nodes.value().clone())),
-                None => Err(VolumeError::NotFound(vid)),
+                None => Err(TopologyError::VolumeNotFound(vid)),
             };
         }
 
@@ -105,7 +106,7 @@ impl VolumeLayout {
 
         match location_list {
             Some(locations) => Ok((volume_id, locations)),
-            None => Err(VolumeError::NoWritableVolumes),
+            None => Err(TopologyError::NoWritableVolumes),
         }
     }
 

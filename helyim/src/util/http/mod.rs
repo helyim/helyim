@@ -14,6 +14,7 @@ use futures_util::StreamExt;
 use http_range::HttpRange;
 use hyper::{
     header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE, RANGE},
+    http::uri::InvalidUri,
     HeaderMap, Method,
 };
 use once_cell::sync::Lazy;
@@ -23,8 +24,9 @@ use reqwest::{
     Body, Response,
 };
 use url::Url;
+use helyim_common::images::FAVICON_ICO;
 
-use crate::{anyhow, images::FAVICON_ICO, PHRASE};
+use crate::{anyhow, PHRASE};
 
 pub const HTTP_DATE_FORMAT: &str = "%a, %d %b %Y %H:%M:%S GMT";
 
@@ -117,6 +119,8 @@ pub enum HttpError {
     InvalidHeaderName(#[from] InvalidHeaderName),
     #[error("InvalidHeaderValue: {0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
+    #[error("Invalid uri: {0}")]
+    InvalidUri(#[from] InvalidUri),
     #[error("ToStr error: {0}")]
     ToStr(#[from] ToStrError),
     #[error("Mime FromStr error: {0}")]

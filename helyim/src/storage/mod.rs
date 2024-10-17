@@ -22,9 +22,6 @@ mod store;
 mod types;
 pub use types::{NeedleId, VolumeId};
 
-mod ttl;
-pub use ttl::{Ttl, TtlError};
-
 mod version;
 pub use version::CURRENT_VERSION;
 

@@ -7,6 +7,7 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     Stream, StreamExt,
 };
+use helyim_common::{sequence::Sequencer, sys::exit, ttl::Ttl};
 use helyim_proto::directory::{
     helyim_server::{Helyim, HelyimServer},
     lookup_ec_volume_response::EcShardIdLocation,
@@ -30,8 +31,7 @@ use crate::{
     errors::Result,
     proto::map_error_to_status,
     raft::{create_raft_router, RaftServer},
-    sequence::Sequencer,
-    storage::{ReplicaPlacement, Ttl, VolumeError},
+    storage::ReplicaPlacement,
     topology::{
         node::Node,
         topology_vacuum_loop,
@@ -40,7 +40,7 @@ use crate::{
     },
     util::{
         args::MasterOptions, get_or_default, grpc::grpc_port, http::default_handler,
-        parser::parse_vid_fid, sys::exit,
+        parser::parse_vid_fid,
     },
 };
 
@@ -552,7 +552,7 @@ async fn update_topology(
     heartbeat: &HeartbeatRequest,
     topology: &TopologyRef,
     addr: SocketAddr,
-) -> StdResult<DataNodeRef, VolumeError> {
+) -> StdResult<DataNodeRef, TopologyError> {
     topology.set_max_sequence(heartbeat.max_file_key);
     let mut ip = heartbeat.ip.clone();
     if heartbeat.ip.is_empty() {
@@ -587,7 +587,7 @@ async fn update_volume_layout(
     topology: &TopologyRef,
     client_chans: &Arc<DashMap<FastStr, UnboundedSender<VolumeLocation>>>,
     data_node: &DataNodeRef,
-) -> StdResult<(), VolumeError> {
+) -> StdResult<(), TopologyError> {
     let mut volume_location = VolumeLocation::new();
     volume_location.url = data_node.url().to_string();
     volume_location.public_url = data_node.public_url.to_string();

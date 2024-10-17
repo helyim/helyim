@@ -8,9 +8,10 @@ use helyim_proto::{
 };
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use tonic::Status;
 use tracing::info;
 
-use crate::{storage::VolumeError, util::parser::parse_host_port};
+use crate::util::parser::parse_host_port;
 
 pub fn grpc_port(port: u16) -> u16 {
     port + 10000
@@ -23,17 +24,18 @@ static VOLUME_SERVER_CLIENTS: Lazy<VolumeServerClientMap> = Lazy::new(HashMap::n
 
 pub fn volume_server_client(
     addr: &str,
-) -> Result<&mut VolumeServerClient<LoadBalancedChannel>, VolumeError> {
+) -> Result<&mut VolumeServerClient<LoadBalancedChannel>, Status> {
     let clients =
         VOLUME_SERVER_CLIENTS.deref() as *const VolumeServerClientMap as *mut VolumeServerClientMap;
     match unsafe { (*clients).get_mut(addr) } {
         Some(client) => Ok(client),
         None => {
-            let (ip, port) = parse_host_port(addr)?;
+            let (ip, port) =
+                parse_host_port(addr).map_err(|err| Status::unavailable(err.to_string()))?;
             let grpc_port = grpc_port(port);
 
             let channel = block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
-                .map_err(|err| VolumeError::Box(err.into()))?;
+                .map_err(|err| Status::unavailable(err.to_string()))?;
             let client = VolumeServerClient::new(channel);
             info!("create volume server client success, addr: {ip}:{grpc_port}");
 
@@ -48,16 +50,17 @@ pub fn volume_server_client(
 type HelyimClientMap = HashMap<FastStr, HelyimClient<LoadBalancedChannel>>;
 static HELYIM_CLIENTS: Lazy<HelyimClientMap> = Lazy::new(HashMap::new);
 
-pub fn helyim_client(addr: &str) -> Result<&mut HelyimClient<LoadBalancedChannel>, VolumeError> {
+pub fn helyim_client(addr: &str) -> Result<&mut HelyimClient<LoadBalancedChannel>, Status> {
     let clients = HELYIM_CLIENTS.deref() as *const HelyimClientMap as *mut HelyimClientMap;
     match unsafe { (*clients).get_mut(addr) } {
         Some(client) => Ok(client),
         None => {
-            let (ip, port) = parse_host_port(addr)?;
+            let (ip, port) =
+                parse_host_port(addr).map_err(|err| Status::unavailable(err.to_string()))?;
             let grpc_port = grpc_port(port);
 
             let channel = block_on(LoadBalancedChannel::builder((ip.clone(), grpc_port)).channel())
-                .map_err(|err| VolumeError::Box(err.into()))?;
+                .map_err(|err| Status::unavailable(err.to_string()))?;
             let client = HelyimClient::new(channel);
 
             info!("create helyim client success, addr: {ip}:{grpc_port}");

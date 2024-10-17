@@ -17,23 +17,23 @@ use axum::{
 };
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
+use helyim_common::{
+    sequence::SequenceError,
+    time::{get_time, now, TimeError},
+    ttl::{Ttl, TtlError},
+};
 use parking_lot::RwLock;
 use rustix::fs::ftruncate;
 use serde_json::json;
 use tracing::{debug, error, info};
 
-use crate::{
-    storage::{
-        needle::{
-            read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue,
-            NEEDLE_PADDING_SIZE,
-        },
-        ttl::Ttl,
-        version::{Version, CURRENT_VERSION},
-        volume::checking::check_volume_data_integrity,
-        VolumeId,
+use crate::storage::{
+    needle::{
+        read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue, NEEDLE_PADDING_SIZE,
     },
-    util::time::{get_time, now},
+    version::{Version, CURRENT_VERSION},
+    volume::checking::check_volume_data_integrity,
+    VolumeId,
 };
 
 mod checking;
@@ -50,11 +50,10 @@ pub use volume_info::VolumeInfo;
 use crate::{
     storage::{
         needle::{NeedleError, NEEDLE_ENTRY_SIZE},
-        ttl::TtlError,
         types::Offset,
         NeedleId,
     },
-    util::time::TimeError,
+    topology::TopologyError,
 };
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
@@ -694,6 +693,9 @@ pub enum VolumeError {
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
+    #[error("Sequence error: {0}")]
+    Sequence(#[from] SequenceError),
+
     #[error("Invalid replica placement: {0}")]
     ReplicaPlacement(String),
     #[error("No writable volumes.")]
@@ -714,14 +716,12 @@ pub enum VolumeError {
     Needle(#[from] NeedleError),
     #[error("Ttl error: {0}")]
     Ttl(#[from] TtlError),
+    #[error("Topology error: {0}")]
+    Topology(#[from] TopologyError),
     #[error("NeedleMapper is not load, volume: {0}")]
     NeedleMapperNotLoad(VolumeId),
-    #[error("No free space: {0}")]
-    NoFreeSpace(String),
     #[error("Volume size limit {0} exceeded, current size is {1}")]
     VolumeSizeLimit(u64, u64),
-    #[error("Wrong node type")]
-    WrongNodeType,
     #[error("Master not found")]
     MasterNotFound,
 
@@ -856,6 +856,7 @@ pub mod tests {
 
     use bytes::Bytes;
     use faststr::FastStr;
+    use helyim_common::ttl::Ttl;
     use rand::random;
     use tempfile::Builder;
 
@@ -863,7 +864,7 @@ pub mod tests {
         crc,
         needle::NeedleMapType,
         volume::{scan_volume_file, SuperBlock, Volume, VolumeError},
-        FileId, Needle, ReplicaPlacement, Ttl,
+        FileId, Needle, ReplicaPlacement,
     };
 
     pub fn setup(dir: FastStr) -> Volume {
@@ -911,8 +912,8 @@ pub mod tests {
             volume.id,
             volume.needle_map_type,
             true,
-            |super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> { Ok(()) },
-            |needle, offset| -> Result<(), VolumeError> {
+            |_super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> { Ok(()) },
+            |needle, _offset| -> Result<(), VolumeError> {
                 assert_eq!(needle.data_size, 11);
                 Ok(())
             },

@@ -22,4 +22,10 @@ impl Favicon {
     }
 }
 
+impl Default for Favicon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub static FAVICON_ICO: Favicon = Favicon::new();

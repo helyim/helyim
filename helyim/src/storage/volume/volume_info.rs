@@ -1,9 +1,10 @@
 use faststr::FastStr;
+use helyim_common::ttl::Ttl;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     errors::Result,
-    storage::{ttl::Ttl, version::Version, volume::ReplicaPlacement, VolumeId},
+    storage::{version::Version, volume::ReplicaPlacement, VolumeId},
 };
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

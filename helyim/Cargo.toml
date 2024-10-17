@@ -39,7 +39,8 @@ fnv.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 ginepro.workspace = true
-helyim-proto = { path = "../proto", version = "0.1.0" }
+helyim-common = { path = "../helyim-common" }
+helyim-proto = { path = "../helyim-proto" }
 http-body.workspace = true
 http-range.workspace = true
 hyper = { workspace = true, features = ["full"] }
@@ -66,7 +67,6 @@ reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sonyflake.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true

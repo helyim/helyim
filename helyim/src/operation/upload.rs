@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use bytes::Bytes;
+use helyim_common::ttl::Ttl;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart::{Form, Part},
@@ -11,7 +12,6 @@ use tracing::error;
 
 use crate::{
     anyhow,
-    storage::Ttl,
     util::http::{get_etag, request, HttpError},
 };
 

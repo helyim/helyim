@@ -8,6 +8,7 @@ use std::{
 };
 
 use bytes::BufMut;
+use helyim_common::time::now;
 use helyim_proto::volume::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
@@ -29,7 +30,6 @@ use crate::{
         Needle, NeedleError, NeedleValue, VolumeError, VolumeId,
     },
     topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
-    util::time::now,
 };
 
 impl Volume {

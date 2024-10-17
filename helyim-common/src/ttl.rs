@@ -8,8 +8,6 @@ use nom::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::storage::VolumeError;
-
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
 pub enum Unit {
@@ -71,7 +69,7 @@ pub struct Ttl {
 }
 
 impl Ttl {
-    pub fn new(s: &str) -> Result<Ttl, VolumeError> {
+    pub fn new(s: &str) -> Result<Ttl, TtlError> {
         if s.is_empty() {
             return Ok(Ttl::default());
         }
@@ -148,7 +146,7 @@ impl From<Ttl> for u32 {
     }
 }
 
-fn parse_ttl(input: &str) -> Result<(u32, char), VolumeError> {
+fn parse_ttl(input: &str) -> Result<(u32, char), TtlError> {
     let (_, (count, unit)) = pair(
         digit1,
         opt(alt((
@@ -167,11 +165,19 @@ fn parse_ttl(input: &str) -> Result<(u32, char), VolumeError> {
 pub enum TtlError {
     #[error("Invalid unit")]
     InvalidUnit,
+    #[error("Parse integer error: {0}")]
+    ParseInt(#[from] std::num::ParseIntError),
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for TtlError {
+    fn from(_: nom::Err<nom::error::Error<&str>>) -> Self {
+        Self::InvalidUnit
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::Ttl;
+    use crate::ttl::Ttl;
 
     #[test]
     pub fn test_ttl() {
