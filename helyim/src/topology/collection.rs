@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_common::ttl::Ttl;
+use helyim_common::{ttl::Ttl, types::VolumeId};
 use serde::Serialize;
 
 use crate::{
-    storage::{ReplicaPlacement, VolumeId},
+    storage::ReplicaPlacement,
     topology::{
         volume_layout::{VolumeLayout, VolumeLayoutRef},
         DataNodeRef,

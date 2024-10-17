@@ -18,7 +18,7 @@ use axum::{
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::stream::once;
-use helyim_common::{time::now, ttl::Ttl};
+use helyim_common::{consts::needle::PAIR_NAME_PREFIX, crc, time::now, ttl::Ttl, types::VolumeId};
 use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
@@ -30,11 +30,10 @@ use crate::{
     errors::Result,
     operation::{Looker, ParseUpload, UploadResult},
     storage::{
-        crc,
         http::extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
-        needle::{Needle, NeedleMapType, PAIR_NAME_PREFIX},
+        needle::{Needle, NeedleMapType},
         store::StoreRef,
-        NeedleError, VolumeId, VolumeInfo,
+        NeedleError, VolumeInfo,
     },
     util,
     util::{http::HTTP_DATE_FORMAT, parser::parse_url_path},

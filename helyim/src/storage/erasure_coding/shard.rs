@@ -1,11 +1,9 @@
 use std::{fs, fs::File, os::unix::fs::OpenOptionsExt};
 
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 
-use crate::storage::{
-    erasure_coding::{errors::EcShardError, to_ext, ShardId},
-    VolumeId,
-};
+use crate::storage::erasure_coding::{errors::EcShardError, to_ext, ShardId};
 
 pub struct EcVolumeShard {
     pub shard_id: ShardId,

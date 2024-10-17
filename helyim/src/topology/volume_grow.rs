@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use faststr::FastStr;
-use helyim_common::ttl::Ttl;
+use helyim_common::{ttl::Ttl, types::VolumeId};
 use helyim_proto::volume::AllocateVolumeRequest;
 use rand::Rng;
 use tracing::{debug, error};
 
 use crate::{
-    storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
+    storage::{ReplicaPlacement, VolumeInfo, CURRENT_VERSION},
     topology::{
         node::{downcast_node, Node},
         DataNodeRef, Topology, TopologyError,
@@ -300,9 +300,10 @@ mod tests {
 
     use dashmap::DashMap;
     use faststr::FastStr;
+    use helyim_common::types::VolumeId;
 
     use crate::{
-        storage::{ReplicaPlacement, VolumeId, VolumeInfo},
+        storage::{ReplicaPlacement, VolumeInfo},
         topology::{
             data_node::DataNode,
             node::{downcast_node, Node},

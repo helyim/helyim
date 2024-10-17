@@ -1,5 +1,6 @@
 use std::num::ParseIntError;
 
+use helyim_common::types::VolumeId;
 use nom::{
     branch::alt,
     bytes::complete::take_till,
@@ -9,7 +10,7 @@ use nom::{
     IResult,
 };
 
-use crate::storage::{VolumeError, VolumeId};
+use crate::storage::VolumeError;
 
 pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str), VolumeError> {
     let (vid, fid, filename, ext) = tuple((

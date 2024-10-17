@@ -5,16 +5,21 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes};
-use helyim_common::ttl::{Ttl, TtlError};
+use helyim_common::{
+    consts::needle::{
+        FLAG_GZIP, FLAG_HAS_LAST_MODIFIED_DATE, FLAG_HAS_MIME, FLAG_HAS_NAME, FLAG_HAS_PAIRS,
+        FLAG_HAS_TTL, FLAG_IS_CHUNK_MANIFEST, FLAG_IS_DELETE, LAST_MODIFIED_BYTES_LENGTH,
+        MAX_POSSIBLE_VOLUME_SIZE, NEEDLE_CHECKSUM_SIZE, NEEDLE_ENTRY_SIZE, NEEDLE_HEADER_SIZE,
+        TTL_BYTES_LENGTH,
+    },
+    crc,
+    ttl::{Ttl, TtlError},
+    types::{Cookie, NeedleId, Offset, Size, VolumeId},
+};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::storage::{
-    crc,
-    types::{Cookie, Offset, Size},
-    version::{Version, CURRENT_VERSION, VERSION2},
-    NeedleId, VolumeId,
-};
+use crate::storage::version::{Version, CURRENT_VERSION, VERSION2};
 
 mod metric;
 
@@ -23,34 +28,6 @@ pub use needle_map::{read_index_entry, walk_index_file, NeedleMapType, NeedleMap
 
 mod needle_value_map;
 pub use needle_value_map::{MemoryNeedleValueMap, NeedleValueMap, SortedIndexMap};
-
-pub const TOMBSTONE_FILE_SIZE: i32 = -1;
-pub const NEEDLE_HEADER_SIZE: u32 = 16;
-pub const NEEDLE_PADDING_SIZE: u32 = 8;
-pub const NEEDLE_ID_SIZE: u32 = 8;
-pub const OFFSET_SIZE: u32 = 4;
-pub const SIZE_SIZE: u32 = 4;
-// pub const TIMESTAMP_SIZE: u32 = 8;
-pub const NEEDLE_ENTRY_SIZE: u32 = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
-pub const NEEDLE_CHECKSUM_SIZE: u32 = 4;
-pub const NEEDLE_INDEX_SIZE: u32 = 16;
-pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
-pub const PAIR_NAME_PREFIX: &str = "helyim-";
-pub const FLAG_GZIP: u8 = 0x01;
-pub const FLAG_HAS_NAME: u8 = 0x02;
-pub const FLAG_HAS_MIME: u8 = 0x04;
-pub const FLAG_HAS_LAST_MODIFIED_DATE: u8 = 0x08;
-pub const FLAG_HAS_TTL: u8 = 0x10;
-pub const FLAG_HAS_PAIRS: u8 = 0x20;
-pub const FLAG_IS_DELETE: u8 = 0x40;
-pub const FLAG_IS_CHUNK_MANIFEST: u8 = 0x80;
-
-pub const LAST_MODIFIED_BYTES_LENGTH: usize = 8;
-pub const TTL_BYTES_LENGTH: usize = 2;
-
-// pub const NEEDLE_FLAG_OFFSET: usize = 20;
-// pub const NEEDLE_ID_OFFSET: usize = 4;
-// pub const NEEDLE_SIZE_OFFSET: usize = 12;
 
 /// Needle index
 #[derive(Copy, Clone, Debug)]

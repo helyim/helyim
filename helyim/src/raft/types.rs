@@ -5,11 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use helyim_common::types::VolumeId;
 use openraft::{error::InstallSnapshotError, BasicNode, TokioRuntime};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-use crate::storage::VolumeId;
 
 pub type NodeId = u64;
 

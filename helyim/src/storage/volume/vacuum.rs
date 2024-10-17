@@ -8,7 +8,11 @@ use std::{
 };
 
 use bytes::BufMut;
-use helyim_common::time::now;
+use helyim_common::{
+    consts::needle::{NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE},
+    time::now,
+    types::VolumeId,
+};
 use helyim_proto::volume::{
     VacuumVolumeCheckRequest, VacuumVolumeCleanupRequest, VacuumVolumeCommitRequest,
     VacuumVolumeCompactRequest,
@@ -17,17 +21,14 @@ use tracing::{debug, error, info};
 
 use crate::{
     storage::{
-        needle::{
-            read_index_entry, read_needle_blob, walk_index_file, NeedleMapper, NEEDLE_INDEX_SIZE,
-            NEEDLE_PADDING_SIZE,
-        },
+        needle::{read_index_entry, read_needle_blob, walk_index_file, NeedleMapper},
         volume::{
             append_needle_at,
             checking::{read_index_entry_at_offset, verify_index_file_integrity},
             scan_volume_file, SuperBlock, Volume, COMPACT_DATA_FILE_SUFFIX,
             COMPACT_IDX_FILE_SUFFIX, DATA_FILE_SUFFIX, IDX_FILE_SUFFIX, SUPER_BLOCK_SIZE,
         },
-        Needle, NeedleError, NeedleValue, VolumeError, VolumeId,
+        Needle, NeedleError, NeedleValue, VolumeError,
     },
     topology::{volume_layout::VolumeLayoutRef, DataNodeRef},
 };

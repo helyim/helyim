@@ -2,6 +2,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -9,7 +10,6 @@ use crate::{
     storage::{
         disk_location::DiskLocation,
         erasure_coding::{volume::EcVolume, EcVolumeError, EcVolumeShard, ShardId},
-        VolumeId,
     },
     util::parser::parse_collection_volume_id,
 };

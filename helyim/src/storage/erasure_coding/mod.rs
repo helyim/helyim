@@ -8,13 +8,7 @@ use std::{
 use bytes::{Buf, BufMut};
 
 use crate::{
-    storage::{
-        needle::{
-            NEEDLE_ENTRY_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_ID_SIZE, OFFSET_SIZE, SIZE_SIZE,
-            TOMBSTONE_FILE_SIZE,
-        },
-        read_index_entry, NeedleError, NeedleId, NeedleValue,
-    },
+    storage::{read_index_entry, NeedleError, NeedleValue},
     util::file::file_exists,
 };
 
@@ -28,6 +22,13 @@ mod disk_location;
 
 mod errors;
 pub use errors::{EcShardError, EcVolumeError};
+use helyim_common::{
+    consts::needle::{
+        NEEDLE_ENTRY_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_ID_SIZE, OFFSET_SIZE, SIZE_SIZE,
+        TOMBSTONE_FILE_SIZE,
+    },
+    types::NeedleId,
+};
 
 mod locate;
 pub use locate::Interval;

@@ -3,10 +3,9 @@ use axum_extra::{extract::TypedHeader, headers::Host};
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use hyper::Uri;
 use serde::Deserialize;
-
-use crate::storage::VolumeId;
 
 #[derive(Debug, FromRequest)]
 pub struct GetOrHeadExtractor {

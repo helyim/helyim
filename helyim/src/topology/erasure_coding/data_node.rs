@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use helyim_common::types::VolumeId;
+
 use crate::{
-    storage::{erasure_coding::EcVolumeInfo, VolumeId},
+    storage::erasure_coding::EcVolumeInfo,
     topology::{data_node::DataNode, node::Node},
 };
 

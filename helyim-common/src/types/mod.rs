@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
 };
 
-use crate::storage::needle::{
+use crate::consts::needle::{
     NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE, TOMBSTONE_FILE_SIZE,
 };
 

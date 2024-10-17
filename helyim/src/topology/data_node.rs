@@ -7,6 +7,7 @@ use std::{
 
 use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use helyim_proto::volume::{
     AllocateVolumeRequest, AllocateVolumeResponse, VacuumVolumeCheckRequest,
     VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest, VacuumVolumeCleanupResponse,
@@ -17,7 +18,7 @@ use serde::Serialize;
 use tonic::Status;
 
 use crate::{
-    storage::{erasure_coding::EcVolumeInfo, VolumeId, VolumeInfo},
+    storage::{erasure_coding::EcVolumeInfo, VolumeInfo},
     topology::node::{Node, NodeImpl, NodeType},
     util::grpc::volume_server_client,
 };
@@ -233,10 +234,10 @@ pub type DataNodeRef = Arc<DataNode>;
 #[cfg(test)]
 mod test {
     use faststr::FastStr;
-    use helyim_common::ttl::Ttl;
+    use helyim_common::{ttl::Ttl, types::VolumeId};
 
     use crate::{
-        storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
+        storage::{ReplicaPlacement, VolumeInfo, CURRENT_VERSION},
         topology::{data_node::DataNode, node::Node},
     };
 

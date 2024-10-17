@@ -5,6 +5,7 @@ use std::{ops::Deref, sync::Arc, time::Duration};
 use arc_swap::ArcSwap;
 use async_stream::stream;
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use helyim_proto::directory::KeepConnectedRequest;
 use nom::error::Error as NomError;
 use tokio_stream::StreamExt;
@@ -13,7 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     client::location::{Location, LocationMap},
-    storage::{VolumeError, VolumeId},
+    storage::VolumeError,
     util::grpc::helyim_client,
 };
 

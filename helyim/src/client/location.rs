@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use rand::Rng;
 
-use crate::{client::ClientError, storage::VolumeId, util::parser::parse_vid_fid};
+use crate::{client::ClientError, util::parser::parse_vid_fid};
 
 #[derive(Clone)]
 pub struct Location {

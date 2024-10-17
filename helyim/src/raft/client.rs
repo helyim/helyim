@@ -5,6 +5,7 @@ use std::{
 };
 
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use openraft::{
     error::{ForwardToLeader, NetworkError, RemoteError},
     BasicNode, RaftMetrics, TryAsRef,
@@ -13,12 +14,9 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
 use tracing::{debug, error, info};
 
-use crate::{
-    raft::types::{
-        self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
-        RaftRequest, RpcError,
-    },
-    storage::VolumeId,
+use crate::raft::types::{
+    self, ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError,
+    RaftRequest, RpcError,
 };
 
 #[derive(Clone)]

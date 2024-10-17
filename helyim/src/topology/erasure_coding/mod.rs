@@ -1,12 +1,10 @@
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use helyim_proto::directory::VolumeEcShardInformationMessage;
 
 use crate::{
-    storage::{
-        erasure_coding::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT},
-        VolumeId,
-    },
+    storage::erasure_coding::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT},
     topology::{node::Node, DataNodeRef, Topology},
 };
 

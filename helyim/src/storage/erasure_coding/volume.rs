@@ -10,6 +10,10 @@ use std::{
 use bytes::{Buf, BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_common::{
+    consts::needle::NEEDLE_ID_SIZE,
+    types::{NeedleId, VolumeId},
+};
 use helyim_proto::{directory::VolumeEcShardInformationMessage, volume::VolumeInfo};
 use tokio::sync::RwLock;
 
@@ -24,9 +28,8 @@ use crate::{
             ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE,
         },
-        needle::NEEDLE_ID_SIZE,
         version::{Version, VERSION2},
-        NeedleError, NeedleId, NeedleValue, VolumeId,
+        NeedleError, NeedleValue,
     },
     util::file::file_exists,
 };

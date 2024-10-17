@@ -12,12 +12,12 @@ keywords.workspace = true
 
 [dependencies]
 bytes.workspace = true
+crc32fast.workspace = true
 hyper.workspace = true
 hyper-util = { workspace = true, features = ["client", "client-legacy"] }
 nom.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
-
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 sonyflake.workspace = true
@@ -25,7 +25,3 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tower.workspace = true
 turmoil.workspace = true
-
-[dev-dependencies]
-
-

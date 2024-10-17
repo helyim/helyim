@@ -6,12 +6,12 @@ use std::{
 };
 
 use bytes::Buf;
+use helyim_common::types::{NeedleId, Offset, Size, VolumeId};
 use tracing::{debug, error};
 
 use crate::storage::{
     needle::{metric::Metric, MemoryNeedleValueMap, NeedleValue, NeedleValueMap},
-    types::{Offset, Size},
-    NeedleError, NeedleId, VolumeError, VolumeId,
+    NeedleError, VolumeError,
 };
 
 #[derive(Copy, Clone, Debug, Default)]

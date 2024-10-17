@@ -1,6 +1,7 @@
 use std::{num::ParseIntError, time::Duration};
 
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use helyim_proto::directory::{
     lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
 };
@@ -10,7 +11,6 @@ use tonic::Status;
 
 use crate::{
     errors::Result,
-    storage::VolumeId,
     util::{grpc::helyim_client, parser::parse_vid_fid},
 };
 

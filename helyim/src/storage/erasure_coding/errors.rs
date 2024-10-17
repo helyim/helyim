@@ -3,9 +3,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use helyim_common::types::VolumeId;
 use serde_json::json;
 
-use crate::storage::{erasure_coding::ShardId, NeedleError, VolumeError, VolumeId};
+use crate::storage::{erasure_coding::ShardId, NeedleError, VolumeError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EcVolumeError {

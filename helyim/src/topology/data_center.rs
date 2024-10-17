@@ -2,15 +2,13 @@ use std::{result::Result as StdResult, sync::Arc};
 
 use dashmap::DashMap;
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use serde::Serialize;
 
-use crate::{
-    storage::VolumeId,
-    topology::{
-        node::{downcast_rack, Node, NodeImpl, NodeType},
-        rack::{Rack, RackRef},
-        DataNodeRef, TopologyError,
-    },
+use crate::topology::{
+    node::{downcast_rack, Node, NodeImpl, NodeType},
+    rack::{Rack, RackRef},
+    DataNodeRef, TopologyError,
 };
 
 #[derive(Serialize)]

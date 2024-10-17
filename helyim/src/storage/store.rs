@@ -8,7 +8,11 @@ use std::{
 
 use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
-use helyim_common::ttl::Ttl;
+use helyim_common::{
+    consts::needle::MAX_POSSIBLE_VOLUME_SIZE,
+    ttl::Ttl,
+    types::{Size, VolumeId},
+};
 use helyim_proto::directory::{
     HeartbeatRequest, VolumeInformationMessage, VolumeShortInformationMessage,
 };
@@ -20,10 +24,9 @@ use crate::{
     errors::{Error, Result},
     storage::{
         disk_location::DiskLocation,
-        needle::{Needle, NeedleMapType, MAX_POSSIBLE_VOLUME_SIZE},
-        types::Size,
+        needle::{Needle, NeedleMapType},
         volume::Volume,
-        ReplicaPlacement, VolumeError, VolumeId,
+        ReplicaPlacement, VolumeError,
     },
     util::{args::VolumeOptions, chan::DeltaVolumeInfoSender},
 };

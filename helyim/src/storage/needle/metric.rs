@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::storage::{types::Size, NeedleId};
+use helyim_common::types::{NeedleId, Size};
 
 #[derive(Default)]
 pub struct Metric {

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use dashmap::{mapref::one::RefMut, DashMap};
-use helyim_common::ttl::Ttl;
+use helyim_common::{ttl::Ttl, types::VolumeId};
 use rand::Rng;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    storage::{ReplicaPlacement, VolumeId, VolumeInfo, CURRENT_VERSION},
+    storage::{ReplicaPlacement, VolumeInfo, CURRENT_VERSION},
     topology::{data_node::DataNodeRef, node::Node, volume_grow::VolumeGrowOption, TopologyError},
 };
 

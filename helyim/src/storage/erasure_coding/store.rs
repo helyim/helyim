@@ -10,6 +10,7 @@ use bytes::Bytes;
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use futures::{channel::mpsc::channel, SinkExt, StreamExt};
+use helyim_common::types::{NeedleId, VolumeId};
 use helyim_proto::{
     directory::{HeartbeatRequest, LookupEcVolumeRequest, VolumeEcShardInformationMessage},
     volume::VolumeEcShardReadRequest,
@@ -25,7 +26,7 @@ use crate::{
             ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
         },
         store::Store,
-        Needle, NeedleError, NeedleId, VolumeId,
+        Needle, NeedleError,
     },
     util::grpc::{helyim_client, volume_server_client},
 };

@@ -1,6 +1,6 @@
 use std::{future::Future, io::Error, pin::Pin};
-use hyper::Uri;
 
+use hyper::Uri;
 use pin_project_lite::pin_project;
 use tokio::io::AsyncWrite;
 use tower::Service;

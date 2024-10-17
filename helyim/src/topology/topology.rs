@@ -10,6 +10,7 @@ use faststr::FastStr;
 use helyim_common::{
     sequence::{Sequence, SequenceError, Sequencer},
     ttl::{Ttl, TtlError},
+    types::VolumeId,
 };
 use helyim_proto::directory::{
     VolumeInformationMessage, VolumeLocation, VolumeShortInformationMessage,
@@ -24,7 +25,7 @@ use crate::{
     raft::{types::NodeId, RaftServer},
     storage::{
         batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact, FileId,
-        ReplicaPlacement, VolumeId, VolumeInfo,
+        ReplicaPlacement, VolumeInfo,
     },
     topology::{
         collection::Collection,

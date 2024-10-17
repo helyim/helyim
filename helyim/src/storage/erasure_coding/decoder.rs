@@ -7,6 +7,10 @@ use std::{
 };
 
 use bytes::Buf;
+use helyim_common::{
+    consts::needle::{NEEDLE_ENTRY_SIZE, NEEDLE_ID_SIZE},
+    types::{NeedleId, Offset, Size},
+};
 
 use crate::{
     errors::Result,
@@ -15,12 +19,10 @@ use crate::{
             to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
             ERASURE_CODING_SMALL_BLOCK_SIZE,
         },
-        needle::{NEEDLE_ENTRY_SIZE, NEEDLE_ID_SIZE},
         read_index_entry,
-        types::{Offset, Size},
         version::Version,
         volume::{SuperBlock, SUPER_BLOCK_SIZE},
-        NeedleId, NeedleValue,
+        NeedleValue,
     },
     util::file::file_exists,
 };

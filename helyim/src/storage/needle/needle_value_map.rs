@@ -1,12 +1,11 @@
 use std::{fs, os::unix::fs::OpenOptionsExt};
 
+use helyim_common::types::{NeedleId, Size};
 use indexmap::IndexMap;
 use leapfrog::LeapMap;
 use parking_lot::RwLock;
 
-use crate::storage::{
-    needle::NeedleValue, types::Size, walk_index_file, NeedleError, NeedleId, VolumeError,
-};
+use crate::storage::{needle::NeedleValue, walk_index_file, NeedleError, VolumeError};
 
 pub trait NeedleValueMap: Send + Sync {
     fn set(&self, key: NeedleId, value: NeedleValue) -> Option<NeedleValue>;

@@ -1,7 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use super::VolumeId;
-use crate::storage::NeedleId;
+use helyim_common::types::{NeedleId, VolumeId};
 
 #[derive(Copy, Clone)]
 pub struct FileId {

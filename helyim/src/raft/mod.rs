@@ -10,6 +10,7 @@ use axum::{
     Router,
 };
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use nom::{
     character::complete::{char, digit1},
     sequence::pair,
@@ -35,7 +36,6 @@ use crate::{
             RaftError, RaftRequest,
         },
     },
-    storage::VolumeId,
     topology::TopologyRef,
 };
 

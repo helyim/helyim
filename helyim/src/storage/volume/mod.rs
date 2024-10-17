@@ -18,9 +18,11 @@ use axum::{
 use bytes::{Buf, BufMut};
 use faststr::FastStr;
 use helyim_common::{
+    consts::needle::{NEEDLE_ENTRY_SIZE, NEEDLE_PADDING_SIZE},
     sequence::SequenceError,
     time::{get_time, now, TimeError},
     ttl::{Ttl, TtlError},
+    types::{NeedleId, Offset, VolumeId},
 };
 use parking_lot::RwLock;
 use rustix::fs::ftruncate;
@@ -28,12 +30,9 @@ use serde_json::json;
 use tracing::{debug, error, info};
 
 use crate::storage::{
-    needle::{
-        read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue, NEEDLE_PADDING_SIZE,
-    },
+    needle::{read_needle_header, Needle, NeedleMapType, NeedleMapper, NeedleValue},
     version::{Version, CURRENT_VERSION},
     volume::checking::check_volume_data_integrity,
-    VolumeId,
 };
 
 mod checking;
@@ -47,14 +46,7 @@ mod volume_info;
 
 pub use volume_info::VolumeInfo;
 
-use crate::{
-    storage::{
-        needle::{NeedleError, NEEDLE_ENTRY_SIZE},
-        types::Offset,
-        NeedleId,
-    },
-    topology::TopologyError,
-};
+use crate::{storage::needle::NeedleError, topology::TopologyError};
 
 pub const SUPER_BLOCK_SIZE: usize = 8;
 
@@ -856,12 +848,11 @@ pub mod tests {
 
     use bytes::Bytes;
     use faststr::FastStr;
-    use helyim_common::ttl::Ttl;
+    use helyim_common::{crc, ttl::Ttl};
     use rand::random;
     use tempfile::Builder;
 
     use crate::storage::{
-        crc,
         needle::NeedleMapType,
         volume::{scan_volume_file, SuperBlock, Volume, VolumeError},
         FileId, Needle, ReplicaPlacement,

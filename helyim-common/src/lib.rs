@@ -1,6 +1,9 @@
 pub mod connector;
+pub mod consts;
+pub mod crc;
 pub mod images;
 pub mod sequence;
 pub mod sys;
 pub mod time;
 pub mod ttl;
+pub mod types;

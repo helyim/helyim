@@ -1,4 +1,3 @@
-mod crc;
 mod disk_location;
 
 pub mod erasure_coding;
@@ -18,9 +17,6 @@ mod server;
 pub use server::VolumeServer;
 
 mod store;
-
-mod types;
-pub use types::{NeedleId, VolumeId};
 
 mod version;
 pub use version::CURRENT_VERSION;

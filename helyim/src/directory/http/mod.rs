@@ -125,6 +125,7 @@ mod tests {
     use axum::{body::Body, http::Request, routing::get, Router};
     use faststr::FastStr;
     use futures::executor::block_on;
+    use helyim_common::connector;
     use http_body_util::BodyExt as _;
     use hyper::Method;
     use hyper_util::{
@@ -135,7 +136,6 @@ mod tests {
     use serde_json::Value;
     use tracing::{info_span, Instrument};
     use turmoil::Builder;
-    use helyim_common::connector;
 
     use crate::{
         directory::http::{

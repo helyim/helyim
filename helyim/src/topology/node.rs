@@ -9,12 +9,13 @@ use std::{
 use dashmap::DashMap;
 use downcast_rs::{impl_downcast, DowncastSync};
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::{
-    storage::{erasure_coding::DATA_SHARDS_COUNT, VolumeId},
+    storage::erasure_coding::DATA_SHARDS_COUNT,
     topology::{
         data_center::{DataCenter, DataCenterRef},
         data_node::DataNode,

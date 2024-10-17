@@ -11,6 +11,7 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
+use helyim_common::images::FAVICON_ICO;
 use http_range::HttpRange;
 use hyper::{
     header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE, RANGE},
@@ -24,7 +25,6 @@ use reqwest::{
     Body, Response,
 };
 use url::Url;
-use helyim_common::images::FAVICON_ICO;
 
 use crate::{anyhow, PHRASE};
 

@@ -4,12 +4,10 @@ use std::sync::{
 };
 
 use faststr::FastStr;
+use helyim_common::types::VolumeId;
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{
-    erasure_coding::{ShardId, TOTAL_SHARDS_COUNT},
-    VolumeId,
-};
+use crate::storage::erasure_coding::{ShardId, TOTAL_SHARDS_COUNT};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ShardBits(Arc<AtomicU32>);
