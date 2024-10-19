@@ -17,78 +17,15 @@ helyim is a object storage written by Rust.
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-broadcast.workspace = true
-async-recursion.workspace = true
-async-scoped = { workspace = true, features = ["use-tokio"] }
-async-stream.workspace = true
-arc-swap.workspace = true
-async-trait.workspace = true
-axum = { workspace = true, features = ["multipart"] }
-axum-extra = { workspace = true, features = ["typed-header"] }
-axum-macros.workspace = true
-bincode.workspace = true
-bytes = { workspace = true, features = ["serde"] }
-chrono.workspace = true
-cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
-dashmap = { workspace = true, features = ["serde"] }
-downcast-rs.workspace = true
-faststr = { workspace = true, features = ["serde"] }
-fnv.workspace = true
-futures.workspace = true
-futures-util.workspace = true
-ginepro.workspace = true
 helyim-common = { path = "../helyim-common" }
-helyim-proto = { path = "../helyim-proto" }
-http-body.workspace = true
-http-range.workspace = true
-hyper = { workspace = true, features = ["full"] }
-hyper-util.workspace = true
-indexmap.workspace = true
-itoa.workspace = true
-kanal.workspace = true
-leapfrog.workspace = true
-libflate.workspace = true
-lru.workspace = true
-mime.workspace = true
-mime_guess.workspace = true
-moka = { workspace = true, features = ["sync"] }
-multer.workspace = true
-nom.workspace = true
-openraft = { workspace = true, features = ["serde", "storage-v2"] }
-once_cell.workspace = true
-parking_lot.workspace = true
-percent-encoding.workspace = true
-rand.workspace = true
-reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
-regex.workspace = true
-reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
-rustix = { workspace = true, features = ["fs", "process"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-thiserror.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tokio-stream.workspace = true
-tokio-util.workspace = true
-tonic.workspace = true
-tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
+helyim-directory = { path = "../helyim-directory" }
+helyim-filer = { path = "../helyim-filer" }
+helyim-store = { path = "../helyim-store" }
+tokio.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-url.workspace = true
-
-[dev-dependencies]
-criterion = { workspace = true, features = ["html_reports"] }
-helyim-benchmark = { path = "../benchmark" }
-http-body-util.workspace = true
-hyper-util = { workspace = true, features = ["client", "client-legacy", "service", "tokio"] }
-pin-project-lite.workspace = true
-pprof = { workspace = true, features = ["flamegraph", "criterion", "frame-pointer"] }
-reqwest = { workspace = true, features = ["json", "blocking", "multipart"] }
-tempfile.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tower.workspace = true
-turmoil.workspace = true
 
 [[bench]]
 name = "read_upload_files"

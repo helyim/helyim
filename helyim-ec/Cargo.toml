@@ -11,3 +11,23 @@ categories.workspace = true
 keywords.workspace = true
 
 [dependencies]
+axum = { workspace = true, features = ["multipart"] }
+async-scoped = { workspace = true, features = ["use-tokio"] }
+bytes = { workspace = true, features = ["serde"] }
+dashmap = { workspace = true, features = ["serde"] }
+faststr = { workspace = true, features = ["serde"] }
+futures.workspace = true
+helyim-client = { path = "../helyim-client" }
+helyim-common = { path = "../helyim-common" }
+helyim-proto = { path = "../helyim-proto" }
+indexmap.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tonic.workspace = true
+tracing.workspace = true

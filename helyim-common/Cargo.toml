@@ -11,17 +11,31 @@ categories.workspace = true
 keywords.workspace = true
 
 [dependencies]
+axum = { workspace = true, features = ["multipart"] }
 bytes.workspace = true
+clap = { workspace = true, features = ["derive"] }
 crc32fast.workspace = true
+faststr = { workspace = true, features = ["serde"] }
+futures-util.workspace = true
+helyim-proto = { path = "../helyim-proto" }
+http-range.workspace = true
 hyper.workspace = true
 hyper-util = { workspace = true, features = ["client", "client-legacy"] }
+leapfrog.workspace = true
 nom.workspace = true
+mime.workspace = true
+once_cell.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true
+reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 sonyflake.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tower.workspace = true
+tracing.workspace = true
 turmoil.workspace = true
+url.workspace = true
+

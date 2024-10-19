@@ -1,79 +1,12 @@
-use std::{
-    cmp::Ordering,
-    fmt::{Debug, Display, Formatter},
-};
-
-use crate::consts::needle::{
-    NEEDLE_CHECKSUM_SIZE, NEEDLE_HEADER_SIZE, NEEDLE_PADDING_SIZE, TOMBSTONE_FILE_SIZE,
-};
+use std::fmt::{Display, Formatter};
 
 mod file_id;
 pub use file_id::FileId;
+mod needle;
+pub use needle::{read_index_entry, walk_index_file, NeedleId, NeedleValue, Offset, Size};
 
-macro_rules! def_needle_type {
-    ($type_name:ident, $typ:ty) => {
-        #[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
-        pub struct $type_name(pub $typ);
-
-        impl Display for $type_name {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-
-        impl Debug for $type_name {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-
-        impl PartialEq<$typ> for $type_name {
-            fn eq(&self, other: &$typ) -> bool {
-                self.0 == *other
-            }
-        }
-
-        impl PartialOrd<$typ> for $type_name {
-            fn partial_cmp(&self, other: &$typ) -> Option<Ordering> {
-                self.0.partial_cmp(other)
-            }
-        }
-    };
-}
-
-pub type VolumeId = u32;
-pub type NeedleId = u64;
-
-def_needle_type!(Offset, u32);
-
-impl Offset {
-    pub fn actual_offset(&self) -> u64 {
-        (self.0 * NEEDLE_PADDING_SIZE) as u64
-    }
-}
-
-impl From<u64> for Offset {
-    fn from(value: u64) -> Self {
-        Self(value as u32 / NEEDLE_PADDING_SIZE)
-    }
-}
-
-def_needle_type!(Size, i32);
-
-impl Size {
-    pub fn is_deleted(&self) -> bool {
-        self.0 < 0 || self.0 == TOMBSTONE_FILE_SIZE
-    }
-
-    pub fn padding_len(&self) -> u32 {
-        NEEDLE_PADDING_SIZE
-            - ((NEEDLE_HEADER_SIZE + self.0 as u32 + NEEDLE_CHECKSUM_SIZE) % NEEDLE_PADDING_SIZE)
-    }
-
-    pub fn actual_size(&self) -> u64 {
-        (NEEDLE_HEADER_SIZE + self.0 as u32 + NEEDLE_CHECKSUM_SIZE + self.padding_len()) as u64
-    }
-}
+mod volume;
+pub use volume::{ReplicaPlacement, SuperBlock, VolumeId};
 
 pub type Cookie = u32;
 

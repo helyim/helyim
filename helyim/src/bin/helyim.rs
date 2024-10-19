@@ -1,59 +1,18 @@
 // remove after https://github.com/rust-lang/rust-clippy/pull/13464 fixed
 #![allow(clippy::needless_return)]
 
-use std::{io::stdout, time::Duration};
+use std::io::stdout;
 
 use clap::Parser;
-use helyim::{
-    directory::DirectoryServer,
-    filer::FilerServer,
-    storage::{NeedleMapType, VolumeServer},
-    util::args::{Command, FilerOptions, LogOptions, MasterOptions, Opts, VolumeOptions},
-};
-use helyim_common::{
-    sequence::{Sequencer, SequencerType},
-    sys::shutdown_signal,
-};
+use helyim_common::args::{Command, LogOptions, Opts};
+use helyim_directory::start_master;
+use helyim_filer::start_filer;
+use helyim_store::start_volume;
 use tracing::{info, Level};
 use tracing_subscriber::{
     fmt, fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
     Registry,
 };
-
-async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let sequencer = Sequencer::new(SequencerType::Memory)?;
-    let mut directory = DirectoryServer::new(master_opts, 0.3, sequencer).await?;
-
-    directory.start().await?;
-    shutdown_signal().await;
-    directory.stop().await?;
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    Ok(())
-}
-
-async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let mut server =
-        VolumeServer::new(NeedleMapType::NeedleMapInMemory, volume_opts, false).await?;
-
-    server.start().await?;
-    shutdown_signal().await;
-    server.stop().await?;
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    Ok(())
-}
-
-async fn start_filer(filer_opts: FilerOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let mut server = FilerServer::new(filer_opts).await?;
-
-    server.start().await?;
-    shutdown_signal().await;
-    server.stop().await?;
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    Ok(())
-}
 
 fn log_init(
     level: Level,
