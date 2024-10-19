@@ -27,6 +27,13 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
+[dev-dependencies]
+bytes.workspace = true
+criterion.workspace = true
+helyim-benchmark = { path = "../benchmark" }
+reqwest = { workspace = true, features = ["blocking"] }
+serde_json.workspace = true
+
 [[bench]]
 name = "read_upload_files"
 harness = false

@@ -427,6 +427,7 @@ impl FilerState {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn do_auto_chunk(
         &self,
         response: &mut Response<Body>,

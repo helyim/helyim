@@ -130,7 +130,7 @@ mod tests {
         connector,
         http::default_handler,
     };
-    use helyim_topology::tests;
+    use helyim_topology::{tests, volume_grow::VolumeGrowth};
     use http_body_util::BodyExt as _;
     use hyper::Method;
     use hyper_util::{

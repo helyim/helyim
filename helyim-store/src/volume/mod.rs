@@ -816,7 +816,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::Arc;
+    use std::{io, sync::Arc};
 
     use bytes::Bytes;
     use faststr::FastStr;
@@ -830,7 +830,7 @@ pub mod tests {
 
     use crate::{
         needle::{Needle, NeedleMapType},
-        volume::{scan_volume_file, SuperBlock, Volume, VolumeError},
+        volume::{scan_volume_file, SuperBlock, Volume},
     };
 
     pub fn setup(dir: FastStr) -> Volume {
@@ -878,8 +878,8 @@ pub mod tests {
             volume.id,
             volume.needle_map_type,
             true,
-            |_super_block: &Arc<SuperBlock>| -> Result<(), VolumeError> { Ok(()) },
-            |needle, _offset| -> Result<(), VolumeError> {
+            |_super_block: &Arc<SuperBlock>| -> Result<(), io::Error> { Ok(()) },
+            |needle, _offset| -> Result<(), io::Error> {
                 assert_eq!(needle.data_size, 11);
                 Ok(())
             },

@@ -304,13 +304,14 @@ mod tests {
     use dashmap::DashMap;
     use faststr::FastStr;
     use helyim_common::types::{ReplicaPlacement, VolumeId};
-    use helyim_proto::volume::VolumeInfo;
 
     use crate::{
         data_node::DataNode,
         node::{downcast_node, Node},
-        topology::{tests::setup_topo, DataNodeRef},
-        volume_grow::{randomly_pick_nodes, VolumeGrowOption},
+        topology::tests::setup_topo,
+        volume::VolumeInfo,
+        volume_grow::{randomly_pick_nodes, VolumeGrowOption, VolumeGrowth},
+        DataNodeRef,
     };
 
     fn data_node(volume_id: VolumeId, ip: &str, port: u16) -> DataNodeRef {

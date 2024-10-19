@@ -107,7 +107,7 @@ pub async fn batch_vacuum_volume_commit(
     commit_success
 }
 
-async fn batch_vacuum_volume_cleanup(volume_id: VolumeId, data_nodes: &[DataNodeRef]) -> bool {
+pub async fn batch_vacuum_volume_cleanup(volume_id: VolumeId, data_nodes: &[DataNodeRef]) -> bool {
     let mut cleanup_success = true;
     for data_node in data_nodes {
         let request = VacuumVolumeCleanupRequest { volume_id };

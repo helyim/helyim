@@ -37,7 +37,8 @@ use crate::{
     raft::{types::NodeId, RaftServer},
     volume::{
         vacuum::{
-            batch_vacuum_volume_check, batch_vacuum_volume_commit, batch_vacuum_volume_compact,
+            batch_vacuum_volume_check, batch_vacuum_volume_cleanup, batch_vacuum_volume_commit,
+            batch_vacuum_volume_compact,
         },
         VolumeInfo,
     },
@@ -301,7 +302,7 @@ impl Topology {
                         .await
                     {
                         batch_vacuum_volume_commit(&volume_layout, vid, &data_nodes).await;
-                        // let _ = batch_vacuum_volume_cleanup(vid, data_nodes).await;
+                        let _ = batch_vacuum_volume_cleanup(vid, &data_nodes).await;
                     }
                 }
             }
@@ -520,9 +521,8 @@ pub async fn topology_vacuum_loop(
 
 pub type TopologyRef = Arc<Topology>;
 
-#[cfg(test)]
 pub mod tests {
-    use std::{collections::HashMap, fs::File, sync::Arc};
+    use std::{collections::HashMap, sync::Arc};
 
     use faststr::FastStr;
     use helyim_common::{
@@ -548,10 +548,70 @@ pub mod tests {
         size: u64,
     }
 
+    fn topo_str() -> &'static str {
+        r#"{
+          "dc1":{
+            "rack11":{
+              "server111":{
+                "volumes":[
+                  {"id":1, "size":12312},
+                  {"id":2, "size":12312},
+                  {"id":3, "size":12312}
+                ],
+                "limit":3
+              },
+              "server112":{
+                "volumes":[
+                  {"id":4, "size":12312},
+                  {"id":5, "size":12312},
+                  {"id":6, "size":12312}
+                ],
+                "limit":10
+              }
+            },
+            "rack12":{
+              "server121":{
+                "volumes":[
+                  {"id":4, "size":12312},
+                  {"id":5, "size":12312},
+                  {"id":6, "size":12312}
+                ],
+                "limit":4
+              },
+              "server122":{
+                "volumes":[],
+                "limit":4
+              },
+              "server123":{
+                "volumes":[
+                  {"id":2, "size":12312},
+                  {"id":3, "size":12312},
+                  {"id":4, "size":12312}
+                ],
+                "limit":5
+              }
+            }
+          },
+          "dc2":{
+          },
+          "dc3":{
+            "rack32":{
+              "server321":{
+                "volumes":[
+                  {"id":1, "size":12312},
+                  {"id":3, "size":12312},
+                  {"id":5, "size":12312}
+                ],
+                "limit":4
+              }
+            }
+          }
+        }"#
+    }
+
     pub async fn setup_topo() -> TopologyRef {
-        let file = File::open("tests/topo.json").unwrap();
         let data: HashMap<String, HashMap<String, HashMap<String, ServerLayout>>> =
-            serde_json::from_reader(file).unwrap();
+            serde_json::from_str(topo_str()).unwrap();
         let topo = Arc::new(Topology::new(
             Sequencer::Memory(MemorySequencer::new()),
             32 * 1024,
