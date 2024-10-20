@@ -1,0 +1,197 @@
+syntax = "proto3";
+
+package filer;
+
+//////////////////////////////////////////////////
+
+service Filer {
+  rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
+  }
+
+  rpc ListEntries (ListEntriesRequest) returns (stream ListEntriesResponse) {
+  }
+
+  rpc CreateEntry (CreateEntryRequest) returns (CreateEntryResponse) {
+  }
+
+  rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
+  }
+
+  rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+  }
+
+  rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
+  }
+
+  rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
+  }
+
+  rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
+  }
+
+  rpc CollectionList (CollectionListRequest) returns (CollectionListResponse) {
+  }
+
+  rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+  }
+
+  rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+  }
+}
+
+//////////////////////////////////////////////////
+
+message LookupDirectoryEntryRequest {
+  string directory = 1;
+  string name = 2;
+}
+
+message LookupDirectoryEntryResponse {
+  Entry entry = 1;
+}
+
+message ListEntriesRequest {
+  string directory = 1;
+  string prefix = 2;
+  string startFromFileName = 3;
+  bool inclusiveStartFrom = 4;
+  uint32 limit = 5;
+}
+
+message ListEntriesResponse {
+  Entry entry = 1;
+}
+
+message Entry {
+  string name = 1;
+  bool is_directory = 2;
+  repeated FileChunk chunks = 3;
+  FuseAttributes attributes = 4;
+  map<string, bytes> extended = 5;
+}
+
+message FileChunk {
+  string fid = 1;
+  int64 offset = 2;
+  uint64 size = 3;
+  int64 mtime = 4;
+  string etag = 5;
+  string source_fid = 6;
+}
+
+//message FileId {
+//  uint32 volume_id = 1;
+//  uint64 file_key = 2;
+//  fixed32 cookie = 3;
+//}
+
+message FuseAttributes {
+  uint64 file_size = 1;
+  // unix time in seconds
+  int64 mtime = 2;
+  uint32 file_mode = 3;
+  uint32 uid = 4;
+  uint32 gid = 5;
+  // unix time in seconds
+  int64 crtime = 6;
+  string mime = 7;
+  string replication = 8;
+  string collection = 9;
+  int32 ttl_sec = 10;
+  // for hdfs
+  string user_name = 11;
+  repeated string group_name = 12;
+}
+
+message CreateEntryRequest {
+  string directory = 1;
+  Entry entry = 2;
+}
+
+message CreateEntryResponse {
+  string error = 1;
+}
+
+message UpdateEntryRequest {
+  string directory = 1;
+  Entry entry = 2;
+}
+message UpdateEntryResponse {
+}
+
+message AppendToEntryRequest {
+  string directory = 1;
+  string entry_name = 2;
+  repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
+}
+
+message DeleteEntryRequest {
+  string directory = 1;
+  string name = 2;
+  // bool is_directory = 3;
+  bool is_delete_data = 4;
+  bool is_recursive = 5;
+}
+
+message DeleteEntryResponse {
+  string error = 1;
+}
+
+message AssignVolumeRequest {
+  int32 count = 1;
+  string collection = 2;
+  string replication = 3;
+  int32 ttl_sec = 4;
+  string data_center = 5;
+  string rack = 6;
+}
+
+message AssignVolumeResponse {
+  string file_id = 1;
+  int32 count = 2;
+  string error = 3;
+  Location location = 4;
+}
+
+message LookupVolumeRequest {
+  repeated string volume_ids = 1;
+}
+
+message Locations {
+  repeated Location locations = 1;
+}
+
+message Location {
+  string url = 1;
+  string public_url = 2;
+}
+message LookupVolumeResponse {
+  map<string, Locations> locations_map = 1;
+}
+
+message Collection {
+  string name = 1;
+}
+message CollectionListRequest {
+  bool include_normal_volumes = 1;
+  bool include_ec_volumes = 2;
+}
+message CollectionListResponse {
+  repeated Collection collections = 1;
+}
+message DeleteCollectionRequest {
+  string collection = 1;
+}
+
+message DeleteCollectionResponse {
+}
+
+message KeepConnectedRequest {
+  string name = 1;
+  uint32 grpc_port = 2;
+  repeated string resources = 3;
+}
+message KeepConnectedResponse {
+}

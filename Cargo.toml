@@ -3,7 +3,14 @@ resolver = "2"
 members = [
     "helyim",
     "benchmark",
-    "proto",
+    "helyim-client",
+    "helyim-common",
+    "helyim-directory",
+    "helyim-ec",
+    "helyim-filer",
+    "helyim-proto",
+    "helyim-store",
+    "helyim-topology",
 ]
 
 [workspace.package]
@@ -18,7 +25,9 @@ categories = ["object-storage", "file-system", "distributed-system"]
 keywords = ["helyim", "seaweedfs", "object-storage", "haystack", "raft"]
 
 [workspace.dependencies]
+arc-swap = "1"
 async-broadcast = "0.7"
+async-recursion = "1"
 async-scoped = "0.9"
 async-stream = "0.3"
 async-trait = "0.1"
@@ -35,17 +44,23 @@ criterion = "0.5"
 dashmap = "5"
 downcast-rs = "1"
 faststr = "0.2"
+fnv = "1"
 futures = "0.3"
-ginepro = "0.7.1"
+futures-util = "0.3"
+ginepro = "0.8"
 heck = "0.4"
+http-body = "1"
 http-body-util = "0.1"
+http-range = "0.1"
 hyper = "1"
 hyper-util = "0.1"
 indexmap = "2"
+itoa = "1"
 kanal = "0.1.0-pre8"
 leapfrog = "0.3"
 libflate = "2"
 lru = "0.12"
+mime = "0.3"
 mime_guess = "2"
 moka = "0.12"
 multer = "3"
@@ -55,23 +70,26 @@ openraft = "0.9"
 parking_lot = "0.12"
 pin-project-lite = "0.2"
 pprof = "0.13"
-prost = "0.12"
+percent-encoding = "2"
+prost = "0.13"
 rand = "0.8"
 reed-solomon-erasure = { git = "https://github.com/helyim/reed-solomon-erasure", branch = "main", version = "6.0.0" }
 regex = "1"
-reqwest = "0.11"
+reqwest = { git = "https://github.com/iamazy/reqwest", branch = "pub_multipart", version = "0.12" }
 rustix = "0.38"
 serde = "1"
-serde_json = "^1"
+serde_json = "1"
+sled = "0.34"
 sonyflake = "0.2"
 tempfile = "3"
 thiserror = "^1"
 tokio = "1"
-tokio-stream = "0.1.8"
-tonic = "0.11"
-tonic-build = "0.11"
-tower = "0.4"
-tower-http = "0.5"
+tokio-stream = "0.1"
+tokio-util = "0.7"
+tonic = "0.12"
+tonic-build = "0.12"
+tower = "0.5"
+tower-http = "0.6"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = "0.3"

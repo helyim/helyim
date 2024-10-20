@@ -1,0 +1,38 @@
+[package]
+name = "helyim-topology"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[dependencies]
+axum = { workspace = true, features = ["multipart"] }
+async-broadcast.workspace = true
+async-trait.workspace = true
+dashmap = { workspace = true, features = ["serde"] }
+downcast-rs.workspace = true
+faststr = { workspace = true, features = ["serde"] }
+helyim-client = { path = "../helyim-client" }
+helyim-common = { path = "../helyim-common" }
+helyim-ec = { path = "../helyim-ec" }
+helyim-proto = { path = "../helyim-proto" }
+hyper = { workspace = true, features = ["full"] }
+multer.workspace = true
+nom.workspace = true
+openraft = { workspace = true, features = ["serde", "storage-v2"] }
+rand.workspace = true
+reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tonic.workspace = true
+tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
+tracing.workspace = true
+url.workspace = true
+

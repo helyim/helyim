@@ -1,0 +1,58 @@
+[package]
+name = "helyim-store"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[dependencies]
+async-broadcast.workspace = true
+async-scoped = { workspace = true, features = ["use-tokio"] }
+async-stream.workspace = true
+axum = { workspace = true, features = ["multipart"] }
+axum-extra = { workspace = true, features = ["typed-header"] }
+axum-macros.workspace = true
+bincode.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap = { workspace = true, features = ["derive"] }
+dashmap = { workspace = true, features = ["serde"] }
+faststr = { workspace = true, features = ["serde"] }
+futures.workspace = true
+helyim-client = { path = "../helyim-client" }
+helyim-common = { path = "../helyim-common" }
+helyim-ec = { path = "../helyim-ec" }
+helyim-proto = { path = "../helyim-proto" }
+helyim-topology = { path = "../helyim-topology" }
+hyper = { workspace = true, features = ["full"] }
+indexmap.workspace = true
+kanal.workspace = true
+leapfrog.workspace = true
+libflate.workspace = true
+mime_guess.workspace = true
+moka = { workspace = true, features = ["sync"] }
+multer.workspace = true
+nom.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
+regex.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process"] }
+tokio-stream.workspace = true
+tonic.workspace = true
+tower-http = { workspace = true, features = ["timeout", "set-header", "compression-gzip"] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+tempfile.workspace = true

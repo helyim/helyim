@@ -1,25 +1,28 @@
-#![allow(unused_attributes)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::mutable_key_type)]
-#![allow(clippy::module_inception)]
-#![deny(unused_qualifications)]
+use clap::{Args, Parser, Subcommand};
+use faststr::FastStr;
+use helyim_directory::MasterOptions;
+use helyim_filer::FilerOptions;
+use helyim_store::VolumeOptions;
 
-pub mod client;
-pub mod directory;
+#[derive(Parser, Debug)]
+#[command(name = "helyim")]
+#[command(author, version, about, long_about = None)]
+pub struct Opts {
+    #[command(flatten)]
+    pub log: LogOptions,
+    #[command(subcommand)]
+    pub command: Command,
+}
 
-pub mod errors;
-mod filer;
-mod images;
-mod operation;
-mod proto;
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    Master(MasterOptions),
+    Volume(VolumeOptions),
+    Filer(FilerOptions),
+}
 
-pub mod raft;
-
-pub mod storage;
-
-mod sequence;
-mod topology;
-pub mod util;
-
-const PHRASE: &str = "<h1>Hello, World!</h1>";
-const DEFAULT: &str = "default";
+#[derive(Args, Debug, Clone)]
+pub struct LogOptions {
+    #[arg(long, default_value(""))]
+    pub log_path: FastStr,
+}
