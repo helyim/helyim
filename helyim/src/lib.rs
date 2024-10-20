@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use faststr::FastStr;
 use helyim_directory::MasterOptions;
 use helyim_filer::FilerOptions;
-use helyim_store::args::VolumeOptions;
+use helyim_store::VolumeOptions;
 
 #[derive(Parser, Debug)]
 #[command(name = "helyim")]

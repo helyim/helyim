@@ -4,8 +4,6 @@ use helyim_common::{
     sys::shutdown_signal,
 };
 
-use crate::server::DirectoryServer;
-
 mod args;
 mod errors;
 mod http;
@@ -23,7 +21,7 @@ fn get_or_default(s: &str) -> FastStr {
 
 pub async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std::error::Error>> {
     let sequencer = Sequencer::new(SequencerType::Memory)?;
-    let mut directory = DirectoryServer::new(master_opts, 0.3, sequencer).await?;
+    let mut directory = server::DirectoryServer::new(master_opts, 0.3, sequencer).await?;
 
     directory.start().await?;
     shutdown_signal().await;
