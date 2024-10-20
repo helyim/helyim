@@ -19,6 +19,7 @@ axum = { workspace = true, features = ["multipart"] }
 axum-extra = { workspace = true, features = ["typed-header"] }
 axum-macros.workspace = true
 bytes = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
 dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 fnv.workspace = true

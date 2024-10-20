@@ -20,7 +20,6 @@ use faststr::FastStr;
 use futures_util::StreamExt;
 use helyim_common::{
     anyhow,
-    args::FilerOptions,
     file::file_name,
     http::{
         content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
@@ -42,12 +41,12 @@ use tracing::{error, info, warn};
 use crate::{
     entry::{Attr, Entry},
     file_chunk::{etag, total_size, ChunkView},
-    filer::FilerRef,
+    filer::{FilerError, FilerRef},
     http::extractor::{
         DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
     },
     operation::{assign, AssignRequest},
-    FilerError,
+    FilerOptions,
 };
 
 mod extractor;

@@ -4,12 +4,15 @@ use std::sync::Arc;
 use axum::{extract::State, Json};
 pub use extractor::require_leader;
 use faststr::FastStr;
-use helyim_common::{args::MasterOptions, http::FormOrJson, operation::ClusterStatus};
+use helyim_common::{http::FormOrJson, operation::ClusterStatus};
 use helyim_topology::{
     node::Node, volume_grow::VolumeGrowth, Topology, TopologyError, TopologyRef,
 };
 
-use crate::operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest};
+use crate::{
+    operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
+    MasterOptions,
+};
 
 #[derive(Clone)]
 pub struct DirectoryState {
@@ -125,11 +128,7 @@ mod tests {
     use axum::{body::Body, http::Request, routing::get, Router};
     use faststr::FastStr;
     use futures::executor::block_on;
-    use helyim_common::{
-        args::{MasterOptions, RaftOptions},
-        connector,
-        http::default_handler,
-    };
+    use helyim_common::{connector, http::default_handler};
     use helyim_topology::{tests, volume_grow::VolumeGrowth};
     use http_body_util::BodyExt as _;
     use hyper::Method;
@@ -143,11 +142,13 @@ mod tests {
     use turmoil::Builder;
 
     use crate::{
+        args::RaftOptions,
         http::{
             assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
             DirectoryState,
         },
         operation::Assignment,
+        MasterOptions,
     };
 
     #[test]

@@ -20,6 +20,7 @@ axum-macros.workspace = true
 bincode.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+clap = { workspace = true, features = ["derive"] }
 dashmap = { workspace = true, features = ["serde"] }
 faststr = { workspace = true, features = ["serde"] }
 futures.workspace = true

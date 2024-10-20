@@ -12,7 +12,6 @@ use dashmap::mapref::one::{Ref, RefMut};
 use faststr::FastStr;
 use helyim_common::{
     anyhow,
-    args::VolumeOptions,
     consts::MAX_POSSIBLE_VOLUME_SIZE,
     ttl::Ttl,
     types::{ReplicaPlacement, Size, VolumeId},
@@ -24,6 +23,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    args::VolumeOptions,
     disk_location::DiskLocation,
     needle::{Needle, NeedleError, NeedleMapType},
     volume::{delta_volume::DeltaVolumeInfoSender, Volume, VolumeError},

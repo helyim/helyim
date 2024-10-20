@@ -6,9 +6,7 @@ use std::{
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
-use helyim_common::{
-    args::FilerOptions, grpc_port, http::default_handler, sys::exit, time::timestamp_to_time,
-};
+use helyim_common::{grpc_port, http::default_handler, sys::exit, time::timestamp_to_time};
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
@@ -29,9 +27,9 @@ use super::http::{delete_handler, get_or_head_handler, post_handler, FilerState}
 use crate::{
     entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
     file_chunk::{compact_file_chunks, find_unused_file_chunks, total_size},
-    filer::{Filer, FilerRef},
+    filer::{Filer, FilerError, FilerRef},
     operation::{assign, AssignRequest},
-    FilerError,
+    FilerOptions,
 };
 
 pub struct FilerServer {

@@ -8,7 +8,6 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use helyim_client::helyim_client;
 use helyim_common::{
-    args::VolumeOptions,
     file::file_exists,
     grpc_port,
     http::{default_handler, favicon_handler},
@@ -46,6 +45,7 @@ use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    args::VolumeOptions,
     http::{
         delete_handler,
         erasure_coding::{

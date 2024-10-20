@@ -18,6 +18,7 @@ helyim is a object storage written by Rust.
 
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
+faststr = { workspace = true, features = ["serde"] }
 helyim-common = { path = "../helyim-common" }
 helyim-directory = { path = "../helyim-directory" }
 helyim-filer = { path = "../helyim-filer" }

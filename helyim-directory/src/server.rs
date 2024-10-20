@@ -9,7 +9,6 @@ use futures::{
 };
 use helyim_client::MasterClient;
 use helyim_common::{
-    args::MasterOptions,
     grpc_port,
     http::default_handler,
     parser::{parse_vid_fid, ParseError},
@@ -46,6 +45,7 @@ use crate::{
         assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, require_leader,
         DirectoryState,
     },
+    MasterOptions,
 };
 
 pub struct DirectoryServer {

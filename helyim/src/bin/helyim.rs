@@ -4,7 +4,7 @@
 use std::{io::stdout, time::Duration};
 
 use clap::Parser;
-use helyim_common::args::{Command, LogOptions, Opts};
+use helyim::{Command, LogOptions, Opts};
 use helyim_directory::start_master;
 use helyim_filer::start_filer;
 use helyim_store::start_volume;

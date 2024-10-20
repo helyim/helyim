@@ -1,21 +1,21 @@
 use faststr::FastStr;
 use helyim_common::{
-    args::MasterOptions,
     sequence::{Sequencer, SequencerType},
     sys::shutdown_signal,
 };
 
 use crate::server::DirectoryServer;
 
+mod args;
 mod errors;
-pub mod http;
-pub mod operation;
-pub mod server;
+mod http;
+mod operation;
+mod server;
+pub use args::MasterOptions;
 
-const DEFAULT: &str = "default";
-pub fn get_or_default(s: &str) -> FastStr {
+fn get_or_default(s: &str) -> FastStr {
     if s.is_empty() {
-        FastStr::from_static_str(DEFAULT)
+        FastStr::from_static_str("default")
     } else {
         FastStr::new(s)
     }
