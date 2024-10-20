@@ -28,6 +28,7 @@ use tracing::{error, info};
 use crate::{
     deletion::loop_processing_deletion,
     entry::{Attr, Entry},
+    store::Sled,
 };
 
 #[async_trait::async_trait]
@@ -59,7 +60,7 @@ pub struct Filer {
 }
 
 impl Filer {
-    pub fn new(masters: Vec<FastStr>) -> FilerRef {
+    pub fn new(masters: Vec<FastStr>) -> Result<FilerRef, FilerError> {
         let directories = moka::sync::CacheBuilder::new(1000)
             .time_to_live(Duration::from_secs(60 * 60))
             .name("filer-directory-cache")
@@ -68,7 +69,7 @@ impl Filer {
         let (delete_file_id_tx, delete_file_id_rx) = unbounded();
 
         let filer = Arc::new(Self {
-            store: None,
+            store: Some(Box::new(Sled::new()?)),
             directories: Some(directories),
             delete_file_id_tx,
             master_client,
@@ -76,7 +77,7 @@ impl Filer {
 
         tokio::spawn(loop_processing_deletion(delete_file_id_rx));
 
-        filer
+        Ok(filer)
     }
 
     pub fn current_master(&self) -> String {
@@ -353,6 +354,12 @@ pub enum FilerError {
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
+
+    #[error("Sled error: {0}")]
+    Sled(#[from] sled::Error),
+
+    #[error("Bincode error: {0}")]
+    Bincode(#[from] Box<bincode::ErrorKind>),
 }
 
 unsafe impl Send for FilerError {}

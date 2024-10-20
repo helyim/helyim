@@ -42,7 +42,7 @@ impl FilerServer {
     pub async fn new(filer_opts: FilerOptions) -> Result<FilerServer, FilerError> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let filer = Filer::new(filer_opts.masters.clone());
+        let filer = Filer::new(filer_opts.masters.clone())?;
         let filer_server = FilerServer {
             options: filer_opts.clone(),
             filer: filer.clone(),
