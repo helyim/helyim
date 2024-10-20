@@ -101,7 +101,7 @@ impl Store {
                     );
                     Err(err)
                 }
-            }
+            };
         }
         Err(EcVolumeError::ShardNotFound(vid, shard_id))
     }
