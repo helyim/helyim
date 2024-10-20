@@ -52,7 +52,7 @@ pub struct PostQuery {
     pub data_center: Option<FastStr>,
     pub ttl: Option<FastStr>,
     pub max_mb: Option<i32>,
-    pub cm: Option<bool>,
+    // pub cm: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

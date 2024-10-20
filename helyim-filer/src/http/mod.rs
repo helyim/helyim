@@ -42,11 +42,12 @@ use tracing::{error, info, warn};
 use crate::{
     entry::{Attr, Entry},
     file_chunk::{etag, total_size, ChunkView},
+    filer::FilerRef,
     http::extractor::{
         DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
     },
     operation::{assign, AssignRequest},
-    FilerError, FilerRef,
+    FilerError,
 };
 
 mod extractor;

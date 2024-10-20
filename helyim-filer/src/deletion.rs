@@ -11,8 +11,9 @@ use tracing::info;
 
 use crate::{
     entry::Entry,
+    filer::Filer,
     operation::{Location, Lookup},
-    Filer, FilerError,
+    FilerError,
 };
 
 impl Filer {

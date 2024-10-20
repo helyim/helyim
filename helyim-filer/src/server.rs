@@ -29,8 +29,9 @@ use super::http::{delete_handler, get_or_head_handler, post_handler, FilerState}
 use crate::{
     entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
     file_chunk::{compact_file_chunks, find_unused_file_chunks, total_size},
+    filer::{Filer, FilerRef},
     operation::{assign, AssignRequest},
-    Filer, FilerError, FilerRef,
+    FilerError,
 };
 
 pub struct FilerServer {
