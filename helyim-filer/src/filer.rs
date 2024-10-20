@@ -28,8 +28,28 @@ use tracing::{error, info};
 use crate::{
     deletion::loop_processing_deletion,
     entry::{Attr, Entry},
-    FilerStore,
 };
+
+#[async_trait::async_trait]
+pub trait FilerStore: Send + Sync {
+    fn name(&self) -> &str;
+    async fn initialize(&self) -> Result<(), FilerError>;
+    async fn insert_entry(&self, entry: &Entry) -> Result<(), FilerError>;
+    async fn update_entry(&self, entry: &Entry) -> Result<(), FilerError>;
+    async fn find_entry(&self, path: &str) -> Result<Option<Entry>, FilerError>;
+    async fn delete_entry(&self, path: &str) -> Result<(), FilerError>;
+    async fn list_directory_entries(
+        &self,
+        dir_path: &str,
+        start_filename: &str,
+        include_start_file: bool,
+        limit: u32,
+    ) -> Result<Vec<Entry>, FilerError>;
+
+    fn begin_transaction(&self) -> Result<(), FilerError>;
+    fn commit_transaction(&self) -> Result<(), FilerError>;
+    fn rollback_transaction(&self) -> Result<(), FilerError>;
+}
 
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,

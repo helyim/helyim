@@ -50,7 +50,6 @@ use crate::{
 
 pub struct DirectoryServer {
     pub options: Arc<MasterOptions>,
-    pub garbage_threshold: f64,
     pub preallocate: u64,
     pub topology: TopologyRef,
     pub volume_grow: VolumeGrowth,
@@ -87,7 +86,6 @@ impl DirectoryServer {
         let master_client = MasterClient::new("master", master_opts.raft.peers.clone());
         let master = DirectoryServer {
             options: master_opts.clone(),
-            garbage_threshold,
             preallocate,
             volume_grow: VolumeGrowth,
             topology: topology.clone(),
