@@ -9,7 +9,7 @@ use helyim_common::{
 };
 use helyim_proto::volume::AllocateVolumeRequest;
 use rand::Rng;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     node::{downcast_node, Node},

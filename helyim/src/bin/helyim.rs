@@ -1,7 +1,7 @@
 // remove after https://github.com/rust-lang/rust-clippy/pull/13464 fixed
 #![allow(clippy::needless_return)]
 
-use std::io::stdout;
+use std::{io::stdout, time::Duration};
 
 use clap::Parser;
 use helyim_common::args::{Command, LogOptions, Opts};
@@ -57,21 +57,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             log_init(level, &log_opts, log_prefix)?;
             master.check_raft_peers();
             info!("starting master server....");
-            start_master(master).await
+            start_master(master).await?;
         }
         Command::Volume(volume) => {
             let log_prefix = format!("volume-{}-{}", volume.ip, volume.port);
             log_init(level, &log_opts, log_prefix)?;
 
             info!("starting volume....");
-            start_volume(volume).await
+            start_volume(volume).await?;
         }
         Command::Filer(filer) => {
             let log_prefix = format!("filer-{}-{}", filer.ip, filer.port);
             log_init(level, &log_opts, log_prefix)?;
 
             info!("starting filer....");
-            start_filer(filer).await
+            start_filer(filer).await?;
         }
     }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
 }

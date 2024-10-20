@@ -48,7 +48,6 @@ pub async fn start_filer(filer_opts: FilerOptions) -> Result<(), Box<dyn std::er
     shutdown_signal().await;
     server.stop().await?;
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }
 

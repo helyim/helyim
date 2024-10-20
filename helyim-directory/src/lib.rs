@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use faststr::FastStr;
 use helyim_common::{
     args::MasterOptions,
@@ -31,6 +29,5 @@ pub async fn start_master(master_opts: MasterOptions) -> Result<(), Box<dyn std:
     shutdown_signal().await;
     directory.stop().await?;
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }

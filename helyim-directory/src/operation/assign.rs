@@ -19,7 +19,7 @@ pub struct Assignment {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssignRequest {
-    pub count: Option<u64>,
+    pub count: Option<i64>,
     pub replication: Option<FastStr>,
     pub ttl: Option<FastStr>,
     pub preallocate: Option<i64>,
@@ -79,7 +79,7 @@ pub async fn assign(server: &str, request: AssignRequest) -> Result<Assignment, 
         writable_volume_count = 0;
     }
     let request = PbAssignRequest {
-        count: request.count.unwrap_or_default(),
+        count: request.count.unwrap_or_default() as u64,
         replication: request.replication.unwrap_or_default().to_string(),
         collection: request.collection.unwrap_or_default().to_string(),
         ttl: request.ttl.unwrap_or_default().to_string(),

@@ -58,10 +58,10 @@ impl DataNode {
         public_url: FastStr,
         max_volume_count: i64,
     ) -> DataNode {
-        let url = format!("{id}:{port}");
         let node = Arc::new(NodeImpl::new(id));
         node.set_max_volume_count(max_volume_count);
 
+        let url = format!("{ip}:{port}");
         let url = FastStr::new(url);
         DataNode {
             ip,

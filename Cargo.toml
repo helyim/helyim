@@ -3,13 +3,14 @@ resolver = "2"
 members = [
     "helyim",
     "benchmark",
+    "helyim-client",
     "helyim-common",
     "helyim-directory",
     "helyim-ec",
     "helyim-filer",
     "helyim-proto",
     "helyim-store",
-    "helyim-topology", "helyim-client",
+    "helyim-topology",
 ]
 
 [workspace.package]

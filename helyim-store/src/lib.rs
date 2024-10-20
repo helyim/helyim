@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use helyim_common::{args::VolumeOptions, sys::shutdown_signal};
 
 use crate::{needle::NeedleMapType, server::VolumeServer};
@@ -21,6 +19,5 @@ pub async fn start_volume(volume_opts: VolumeOptions) -> Result<(), Box<dyn std:
     shutdown_signal().await;
     server.stop().await?;
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }

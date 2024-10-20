@@ -24,7 +24,7 @@ pub async fn assign_handler(
 ) -> Result<Json<Assignment>, TopologyError> {
     // TODO: how to handle when user requested with a negative number?
     let count = match request.count {
-        Some(n) if n > 1 => n,
+        Some(n) if n > 1 => n as u64,
         _ => 1,
     };
     let writable_volume_count = request.writable_volume_count.unwrap_or_default();
