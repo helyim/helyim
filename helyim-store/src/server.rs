@@ -493,9 +493,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
             let ecx_filename = format!("{}/{}.ecx", location.directory, base_filename);
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}/{}", location.directory, base_filename);
-                rebuilt_shard_ids.extend(
-                    rebuild_ec_files(&base_filename)?,
-                );
+                rebuilt_shard_ids.extend(rebuild_ec_files(&base_filename)?);
                 rebuild_ecx_file(&base_filename)?;
                 break;
             }

@@ -73,7 +73,7 @@ impl Store {
         shard_id: ShardId,
     ) -> Result<(), EcVolumeError> {
         for location in self.locations.iter() {
-            match location.load_ec_shard(&collection, vid, shard_id).await {
+            return match location.load_ec_shard(&collection, vid, shard_id).await {
                 Ok(_) => {
                     self.delta_volume_tx
                         .add_ec_shard(VolumeEcShardInformationMessage {
@@ -82,7 +82,7 @@ impl Store {
                             ec_index_bits: add_shard_id(0, shard_id),
                         })
                         .await;
-                    return Ok(());
+                    Ok(())
                 }
                 Err(EcVolumeError::Io(err)) => {
                     if err.kind() == ErrorKind::NotFound {
@@ -92,14 +92,14 @@ impl Store {
                         "{} load ec shard {vid}.{shard_id}, error: {err}",
                         location.directory
                     );
-                    return Err(EcVolumeError::Io(err));
+                    Err(EcVolumeError::Io(err))
                 }
                 Err(err) => {
                     error!(
                         "{} load ec shard {vid}.{shard_id}, error: {err}",
                         location.directory
                     );
-                    return Err(err);
+                    Err(err)
                 }
             }
         }

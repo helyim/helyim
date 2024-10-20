@@ -6,7 +6,7 @@ use std::{
     time::SystemTime,
 };
 
-use bytes::{ BufMut};
+use bytes::BufMut;
 use dashmap::DashMap;
 use faststr::FastStr;
 use futures::io;
