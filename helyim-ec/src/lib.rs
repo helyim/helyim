@@ -127,6 +127,5 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<(), io::Error> {
     }
 
     fs::remove_file(ecj_filename)?;
-
     Ok(())
 }

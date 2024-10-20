@@ -78,3 +78,9 @@ pub enum EcShardError {
     #[error("Only {0} shards found but {0} required")]
     Underflow(usize, usize),
 }
+
+impl From<EcShardError> for Status {
+    fn from(value: EcShardError) -> Self {
+        Status::internal(value.to_string())
+    }
+}

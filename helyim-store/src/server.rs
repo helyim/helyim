@@ -464,7 +464,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
                 // write .ecx file
                 write_sorted_file_from_index(&base_filename, ".ecx")?;
                 // write .ec00 - .ec13 files
-                write_ec_files(&base_filename).map_err(|err| Status::internal(err.to_string()))?;
+                write_ec_files(&base_filename)?;
 
                 let volume_info = VolumeInfo {
                     version: volume.version() as u32,
@@ -494,8 +494,7 @@ impl HelyimVolumeServer for StorageGrpcServer {
             if file_exists(&ecx_filename)? {
                 let base_filename = format!("{}/{}", location.directory, base_filename);
                 rebuilt_shard_ids.extend(
-                    rebuild_ec_files(&base_filename)
-                        .map_err(|err| Status::internal(err.to_string()))?,
+                    rebuild_ec_files(&base_filename)?,
                 );
                 rebuild_ecx_file(&base_filename)?;
                 break;

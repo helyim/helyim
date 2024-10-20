@@ -1,19 +1,17 @@
 use std::{
     fs,
     fs::File,
-    io::{ErrorKind, Read},
     os::unix::fs::{FileExt, OpenOptionsExt},
     sync::Arc,
     time::SystemTime,
 };
 
-use bytes::{Buf, BufMut};
+use bytes::{ BufMut};
 use dashmap::DashMap;
 use faststr::FastStr;
 use futures::io;
 use helyim_common::{
     consts::NEEDLE_ID_SIZE,
-    file::file_exists,
     types::{NeedleId, NeedleValue, VolumeId},
     version::{Version, VERSION2},
 };
@@ -169,45 +167,6 @@ impl EcVolume {
 
         let offset = self.ecj_file.metadata()?.len();
         self.ecj_file.write_all_at(&buf, offset)?;
-        Ok(())
-    }
-
-    fn rebuild_ecx_file(base_filename: &str) -> Result<(), io::Error> {
-        let ecj_filename = format!("{}.ecj", base_filename);
-        if !file_exists(&ecj_filename)? {
-            return Ok(());
-        }
-        let ecx_file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .mode(0o644)
-            .open(format!("{}.ecx", base_filename))?;
-        let metadata = ecx_file.metadata()?;
-        let ecx_filesize = metadata.len();
-
-        let mut ecj_file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .mode(0o644)
-            .open(&ecj_filename)?;
-        let mut buf = [0u8; NEEDLE_ID_SIZE as usize];
-
-        loop {
-            if let Err(err) = ecj_file.read_exact(&mut buf) {
-                if err.kind() == ErrorKind::UnexpectedEof {
-                    break;
-                }
-            }
-            let needle_id = (&buf[..]).get_u64();
-            search_needle_from_sorted_index(
-                &ecx_file,
-                ecx_filesize,
-                needle_id,
-                Some(Box::new(mark_needle_deleted)),
-            )?;
-        }
-
-        fs::remove_file(&ecj_filename)?;
         Ok(())
     }
 
