@@ -40,7 +40,7 @@ use rustix::{
     path::Arg,
     process::{getgid, getuid},
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     entry::{Attr, Entry},
@@ -444,6 +444,8 @@ impl FilerState {
         data_center: FastStr,
     ) -> Result<FilerPostResult, FilerError> {
         let boundary = parse_boundary(&extractor.headers)?;
+        debug!("parsed boundary: {boundary}");
+
         let mut multipart = Multipart::new(
             Body::from(extractor.body.clone()).into_data_stream(),
             boundary,
@@ -455,7 +457,7 @@ impl FilerState {
                 return Err(anyhow!("get nothing from multipart"));
             }
             Err(err) => {
-                error!("get multipart error: {err}");
+                error!("parse multipart error: {err}");
                 return Err(HttpError::Multer(err).into());
             }
         };
@@ -622,6 +624,8 @@ impl FilerState {
         match assign(&self.filer.current_master(), request).await {
             Ok(assign) => {
                 let url = format!("http://{}/{}/", assign.url, assign.fid);
+
+                debug!("assign fid: {url}");
                 Ok((assign.fid, FastStr::new(url)))
             }
             Err(err) => {
