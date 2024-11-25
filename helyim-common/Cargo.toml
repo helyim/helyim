@@ -24,6 +24,7 @@ hyper-util = { workspace = true, features = ["client", "client-legacy"] }
 leapfrog.workspace = true
 nom.workspace = true
 mime.workspace = true
+multer.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true
 pin-project-lite.workspace = true

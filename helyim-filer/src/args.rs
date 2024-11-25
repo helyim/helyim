@@ -7,7 +7,7 @@ pub struct FilerOptions {
     pub ip: FastStr,
     #[arg(long, default_value_t = 8888)]
     pub port: u16,
-    #[arg(long, default_value("127.0.0.1"))]
+    #[arg(long, default_value("127.0.0.1:9333"))]
     pub masters: Vec<FastStr>,
     // namespace, isolate different spaces
     #[arg(long, default_value("default"))]

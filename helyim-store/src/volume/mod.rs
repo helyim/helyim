@@ -192,7 +192,6 @@ impl Volume {
                 fs::OpenOptions::new()
                     .read(true)
                     .create(true)
-                    .truncate(true)
                     .write(true)
                     .mode(0o644)
                     .open(self.index_filename())?

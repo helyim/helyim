@@ -22,16 +22,20 @@ use helyim_common::{
     anyhow,
     file::file_name,
     http::{
-        content_range, http_error, range_header, ranges_mime_size, read_url, request, set_etag,
-        trim_trailing_slash, HttpError,
+        content_range, get_etag, http_error, range_header, ranges_mime_size, read_url, request,
+        set_etag, trim_trailing_slash, HttpError,
     },
-    operation::upload,
+    operation::{upload, UploadResult},
     time::now,
 };
 use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
 use hyper::StatusCode;
-use reqwest::multipart::{Form, Part};
+use multer::Multipart;
+use reqwest::{
+    multipart::{Form, Part},
+    Url,
+};
 use rustix::{
     path::Arg,
     process::{getgid, getuid},
@@ -43,7 +47,8 @@ use crate::{
     file_chunk::{etag, total_size, ChunkView},
     filer::{FilerError, FilerRef},
     http::extractor::{
-        DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
+        parse_boundary, DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir,
+        PostExtractor,
     },
     operation::{assign, AssignRequest},
     FilerOptions,
@@ -64,12 +69,12 @@ impl FilerState {
     ) -> Result<Response<Body>, FilerError> {
         let mut path = trim_trailing_slash(extractor.uri.path());
 
-        let mut limit = extractor.list_dir.limit;
+        let mut limit = extractor.list_dir.limit.unwrap_or(100);
         if limit == 0 {
             limit = 100;
         }
 
-        let mut last_filename = extractor.list_dir.last_file_name;
+        let mut last_filename = extractor.list_dir.last_file_name.unwrap_or_default();
         match self
             .filer
             .list_directory_entries(path, &last_filename, false, limit)
@@ -438,7 +443,12 @@ impl FilerState {
         collection: FastStr,
         data_center: FastStr,
     ) -> Result<FilerPostResult, FilerError> {
-        let part = match extractor.multipart.next_field().await {
+        let boundary = parse_boundary(&extractor.headers)?;
+        let mut multipart = Multipart::new(
+            Body::from(extractor.body.clone()).into_data_stream(),
+            boundary,
+        );
+        let part = match multipart.next_field().await {
             Ok(Some(part)) => part,
             Ok(None) => {
                 error!("get nothing from multipart");
@@ -446,7 +456,7 @@ impl FilerState {
             }
             Err(err) => {
                 error!("get multipart error: {err}");
-                return Err(HttpError::Multipart(err).into());
+                return Err(HttpError::Multer(err).into());
             }
         };
 
@@ -471,7 +481,7 @@ impl FilerState {
             ..Default::default()
         };
 
-        let part_bytes = part.bytes().await.map_err(HttpError::Multipart)?;
+        let part_bytes = part.bytes().await.map_err(HttpError::Multer)?;
         let mut part_reader = part_bytes.reader();
 
         while total_bytes_read < content_len {
@@ -719,134 +729,134 @@ pub async fn post_handler(
         return Ok(response);
     }
 
-    // let (file_id, url) = state
-    //     .assign_new_file_info(
-    //         &mut response,
-    //         &extractor,
-    //         &replication,
-    //         &collection,
-    //         &data_center,
-    //     )
-    //     .await?;
-    //
-    // if file_id.is_empty() || url.is_empty() {
-    //     error!(
-    //         "failed to allocate volume for {}, collection: {collection}, data_center: \
-    //          {data_center}",
-    //         extractor.uri
-    //     );
-    //     return Ok(response);
-    // }
-    //
-    // let mut url = Url::parse(&url).map_err(HttpError::UrlParse)?;
-    // let cm = extractor.query.cm.unwrap_or_default();
-    // if cm {
-    //     url.query_pairs_mut().append_pair("cm", "true");
-    // }
-    //
-    // let resp = match request(
-    //     &url,
-    //     extractor.method,
-    //     None,
-    //     Some(extractor.body),
-    //     Some(extractor.headers),
-    //     None,
-    // )
-    // .await
-    // {
-    //     Ok(resp) => resp,
-    //     Err(err) => {
-    //         error!(
-    //             "failed to connect to volume server: {}, error: {err}",
-    //             extractor.uri
-    //         );
-    //         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-    //         *response.body_mut() = Body::from(err.to_string());
-    //         return Ok(response);
-    //     }
-    // };
-    //
-    // let etag = get_etag(resp.headers())?;
-    // let upload: UploadResult =
-    //     serde_json::from_slice(&resp.bytes().await.map_err(HttpError::Reqwest)?)?;
-    // if !upload.error.is_empty() {
-    //     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-    //     *response.body_mut() = Body::from(upload.error);
-    //     return Ok(response);
-    // }
-    //
-    // let mut path = extractor.uri.path().to_string();
-    // if path.ends_with("/") {
-    //     if !upload.name.is_empty() {
-    //         path = format!("{path}{}", upload.name);
-    //     } else {
-    //         state
-    //             .filer
-    //             .delete_file_id_tx
-    //             .unbounded_send(file_id.clone())?;
-    //         info!("can not to write to folder: {path} without a filename");
-    //         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-    //         *response.body_mut() =
-    //             Body::from(format!("can not write to folder {path} without a filename"));
-    //         return Ok(response);
-    //     }
-    // }
-    //
-    // let mut crtime = SystemTime::now();
-    // if let Ok(Some(existing_entry)) = state.filer.find_entry(&path).await {
-    //     if existing_entry.is_directory() {
-    //         path = format!("{path}/{}", upload.name);
-    //     } else {
-    //         crtime = existing_entry.crtime;
-    //     }
-    // }
-    //
-    // let mut entry = Entry {
-    //     full_path: path.clone(),
-    //     attr: Attr {
-    //         mtime: SystemTime::now(),
-    //         crtime,
-    //         mode: 0o660,
-    //         uid: getuid().as_raw(),
-    //         gid: getgid().as_raw(),
-    //         mime: Default::default(),
-    //         replication,
-    //         collection,
-    //         ttl: extractor.query.ttl.unwrap_or_default().parse()?,
-    //         username: Default::default(),
-    //         group_names: vec![],
-    //     },
-    //     chunks: vec![FileChunk {
-    //         fid: file_id.clone(),
-    //         size: upload.size as u64,
-    //         mtime: now().as_millis() as i64,
-    //         e_tag: etag.clone(),
-    //         ..Default::default()
-    //     }],
-    // };
-    //
-    // let mime = mime_guess::from_path(&path);
-    // entry.attr.mime = FastStr::new(mime.first_or_octet_stream().type_().as_str());
-    //
-    // if let Err(err) = state.filer.create_entry(&entry).await {
-    //     state.filer.delete_chunks(&entry.chunks)?;
-    //     error!("failed to write {path} to filer server, error: {err}");
-    //     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-    //     *response.body_mut() = Body::from(err.to_string());
-    //     return Ok(response);
-    // }
-    //
-    // let reply = FilerPostResult {
-    //     name: upload.name,
-    //     size: upload.size as u32,
-    //     error: upload.error,
-    //     fid: file_id,
-    //     url: url.to_string(),
-    // };
-    //
-    // set_etag(&mut response, &etag).map_err(HttpError::InvalidHeaderValue)?;
-    // *response.status_mut() = StatusCode::CREATED;
-    // *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+    let (file_id, url) = state
+        .assign_new_file_info(
+            &mut response,
+            &extractor,
+            replication.clone(),
+            collection.clone(),
+            data_center.clone(),
+        )
+        .await?;
+
+    if file_id.is_empty() || url.is_empty() {
+        error!(
+            "failed to allocate volume for {}, collection: {collection}, data_center: \
+             {data_center}",
+            extractor.uri
+        );
+        return Ok(response);
+    }
+
+    let mut url = Url::parse(&url).map_err(HttpError::UrlParse)?;
+    let cm = extractor.query.cm.unwrap_or_default();
+    if cm {
+        url.query_pairs_mut().append_pair("cm", "true");
+    }
+
+    let resp = match request(
+        &url,
+        extractor.method,
+        None,
+        Some(extractor.body),
+        Some(extractor.headers),
+        None,
+    )
+    .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            error!(
+                "failed to connect to volume server: {}, error: {err}",
+                extractor.uri
+            );
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            *response.body_mut() = Body::from(err.to_string());
+            return Ok(response);
+        }
+    };
+
+    let etag = get_etag(resp.headers())?;
+    let upload: UploadResult =
+        serde_json::from_slice(&resp.bytes().await.map_err(HttpError::Reqwest)?)?;
+    if !upload.error.is_empty() {
+        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+        *response.body_mut() = Body::from(upload.error);
+        return Ok(response);
+    }
+
+    let mut path = extractor.uri.path().to_string();
+    if path.ends_with("/") {
+        if !upload.name.is_empty() {
+            path = format!("{path}{}", upload.name);
+        } else {
+            state
+                .filer
+                .delete_file_id_tx
+                .unbounded_send(file_id.clone())?;
+            info!("can not to write to folder: {path} without a filename");
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            *response.body_mut() =
+                Body::from(format!("can not write to folder {path} without a filename"));
+            return Ok(response);
+        }
+    }
+
+    let mut crtime = SystemTime::now();
+    if let Ok(Some(existing_entry)) = state.filer.find_entry(&path).await {
+        if existing_entry.is_directory() {
+            path = format!("{path}/{}", upload.name);
+        } else {
+            crtime = existing_entry.crtime;
+        }
+    }
+
+    let mut entry = Entry {
+        full_path: path.clone(),
+        attr: Attr {
+            mtime: SystemTime::now(),
+            crtime,
+            mode: 0o660,
+            uid: getuid().as_raw(),
+            gid: getgid().as_raw(),
+            mime: Default::default(),
+            replication,
+            collection,
+            ttl: extractor.query.ttl.unwrap_or_default().parse()?,
+            username: Default::default(),
+            group_names: vec![],
+        },
+        chunks: vec![FileChunk {
+            fid: file_id.to_string(),
+            size: upload.size as u64,
+            mtime: now().as_millis() as i64,
+            etag: etag.clone(),
+            ..Default::default()
+        }],
+    };
+
+    let mime = mime_guess::from_path(&path);
+    entry.attr.mime = FastStr::new(mime.first_or_octet_stream().type_().as_str());
+
+    if let Err(err) = state.filer.create_entry(&entry).await {
+        state.filer.delete_chunks(&entry.chunks)?;
+        error!("failed to write {path} to filer server, error: {err}");
+        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+        *response.body_mut() = Body::from(err.to_string());
+        return Ok(response);
+    }
+
+    let reply = FilerPostResult {
+        name: upload.name,
+        size: upload.size as u32,
+        error: upload.error,
+        fid: file_id.to_string(),
+        url: url.to_string(),
+    };
+
+    set_etag(&mut response, &etag).map_err(HttpError::InvalidHeaderValue)?;
+    *response.status_mut() = StatusCode::CREATED;
+    *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
     Ok(response)
 }
 

@@ -42,7 +42,7 @@ use tokio::{net::TcpListener, time::sleep};
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     args::VolumeOptions,
@@ -274,7 +274,7 @@ impl VolumeServer {
                     match response {
                         Ok(response) => {
                             if let Ok(response) = serde_json::to_string(&response) {
-                                debug!("heartbeat reply: {response}");
+                                trace!("heartbeat reply: {response}");
                             }
                             let old_leader = store.current_master.read().await.clone();
                             if !response.leader.is_empty() && response.leader != old_leader {

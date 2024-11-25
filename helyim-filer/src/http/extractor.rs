@@ -1,10 +1,11 @@
 use axum::{
-    extract::{Multipart, Query},
-    http::{HeaderMap, Method, Uri},
+    extract::Query,
+    http::{header::CONTENT_TYPE, HeaderMap, Method, Uri},
 };
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
+use helyim_common::http::HttpError;
 use serde::{Deserialize, Serialize};
 
 use crate::entry::Entry;
@@ -21,8 +22,8 @@ pub struct GetOrHeadExtractor {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListDirQuery {
-    pub limit: u32,
-    pub last_file_name: FastStr,
+    pub limit: Option<u32>,
+    pub last_file_name: Option<FastStr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -42,7 +43,7 @@ pub struct PostExtractor {
     pub method: Method,
     #[from_request(via(Query))]
     pub query: PostQuery,
-    pub multipart: Multipart,
+    pub body: Bytes,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +53,7 @@ pub struct PostQuery {
     pub data_center: Option<FastStr>,
     pub ttl: Option<FastStr>,
     pub max_mb: Option<i32>,
-    // pub cm: Option<bool>,
+    pub cm: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -74,4 +75,11 @@ pub struct DeleteExtractor {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeleteQuery {
     pub recursive: Option<bool>,
+}
+
+pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
+    match headers.get(CONTENT_TYPE) {
+        Some(content_type) => Ok(multer::parse_boundary(content_type.to_str()?)?),
+        None => Err(HttpError::Multer(multer::Error::NoBoundary)),
+    }
 }

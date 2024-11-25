@@ -126,6 +126,8 @@ impl Topology {
         let vl = self.get_volume_layout(&option.collection, option.replica_placement, option.ttl);
 
         let active_volume_count = vl.active_volume_count(option).await;
+
+        debug!("active volume count: {active_volume_count}");
         active_volume_count > 0
     }
 
@@ -134,6 +136,8 @@ impl Topology {
         count: u64,
         option: &VolumeGrowOption,
     ) -> StdResult<(FileId, u64, DataNodeRef), TopologyError> {
+        debug!("pick for write: count: {count}");
+
         let file_id = self.sequencer.next_file_id(count)?;
 
         let (volume_id, node) = {

@@ -23,6 +23,8 @@ pub enum Command {
 
 #[derive(Args, Debug, Clone)]
 pub struct LogOptions {
-    #[arg(long, default_value(""))]
+    #[arg(long, default_value("./target"))]
     pub log_path: FastStr,
+    #[arg(long)]
+    pub debug: bool,
 }

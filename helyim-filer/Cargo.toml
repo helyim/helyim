@@ -36,6 +36,7 @@ hyper-util.workspace = true
 itoa.workspace = true
 mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
+multer.workspace = true
 reqwest = { workspace = true, features = ["json", "stream", "multipart"] }
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }

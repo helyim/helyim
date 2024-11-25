@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod erasure_coding;
 #[macro_use]
 pub mod node;

@@ -55,7 +55,7 @@ pub trait FilerStore: Send + Sync {
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
-    pub delete_file_id_tx: UnboundedSender<String>,
+    pub delete_file_id_tx: UnboundedSender<FastStr>,
     pub master_client: MasterClient,
 }
 
@@ -332,7 +332,7 @@ pub enum FilerError {
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
     #[error("Try send error: {0}")]
-    TrySend(#[from] TrySendError<String>),
+    TrySend(#[from] TrySendError<FastStr>),
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
     #[error("Rustix errno: {0}")]

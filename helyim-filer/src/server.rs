@@ -100,15 +100,15 @@ pub async fn start_filer_server(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     let app = Router::new()
-        .route(
-            "/",
+        .fallback_service(
             get(get_or_head_handler)
                 .head(get_or_head_handler)
                 .post(post_handler)
                 .put(post_handler)
-                .delete(delete_handler),
+                .delete(delete_handler)
+                .fallback(default_handler)
+                .with_state(state.clone()),
         )
-        .fallback(default_handler)
         .layer((
             CompressionLayer::new(),
             DefaultBodyLimit::max(1024 * 1024),

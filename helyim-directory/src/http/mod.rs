@@ -8,6 +8,7 @@ use helyim_common::{http::FormOrJson, operation::ClusterStatus};
 use helyim_topology::{
     node::Node, volume_grow::VolumeGrowth, Topology, TopologyError, TopologyRef,
 };
+use tracing::debug;
 
 use crate::{
     operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
@@ -25,7 +26,6 @@ pub async fn assign_handler(
     State(state): State<DirectoryState>,
     FormOrJson(request): FormOrJson<AssignRequest>,
 ) -> Result<Json<Assignment>, TopologyError> {
-    // TODO: how to handle when user requested with a negative number?
     let count = match request.count {
         Some(n) if n > 1 => n as u64,
         _ => 1,
@@ -35,6 +35,7 @@ pub async fn assign_handler(
 
     if !state.topology.has_writable_volume(&option).await {
         if state.topology.free_space() <= 0 {
+            debug!("no free volumes");
             return Err(TopologyError::NoFreeSpace("no free volumes".to_string()));
         }
         state

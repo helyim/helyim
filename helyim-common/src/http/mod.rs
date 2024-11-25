@@ -116,6 +116,8 @@ pub enum HttpError {
     Reqwest(#[from] reqwest::Error),
     #[error("Multipart error: {0}")]
     Multipart(#[from] MultipartError),
+    #[error("Muter error: {0}")]
+    Multer(#[from] multer::Error),
 
     #[error("InvalidHeaderName: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
