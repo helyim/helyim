@@ -10,13 +10,13 @@ pub struct FilerOptions {
     #[arg(long, default_value("127.0.0.1:9333"))]
     pub masters: Vec<FastStr>,
     // namespace, isolate different spaces
-    #[arg(long, default_value("default"))]
+    #[arg(long, default_value(""))]
     pub collection: FastStr,
     // default replication if not specified
     #[arg(long, default_value("000"))]
     pub default_replication: FastStr,
     // whether to redirect to volume server
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false)]
     pub redirect_on_read: bool,
     // default data center
     #[arg(long, default_value(""))]

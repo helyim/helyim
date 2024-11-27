@@ -18,6 +18,7 @@ use helyim_common::{
     file::{file_name, join_path},
     http::HttpError,
     parser::ParseError,
+    ttl::TtlError,
 };
 use moka::sync::Cache;
 use serde_json::json;
@@ -56,16 +57,15 @@ pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
     pub delete_file_id_tx: UnboundedSender<FastStr>,
-    pub master_client: MasterClient,
+    pub master_client: Arc<MasterClient>,
 }
 
 impl Filer {
-    pub fn new(masters: Vec<FastStr>) -> Result<FilerRef, FilerError> {
+    pub fn new(master_client: Arc<MasterClient>) -> Result<FilerRef, FilerError> {
         let directories = moka::sync::CacheBuilder::new(1000)
             .time_to_live(Duration::from_secs(60 * 60))
             .name("filer-directory-cache")
             .build();
-        let master_client = MasterClient::new("filer", masters);
         let (delete_file_id_tx, delete_file_id_rx) = unbounded();
 
         let filer = Arc::new(Self {
@@ -89,10 +89,6 @@ impl Filer {
             Some(store) => Ok(store.as_ref()),
             None => Err(FilerError::StoreNotInitialized),
         }
-    }
-
-    pub async fn keep_connected_to_master(&self) -> Result<(), FilerError> {
-        Ok(self.master_client.try_all_masters().await?)
     }
 
     pub async fn create_entry(&self, entry: &Entry) -> Result<(), FilerError> {
@@ -335,6 +331,8 @@ pub enum FilerError {
     TrySend(#[from] TrySendError<FastStr>),
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
     #[error("Rustix errno: {0}")]
     Errno(#[from] rustix::io::Errno),
     #[error("Parse int error: {0}")]

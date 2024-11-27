@@ -1,11 +1,10 @@
 use axum::{
     extract::Query,
-    http::{header::CONTENT_TYPE, HeaderMap, Method, Uri},
+    http::{HeaderMap, Method, Uri},
 };
 use axum_macros::FromRequest;
 use bytes::Bytes;
 use faststr::FastStr;
-use helyim_common::http::HttpError;
 use serde::{Deserialize, Serialize};
 
 use crate::entry::Entry;
@@ -75,11 +74,4 @@ pub struct DeleteExtractor {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeleteQuery {
     pub recursive: Option<bool>,
-}
-
-pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
-    match headers.get(CONTENT_TYPE) {
-        Some(content_type) => Ok(multer::parse_boundary(content_type.to_str()?)?),
-        None => Err(HttpError::Multer(multer::Error::NoBoundary)),
-    }
 }

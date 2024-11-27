@@ -38,7 +38,7 @@ impl LocationMap {
     pub fn lookup_file_id(&self, file_id: &str) -> Result<String, ClientError> {
         let (_, (vid, file_id)) = parse_vid_fid(file_id).map_err(Into::<ParseError>::into)?;
         let url = self.lookup_volume_server_url(vid)?;
-        Ok(format!("http://{url}/{file_id}"))
+        Ok(format!("http://{url}/{vid},{file_id}"))
     }
 
     pub fn lookup_volume_server(&self, file_id: &str) -> Result<FastStr, ClientError> {

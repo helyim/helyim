@@ -22,11 +22,12 @@ use helyim_common::{
     anyhow,
     file::file_name,
     http::{
-        content_range, get_etag, http_error, range_header, ranges_mime_size, read_url, request,
-        set_etag, trim_trailing_slash, HttpError,
+        content_range, get_etag, http_error, parse_boundary, range_header, ranges_mime_size,
+        read_url, request, set_etag, trim_trailing_slash, HttpError,
     },
     operation::{upload, UploadResult},
     time::now,
+    ttl::Ttl,
 };
 use helyim_proto::filer::FileChunk;
 use http_range::HttpRange;
@@ -47,8 +48,7 @@ use crate::{
     file_chunk::{etag, total_size, ChunkView},
     filer::{FilerError, FilerRef},
     http::extractor::{
-        parse_boundary, DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir,
-        PostExtractor,
+        DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
     },
     operation::{assign, AssignRequest},
     FilerOptions,
@@ -125,7 +125,7 @@ impl FilerState {
         extractor: GetOrHeadExtractor,
         response: &mut Response<Body>,
         entry: &Entry,
-    ) -> Result<(), FilerError> {
+    ) -> Result<(), HttpError> {
         let file_id = &entry.chunks[0].fid;
         let mut url = match self.filer.master_client.lookup_file_id(file_id) {
             Ok(url) => url,
@@ -159,12 +159,12 @@ impl FilerState {
             Ok(resp) => {
                 *response.status_mut() = resp.status();
                 *response.headers_mut() = resp.headers().clone();
-                *response.body_mut() = Body::from(resp.bytes().await.map_err(HttpError::Reqwest)?);
+                *response.body_mut() = Body::from(resp.bytes().await?);
                 Ok(())
             }
             Err(err) => {
                 error!("failing to connect to volume server: {url}, error: {err}");
-                Err(FilerError::Http(err))
+                Err(err)
             }
         }
     }
@@ -623,9 +623,9 @@ impl FilerState {
         };
         match assign(&self.filer.current_master(), request).await {
             Ok(assign) => {
-                let url = format!("http://{}/{}/", assign.url, assign.fid);
+                let url = format!("http://{}/{}", assign.url, assign.fid);
 
-                debug!("assign fid: {url}");
+                debug!("assign file id: {url}");
                 Ok((assign.fid, FastStr::new(url)))
             }
             Err(err) => {
@@ -815,6 +815,7 @@ pub async fn post_handler(
         }
     }
 
+    let ttl = Ttl::new(&extractor.query.ttl.unwrap_or_default())?;
     let mut entry = Entry {
         full_path: path.clone(),
         attr: Attr {
@@ -826,7 +827,7 @@ pub async fn post_handler(
             mime: Default::default(),
             replication,
             collection,
-            ttl: extractor.query.ttl.unwrap_or_default().parse()?,
+            ttl: ttl.minutes() as i32 * 60,
             username: Default::default(),
             group_names: vec![],
         },

@@ -14,7 +14,7 @@ use crate::{
     ttl::Ttl,
 };
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UploadResult {
     pub name: String,
     pub size: usize,

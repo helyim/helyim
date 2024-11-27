@@ -23,6 +23,7 @@ use reqwest::{
     multipart::{Form, Part},
     Body, Response,
 };
+use tracing::debug;
 use url::Url;
 
 use crate::{anyhow, images::FAVICON_ICO};
@@ -67,6 +68,9 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         Some(params) => Url::parse_with_params(url.as_ref(), params)?,
         None => Url::parse(url.as_ref())?,
     };
+
+    debug!("http request -> method: {method}, url: {}", url.as_str());
+
     let mut builder = HTTP_CLIENT.request(method, url);
     if let Some(body) = body {
         builder = builder.body(body);
@@ -250,5 +254,12 @@ pub fn trim_trailing_slash(path: &str) -> &str {
         &path[..path.len() - 1]
     } else {
         path
+    }
+}
+
+pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
+    match headers.get(CONTENT_TYPE) {
+        Some(content_type) => Ok(multer::parse_boundary(content_type.to_str()?)?),
+        None => Err(HttpError::Multer(multer::Error::NoBoundary)),
     }
 }

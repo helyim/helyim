@@ -1,11 +1,12 @@
 use std::{
     collections::HashMap, net::SocketAddr, path::MAIN_SEPARATOR, pin::Pin,
-    result::Result as StdResult, time::Duration,
+    result::Result as StdResult, sync::Arc, time::Duration,
 };
 
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
+use helyim_client::MasterClient;
 use helyim_common::{grpc_port, http::default_handler, sys::exit, time::timestamp_to_time};
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
@@ -42,7 +43,9 @@ impl FilerServer {
     pub async fn new(filer_opts: FilerOptions) -> Result<FilerServer, FilerError> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let filer = Filer::new(filer_opts.masters.clone())?;
+        let master_client = Arc::new(MasterClient::new("filer", filer_opts.masters.clone()));
+
+        let filer = Filer::new(master_client.clone())?;
         let filer_server = FilerServer {
             options: filer_opts.clone(),
             filer: filer.clone(),
@@ -90,6 +93,11 @@ impl FilerServer {
             addr,
             shutdown_rx,
         ));
+
+        let master_client = self.filer.master_client.clone();
+        tokio::spawn(async move {
+            master_client.keep_connected_to_master().await;
+        });
         Ok(())
     }
 }
@@ -111,7 +119,7 @@ pub async fn start_filer_server(
         )
         .layer((
             CompressionLayer::new(),
-            DefaultBodyLimit::max(1024 * 1024),
+            DefaultBodyLimit::max(30 * 1024 * 1024 * 1024),
             TimeoutLayer::new(Duration::from_secs(10)),
         ))
         .with_state(state);

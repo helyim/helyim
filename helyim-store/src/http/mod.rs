@@ -9,7 +9,7 @@ use axum::{
     http::{
         header::{
             HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
-            CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+            CONTENT_LENGTH, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
         },
         Response, StatusCode,
     },
@@ -22,7 +22,7 @@ use helyim_common::{
     anyhow,
     consts::PAIR_NAME_PREFIX,
     crc, http,
-    http::HTTP_DATE_FORMAT,
+    http::{parse_boundary, HTTP_DATE_FORMAT},
     operation::{ParseUpload, UploadResult},
     parser::parse_url_path,
     time::now,
@@ -34,7 +34,7 @@ use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
 use serde_json::{json, Value};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     http::extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
@@ -299,21 +299,6 @@ async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle, Vo
     Ok(needle)
 }
 
-fn get_boundary(extractor: &PostExtractor) -> Result<String, VolumeError> {
-    const BOUNDARY: &str = "boundary=";
-
-    match extractor.headers.get(CONTENT_TYPE) {
-        Some(content_type) => {
-            let ct = content_type.to_str()?;
-            match ct.find(BOUNDARY) {
-                Some(idx) => Ok(ct[idx + BOUNDARY.len()..].to_string()),
-                None => Err(anyhow!("no boundary")),
-            }
-        }
-        None => Err(anyhow!("no content type")),
-    }
-}
-
 async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload, VolumeError> {
     let mut pair_map = HashMap::new();
     for (header_name, header_value) in extractor.headers.iter() {
@@ -325,7 +310,8 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload, VolumeEr
         }
     }
 
-    let boundary = get_boundary(extractor)?;
+    let boundary = parse_boundary(&extractor.headers)?;
+    debug!("parsed boundary: {boundary}");
 
     let stream = once(async move { StdResult::<Bytes, Infallible>::Ok(extractor.body.clone()) });
     let mut mpart = Multipart::new(stream, boundary);
