@@ -293,7 +293,7 @@ impl Store {
         preallocate: u64,
     ) -> Result<(), VolumeError> {
         let rp = ReplicaPlacement::new(&replica_placement)?;
-        let ttl = Ttl::new(&ttl)?;
+        let ttl = Ttl::new(&ttl).map_err(NeedleError::Ttl)?;
 
         let collection = FastStr::new(collection);
         self.do_add_volume(

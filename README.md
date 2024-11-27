@@ -76,20 +76,20 @@ You can view the cluster status by accessing `http://localhost:9333/cluster/stat
 
 ```bash
 # start master1
-cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9333 \
+cargo run --bin helyim -- master --ip 127.0.0.1 --port 9333 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
       --peers 127.0.0.1:9337
       
       
 # start master2
-cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9335 \
+cargo run --bin helyim -- master --ip 127.0.0.1 --port 9335 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
       --peers 127.0.0.1:9337
       
 # start master3
-cargo run --release --bin helyim -- master --ip 127.0.0.1 --port 9337 \
+cargo run --bin helyim -- master --ip 127.0.0.1 --port 9337 \
       --peers 127.0.0.1:9333 \
       --peers 127.0.0.1:9335 \
       --peers 127.0.0.1:9337

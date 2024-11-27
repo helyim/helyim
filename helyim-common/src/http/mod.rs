@@ -68,7 +68,6 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         Some(params) => Url::parse_with_params(url.as_ref(), params)?,
         None => Url::parse(url.as_ref())?,
     };
-
     debug!("http request -> method: {method}, url: {}", url.as_str());
 
     let mut builder = HTTP_CLIENT.request(method, url);
@@ -82,7 +81,14 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         builder = builder.multipart(multipart);
     }
 
-    Ok(builder.send().await?)
+    let resp = builder.send().await?;
+    debug!(
+        "http response -> url: {}, status: {}",
+        resp.url().as_str(),
+        resp.status()
+    );
+
+    Ok(resp)
 }
 
 pub struct FormOrJson<T>(pub T);
@@ -259,7 +265,12 @@ pub fn trim_trailing_slash(path: &str) -> &str {
 
 pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
     match headers.get(CONTENT_TYPE) {
-        Some(content_type) => Ok(multer::parse_boundary(content_type.to_str()?)?),
+        Some(content_type) => {
+            let boundary = multer::parse_boundary(content_type.to_str()?)?;
+            debug!("parsed boundary: {boundary}");
+
+            Ok(boundary)
+        }
         None => Err(HttpError::Multer(multer::Error::NoBoundary)),
     }
 }

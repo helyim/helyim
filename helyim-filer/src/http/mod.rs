@@ -444,7 +444,6 @@ impl FilerState {
         data_center: FastStr,
     ) -> Result<FilerPostResult, FilerError> {
         let boundary = parse_boundary(&extractor.headers)?;
-        debug!("parsed boundary: {boundary}");
 
         let mut multipart = Multipart::new(
             Body::from(extractor.body.clone()).into_data_stream(),
@@ -784,12 +783,16 @@ pub async fn post_handler(
     let upload: UploadResult =
         serde_json::from_slice(&resp.bytes().await.map_err(HttpError::Reqwest)?)?;
     if !upload.error.is_empty() {
+        error!("filer upload error: {}", upload.error);
+
         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         *response.body_mut() = Body::from(upload.error);
         return Ok(response);
     }
 
     let mut path = extractor.uri.path().to_string();
+    debug!("upload file path: {path}");
+
     if path.ends_with("/") {
         if !upload.name.is_empty() {
             path = format!("{path}{}", upload.name);

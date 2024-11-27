@@ -22,7 +22,7 @@ use helyim_common::{
     anyhow,
     consts::PAIR_NAME_PREFIX,
     crc, http,
-    http::{parse_boundary, HTTP_DATE_FORMAT},
+    http::{parse_boundary, HttpError, HTTP_DATE_FORMAT},
     operation::{ParseUpload, UploadResult},
     parser::parse_url_path,
     time::now,
@@ -172,6 +172,8 @@ pub async fn post_handler(
 
     let size =
         replicate_write(&state, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
+    debug!("written needle size: {size}, is_replicate: {is_replicate}");
+
     let mut upload = UploadResult {
         size,
         ..Default::default()
@@ -253,6 +255,10 @@ async fn replicate_write(
 
 async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle, VolumeError> {
     let mut parse_upload = parse_upload(extractor).await?;
+    debug!(
+        "parsed upload file -> name: {}, mime_type: {}, is_chunked_file: {}",
+        parse_upload.filename, parse_upload.mime_type, parse_upload.is_chunked_file
+    );
 
     let mut needle = Needle {
         data: Bytes::from(parse_upload.data),
@@ -261,7 +267,8 @@ async fn new_needle_from_request(extractor: &PostExtractor) -> Result<Needle, Vo
 
     if !parse_upload.pair_map.is_empty() {
         needle.set_has_pairs();
-        needle.pairs = Bytes::from(serde_json::to_vec(&parse_upload.pair_map)?);
+        needle.pairs =
+            Bytes::from(serde_json::to_vec(&parse_upload.pair_map).map_err(HttpError::SerdeJson)?);
     }
 
     if !parse_upload.filename.is_empty() {
@@ -311,7 +318,6 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload, VolumeEr
     }
 
     let boundary = parse_boundary(&extractor.headers)?;
-    debug!("parsed boundary: {boundary}");
 
     let stream = once(async move { StdResult::<Bytes, Infallible>::Ok(extractor.body.clone()) });
     let mut mpart = Multipart::new(stream, boundary);
@@ -329,7 +335,7 @@ async fn parse_upload(extractor: &PostExtractor) -> Result<ParseUpload, VolumeEr
                     post_mtype.push('/');
                     post_mtype.push_str(content_type.subtype().as_str());
                 }
-                data.extend(field.bytes().await?);
+                data.extend(field.bytes().await.map_err(HttpError::Multer)?);
                 break;
             }
         }
@@ -419,13 +425,16 @@ pub async fn get_or_head_handler(
         let last_modified = datetime.format(HTTP_DATE_FORMAT).to_string();
         response.headers_mut().insert(
             LAST_MODIFIED,
-            HeaderValue::from_str(last_modified.as_str())?,
+            HeaderValue::from_str(last_modified.as_str()).map_err(HttpError::InvalidHeaderValue)?,
         );
 
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if !since.is_empty() {
-                let since = DateTime::parse_from_str(since.to_str()?, HTTP_DATE_FORMAT)?
-                    .with_timezone(&Utc);
+                let since = DateTime::parse_from_str(
+                    since.to_str().map_err(HttpError::ToStr)?,
+                    HTTP_DATE_FORMAT,
+                )?
+                .with_timezone(&Utc);
                 if since.timestamp() <= needle.last_modified as i64 {
                     *response.status_mut() = StatusCode::NOT_MODIFIED;
                     return Ok(response);
@@ -441,19 +450,21 @@ pub async fn get_or_head_handler(
             return Ok(response);
         }
     }
-    response
-        .headers_mut()
-        .insert(ETAG, HeaderValue::from_str(etag.as_str())?);
+    response.headers_mut().insert(
+        ETAG,
+        HeaderValue::from_str(etag.as_str()).map_err(HttpError::InvalidHeaderValue)?,
+    );
 
     if needle.has_pairs() {
         // only accept string type value
-        let pairs: Value = serde_json::from_slice(&needle.pairs)?;
+        let pairs: Value = serde_json::from_slice(&needle.pairs).map_err(HttpError::SerdeJson)?;
         if let Some(map) = pairs.as_object() {
             for (k, v) in map {
                 if let Some(value) = v.as_str() {
-                    response
-                        .headers_mut()
-                        .insert(HeaderName::from_str(k)?, HeaderValue::from_str(value)?);
+                    response.headers_mut().insert(
+                        HeaderName::from_str(k).map_err(HttpError::InvalidHeaderName)?,
+                        HeaderValue::from_str(value).map_err(HttpError::InvalidHeaderValue)?,
+                    );
                 }
             }
         }
@@ -462,7 +473,7 @@ pub async fn get_or_head_handler(
     if needle.is_gzipped() {
         match extractor.headers.get(ACCEPT_ENCODING) {
             Some(value) => {
-                if value.to_str()?.contains("gzip") {
+                if value.to_str().map_err(HttpError::ToStr)?.contains("gzip") {
                     response
                         .headers_mut()
                         .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
