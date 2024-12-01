@@ -27,7 +27,7 @@ use helyim_common::{
         ranges_mime_size, read_url, request, set_etag, trim_trailing_slash, HttpError,
     },
     operation::{upload, UploadResult},
-    parser::ParseError,
+    parser::parse_int,
     time::now,
     ttl::Ttl,
 };
@@ -398,9 +398,7 @@ impl FilerState {
         let mut content_len = 0;
 
         if let Some(len) = extractor.headers.get(CONTENT_LENGTH) {
-            content_len = header_value_str(len)?
-                .parse()
-                .map_err(ParseError::ParseInt)?;
+            content_len = parse_int::<i32>(header_value_str(len)?)?;
             if content_len <= chunk_size {
                 info!("content-length: {content_len} is less than the chunk size: {chunk_size}");
                 return Ok(false);
@@ -583,7 +581,7 @@ impl FilerState {
 
         let now = SystemTime::now();
         let ttl = match &extractor.query.ttl {
-            Some(ttl) => ttl.parse().map_err(ParseError::ParseInt)?,
+            Some(ttl) => parse_int(ttl)?,
             None => 0,
         };
         let entry = Entry {

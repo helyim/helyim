@@ -1,4 +1,9 @@
-use std::{fmt::Debug, net::AddrParseError, num::ParseIntError, path::Path};
+use std::{
+    fmt::Debug,
+    net::{AddrParseError, SocketAddr},
+    num::ParseIntError,
+    path::Path,
+};
 
 use nom::{
     branch::alt,
@@ -77,6 +82,17 @@ impl From<Err<Error<&str>>> for ParseError {
     fn from(value: Err<Error<&str>>) -> Self {
         Self::String(value.to_string())
     }
+}
+
+pub fn parse_int<I: std::str::FromStr>(num: &str) -> Result<I, ParseError>
+where
+    ParseError: From<<I as std::str::FromStr>::Err>,
+{
+    Ok(num.parse::<I>()?)
+}
+
+pub fn parse_addr(addr: &str) -> Result<SocketAddr, ParseError> {
+    Ok(addr.parse()?)
 }
 
 #[cfg(test)]

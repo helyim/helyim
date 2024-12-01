@@ -9,7 +9,7 @@ use futures::future::join_all;
 use helyim_common::{
     anyhow,
     consts::DATA_FILE_SUFFIX,
-    parser::ParseError,
+    parser::parse_int,
     ttl::Ttl,
     types::{ReplicaPlacement, VolumeId},
 };
@@ -129,7 +129,7 @@ fn parse_volume_id_from_path(path: &Path) -> Result<(VolumeId, &str), VolumeErro
                     None => (input, left),
                 },
             )?;
-            return Ok((id.parse().map_err(ParseError::ParseInt)?, collection));
+            return Ok((parse_int(id)?, collection));
         }
     }
     Err(anyhow!(

@@ -8,7 +8,11 @@ use faststr::FastStr;
 use futures::Stream;
 use helyim_client::MasterClient;
 use helyim_common::{
-    grpc_port, http::default_handler, parser::ParseError, sys::exit, time::timestamp_to_time,
+    grpc_port,
+    http::default_handler,
+    parser::{parse_addr, ParseError},
+    sys::exit,
+    time::timestamp_to_time,
 };
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
@@ -53,9 +57,7 @@ impl FilerServer {
             filer: filer.clone(),
             shutdown,
         };
-        let addr = format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port))
-            .parse()
-            .map_err(ParseError::AddrParse)?;
+        let addr = parse_addr(&format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port)))?;
 
         tokio::spawn(async move {
             info!("filer server starting up. binding addr: {addr}");

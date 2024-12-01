@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dashmap::{mapref::one::Ref, DashMap};
 use faststr::FastStr;
 use helyim_common::{
-    parser::{parse_vid_fid, ParseError},
+    parser::{parse_int, parse_vid_fid, ParseError},
     types::VolumeId,
 };
 use rand::Rng;
@@ -23,7 +23,7 @@ pub struct LocationMap {
 
 impl LocationMap {
     pub fn lookup_volume_server_url(&self, vid: &str) -> Result<FastStr, ClientError> {
-        let vid = vid.parse().map_err(ParseError::ParseInt)?;
+        let vid = parse_int::<VolumeId>(vid)?;
         let locations = self.get_locations_by_vid(vid);
         if let Some(locations) = locations {
             if !locations.is_empty() {

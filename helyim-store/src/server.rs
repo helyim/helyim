@@ -12,7 +12,7 @@ use helyim_common::{
     grpc_port,
     http::{default_handler, favicon_handler},
     operation::list_master,
-    parser::ParseError,
+    parser::parse_addr,
     sys::exit,
     version::Version,
 };
@@ -90,9 +90,7 @@ impl VolumeServer {
         let (delta_volume_tx, delta_volume_rx) = delta_volume_channel();
         let store = Arc::new(Store::new(options.clone(), needle_map_type, delta_volume_tx).await?);
 
-        let addr = format!("{}:{}", options.ip, grpc_port(options.port))
-            .parse()
-            .map_err(ParseError::AddrParse)?;
+        let addr = parse_addr(&format!("{}:{}", options.ip, grpc_port(options.port)))?;
 
         // get leader from master
         let cluster_status = list_master(&options.master_server).await?;
@@ -154,9 +152,7 @@ impl VolumeServer {
             looker: Arc::new(Looker::new()),
         };
         // http server
-        let addr = format!("{}:{}", self.options.ip, self.options.port)
-            .parse()
-            .map_err(ParseError::AddrParse)?;
+        let addr = parse_addr(&format!("{}:{}", self.options.ip, self.options.port))?;
         let shutdown_rx = self.shutdown.new_receiver();
 
         tokio::spawn(start_volume_server(state, addr, shutdown_rx));

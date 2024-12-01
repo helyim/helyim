@@ -1,5 +1,3 @@
-use std::net::AddrParseError;
-
 use helyim_common::parser::ParseError;
 use helyim_topology::raft::types::RaftError;
 
@@ -9,8 +7,6 @@ pub enum DirectoryError {
     Raft(#[from] RaftError),
     #[error("Broadcast send: {0}")]
     BroadcastSend(#[from] async_broadcast::SendError<()>),
-    #[error("AddrParse error: {0}")]
-    AddrParse(#[from] AddrParseError),
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
 }

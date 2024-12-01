@@ -20,7 +20,7 @@ use helyim_common::{
         TTL_BYTES_LENGTH,
     },
     crc,
-    parser::ParseError,
+    parser::{parse_int, ParseError},
     ttl::{Ttl, TtlError},
     types::{Cookie, NeedleId, Offset, Size, VolumeId},
     version::{Version, CURRENT_VERSION, VERSION2},
@@ -112,7 +112,7 @@ impl Needle {
         self.id = key;
         self.cookie = cookie;
         if !delta.is_empty() {
-            let id_delta: u64 = delta.parse().map_err(ParseError::ParseInt)?;
+            let id_delta: u64 = parse_int(delta)?;
             self.id += id_delta;
         }
 
