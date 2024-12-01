@@ -4,7 +4,7 @@ use bytes::Bytes;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart::{Form, Part},
-    Method,
+    Method, Response,
 };
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -20,6 +20,14 @@ pub struct UploadResult {
     pub size: usize,
     pub error: String,
     pub etag: String,
+}
+
+impl UploadResult {
+    pub async fn from_response(resp: Response) -> Result<Self, HttpError> {
+        let data = resp.bytes().await?;
+        let upload = serde_json::from_slice(&data)?;
+        Ok(upload)
+    }
 }
 
 pub struct ParseUpload {

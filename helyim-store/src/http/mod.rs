@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap, convert::Infallible, io::Read, result::Result as StdResult, str::FromStr,
-    sync::Arc,
+    collections::HashMap, convert::Infallible, result::Result as StdResult, str::FromStr, sync::Arc,
 };
 
 use axum::{
@@ -20,17 +19,17 @@ use chrono::{DateTime, Utc};
 use futures::stream::once;
 use helyim_common::{
     anyhow,
+    compression::ungzip,
     consts::PAIR_NAME_PREFIX,
     crc, http,
-    http::{parse_boundary, HttpError, HTTP_DATE_FORMAT},
+    http::{header_value_str, parse_boundary, HttpError, HTTP_DATE_FORMAT},
     operation::{ParseUpload, UploadResult},
-    parser::parse_url_path,
+    parser::{parse_ext, parse_url_path},
     time::now,
     ttl::Ttl,
     types::VolumeId,
 };
 use helyim_topology::volume::VolumeInfo;
-use libflate::gzip::Decoder;
 use mime_guess::mime;
 use multer::Multipart;
 use serde_json::{json, Value};
@@ -384,7 +383,9 @@ pub async fn get_or_head_handler(
     State(state): State<StorageState>,
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>, VolumeError> {
-    let (vid, fid, _filename, _ext) = parse_url_path(extractor.uri.path())?;
+    let (vid, fid, filename, ext) = parse_url_path(extractor.uri.path())?;
+    let mut filename = filename.to_string();
+    let mut ext = ext.to_string();
 
     let mut response = Response::new(Body::empty());
 
@@ -430,11 +431,8 @@ pub async fn get_or_head_handler(
 
         if let Some(since) = extractor.headers.get(IF_MODIFIED_SINCE) {
             if !since.is_empty() {
-                let since = DateTime::parse_from_str(
-                    since.to_str().map_err(HttpError::ToStr)?,
-                    HTTP_DATE_FORMAT,
-                )?
-                .with_timezone(&Utc);
+                let since = DateTime::parse_from_str(header_value_str(since)?, HTTP_DATE_FORMAT)?
+                    .with_timezone(&Utc);
                 if since.timestamp() <= needle.last_modified as i64 {
                     *response.status_mut() = StatusCode::NOT_MODIFIED;
                     return Ok(response);
@@ -470,22 +468,25 @@ pub async fn get_or_head_handler(
         }
     }
 
-    if needle.is_gzipped() {
+    if needle.name_size > 0 && filename.is_empty() {
+        filename = String::from_utf8(needle.name.to_vec())?;
+
+        if ext.is_empty() {
+            ext = parse_ext(&filename);
+        }
+    }
+
+    if ext != ".gz" && needle.is_gzipped() {
         match extractor.headers.get(ACCEPT_ENCODING) {
             Some(value) => {
-                if value.to_str().map_err(HttpError::ToStr)?.contains("gzip") {
+                if header_value_str(value)?.contains("gzip") {
                     response
                         .headers_mut()
                         .insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
                 }
             }
             None => {
-                let mut decoded = Vec::new();
-                {
-                    let mut decoder = Decoder::new(&needle.data[..])?;
-                    decoder.read_to_end(&mut decoded)?;
-                }
-                needle.data = Bytes::from(decoded);
+                needle.data = Bytes::from(ungzip(&needle.data)?);
             }
         }
     }

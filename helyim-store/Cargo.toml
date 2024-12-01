@@ -33,7 +33,6 @@ hyper = { workspace = true, features = ["full"] }
 indexmap.workspace = true
 kanal.workspace = true
 leapfrog.workspace = true
-libflate.workspace = true
 mime_guess.workspace = true
 moka = { workspace = true, features = ["sync"] }
 multer.workspace = true

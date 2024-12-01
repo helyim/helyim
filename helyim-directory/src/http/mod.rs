@@ -269,7 +269,6 @@ mod tests {
         let body = body.collect().await.unwrap().to_bytes();
         let res = hyper::Response::from_parts(parts, body);
 
-        println!("{:?}", res);
         serde_json::from_slice::<T>(res.body()).unwrap()
     }
 }

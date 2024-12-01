@@ -75,6 +75,9 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         builder = builder.body(body);
     }
     if let Some(headers) = headers {
+        for (name, value) in headers.iter() {
+            debug!("header -> name: {name}, value: {}", value.to_str()?);
+        }
         builder = builder.headers(headers);
     }
     if let Some(multipart) = multipart {
@@ -87,6 +90,9 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         resp.url().as_str(),
         resp.status()
     );
+    for (name, value) in resp.headers().iter() {
+        debug!("header -> name: {name}, value: {}", value.to_str()?);
+    }
 
     Ok(resp)
 }
@@ -273,4 +279,8 @@ pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
         }
         None => Err(HttpError::Multer(multer::Error::NoBoundary)),
     }
+}
+
+pub fn header_value_str(value: &HeaderValue) -> Result<&str, HttpError> {
+    Ok(value.to_str()?)
 }

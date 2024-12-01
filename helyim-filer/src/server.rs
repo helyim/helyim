@@ -7,7 +7,9 @@ use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
 use helyim_client::MasterClient;
-use helyim_common::{grpc_port, http::default_handler, sys::exit, time::timestamp_to_time};
+use helyim_common::{
+    grpc_port, http::default_handler, parser::ParseError, sys::exit, time::timestamp_to_time,
+};
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
@@ -51,7 +53,9 @@ impl FilerServer {
             filer: filer.clone(),
             shutdown,
         };
-        let addr = format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port)).parse()?;
+        let addr = format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port))
+            .parse()
+            .map_err(ParseError::AddrParse)?;
 
         tokio::spawn(async move {
             info!("filer server starting up. binding addr: {addr}");
@@ -79,7 +83,7 @@ impl FilerServer {
         Ok(())
     }
 
-    pub async fn start(&mut self) -> Result<(), FilerError> {
+    pub async fn start(&mut self) -> Result<(), ParseError> {
         // http server
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();

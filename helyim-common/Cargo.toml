@@ -22,6 +22,7 @@ http-range.workspace = true
 hyper.workspace = true
 hyper-util = { workspace = true, features = ["client", "client-legacy"] }
 leapfrog.workspace = true
+libflate.workspace = true
 nom.workspace = true
 mime.workspace = true
 multer.workspace = true

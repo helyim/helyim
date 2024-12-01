@@ -11,6 +11,7 @@ pub mod operation;
 
 pub mod parser;
 
+pub mod compression;
 pub mod sequence;
 pub mod sys;
 pub mod time;

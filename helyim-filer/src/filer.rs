@@ -1,6 +1,4 @@
 use std::{
-    net::AddrParseError,
-    num::ParseIntError,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -24,7 +22,7 @@ use moka::sync::Cache;
 use serde_json::json;
 use tokio::task::JoinError;
 use tonic::Status;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     deletion::loop_processing_deletion,
@@ -103,7 +101,7 @@ impl Filer {
             let dir_path = join_path(&dir_parts, i);
             let dir_entry = match self.get_directory(&dir_path) {
                 Some(dir) => {
-                    info!("find cached directory: {}", dir_path);
+                    debug!("find cached directory: {}", dir_path);
                     Some(dir)
                 }
                 None => {
@@ -156,17 +154,25 @@ impl Filer {
 
         let old_entry = self.find_entry(&entry.full_path).await?;
         match old_entry {
-            Some(ref old_entry) => {
-                if let Err(err) = self.update_entry(Some(old_entry), entry).await {
+            Some(ref old_entry) => match self.update_entry(Some(old_entry), entry).await {
+                Ok(_) => {
+                    debug!("updated entry: {}", entry.full_path);
+                }
+                Err(err) => {
                     error!("update entry: {}, {err}", entry.full_path);
                     return Err(err);
                 }
-            }
+            },
             None => {
                 let store = self.filer_store()?;
-                if let Err(err) = store.insert_entry(entry).await {
-                    error!("insert entry: {}, {err}", entry.full_path);
-                    return Err(err);
+                match store.insert_entry(entry).await {
+                    Ok(_) => {
+                        debug!("inserted entry: {}", entry.full_path);
+                    }
+                    Err(err) => {
+                        error!("insert entry: {}, {err}", entry.full_path);
+                        return Err(err);
+                    }
                 }
             }
         }
@@ -337,16 +343,9 @@ pub enum FilerError {
     Errno(#[from] rustix::io::Errno),
     #[error("Parse int error: {0}")]
     Parse(#[from] ParseError),
-    #[error("AddrParse error: {0}")]
-    AddrParse(#[from] AddrParseError),
-    #[error("ParseInt error: {0}")]
-    ParseInt(#[from] ParseIntError),
 
     #[error("Tokio task join error: {0}")]
     TokioJoin(#[from] JoinError),
-
-    #[error("Serde Json error: {0}")]
-    SerdeJson(#[from] serde_json::Error),
 
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),

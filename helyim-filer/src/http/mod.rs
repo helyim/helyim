@@ -10,9 +10,10 @@ use axum::{
     extract::State,
     http::{
         header::{
-            ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE,
+            CONTENT_TYPE, HOST, RANGE,
         },
-        HeaderValue, Method, Response,
+        HeaderMap, HeaderValue, Method, Response,
     },
 };
 use bytes::{Buf, Bytes, BytesMut};
@@ -22,10 +23,11 @@ use helyim_common::{
     anyhow,
     file::file_name,
     http::{
-        content_range, get_etag, http_error, parse_boundary, range_header, ranges_mime_size,
-        read_url, request, set_etag, trim_trailing_slash, HttpError,
+        content_range, get_etag, header_value_str, http_error, parse_boundary, range_header,
+        ranges_mime_size, read_url, request, set_etag, trim_trailing_slash, HttpError,
     },
     operation::{upload, UploadResult},
+    parser::ParseError,
     time::now,
     ttl::Ttl,
 };
@@ -104,7 +106,8 @@ impl FilerState {
                     limit,
                     last_filename,
                     should_display_load_more,
-                })?;
+                })
+                .map_err(HttpError::SerdeJson)?;
 
                 Ok(response
                     .body(Body::from(body))
@@ -146,7 +149,7 @@ impl FilerState {
             url = format!("{url}?{query}");
         }
 
-        match request(
+        match filer_request(
             &url,
             extractor.method,
             None,
@@ -159,7 +162,10 @@ impl FilerState {
             Ok(resp) => {
                 *response.status_mut() = resp.status();
                 *response.headers_mut() = resp.headers().clone();
-                *response.body_mut() = Body::from(resp.bytes().await?);
+
+                let data = resp.bytes().await?;
+                debug!("response data length: {}", data.len());
+                *response.body_mut() = Body::from(data);
                 Ok(())
             }
             Err(err) => {
@@ -219,7 +225,7 @@ impl FilerState {
             }
             return Ok(());
         }
-        let ranges = match HttpRange::parse(range.to_str().map_err(HttpError::ToStr)?, total_size) {
+        let ranges = match HttpRange::parse(header_value_str(range)?, total_size) {
             Ok(ranges) => ranges,
             Err(_) => {
                 http_error(
@@ -392,7 +398,9 @@ impl FilerState {
         let mut content_len = 0;
 
         if let Some(len) = extractor.headers.get(CONTENT_LENGTH) {
-            content_len = len.to_str().map_err(HttpError::ToStr)?.parse()?;
+            content_len = header_value_str(len)?
+                .parse()
+                .map_err(ParseError::ParseInt)?;
             if content_len <= chunk_size {
                 info!("content-length: {content_len} is less than the chunk size: {chunk_size}");
                 return Ok(false);
@@ -422,7 +430,8 @@ impl FilerState {
         {
             Ok(reply) => {
                 *response.status_mut() = StatusCode::CREATED;
-                *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+                *response.body_mut() =
+                    Body::from(serde_json::to_vec(&reply).map_err(HttpError::SerdeJson)?);
             }
             Err(err) => {
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
@@ -574,7 +583,7 @@ impl FilerState {
 
         let now = SystemTime::now();
         let ttl = match &extractor.query.ttl {
-            Some(ttl) => ttl.parse()?,
+            Some(ttl) => ttl.parse().map_err(ParseError::ParseInt)?,
             None => 0,
         };
         let entry = Entry {
@@ -642,6 +651,7 @@ pub async fn get_or_head_handler(
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>, FilerError> {
     let path = trim_trailing_slash(extractor.uri.path());
+    debug!("getting path: {path}");
 
     let mut response = Response::new(Body::empty());
     match state.filer.find_entry(path).await {
@@ -757,7 +767,7 @@ pub async fn post_handler(
         url.query_pairs_mut().append_pair("cm", "true");
     }
 
-    let resp = match request(
+    let resp = match filer_request(
         &url,
         extractor.method,
         None,
@@ -780,8 +790,7 @@ pub async fn post_handler(
     };
 
     let etag = get_etag(resp.headers())?;
-    let upload: UploadResult =
-        serde_json::from_slice(&resp.bytes().await.map_err(HttpError::Reqwest)?)?;
+    let upload = UploadResult::from_response(resp).await?;
     if !upload.error.is_empty() {
         error!("filer upload error: {}", upload.error);
 
@@ -791,8 +800,6 @@ pub async fn post_handler(
     }
 
     let mut path = extractor.uri.path().to_string();
-    debug!("upload file path: {path}");
-
     if path.ends_with("/") {
         if !upload.name.is_empty() {
             path = format!("{path}{}", upload.name);
@@ -808,6 +815,7 @@ pub async fn post_handler(
             return Ok(response);
         }
     }
+    debug!("upload file path: {path}");
 
     let mut crtime = SystemTime::now();
     if let Ok(Some(existing_entry)) = state.filer.find_entry(&path).await {
@@ -847,8 +855,9 @@ pub async fn post_handler(
     entry.attr.mime = FastStr::new(mime.first_or_octet_stream().type_().as_str());
 
     if let Err(err) = state.filer.create_entry(&entry).await {
-        state.filer.delete_chunks(&entry.chunks)?;
         error!("failed to write {path} to filer server, error: {err}");
+
+        state.filer.delete_chunks(&entry.chunks)?;
         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         *response.body_mut() = Body::from(err.to_string());
         return Ok(response);
@@ -864,7 +873,7 @@ pub async fn post_handler(
 
     set_etag(&mut response, &etag).map_err(HttpError::InvalidHeaderValue)?;
     *response.status_mut() = StatusCode::CREATED;
-    *response.body_mut() = Body::from(serde_json::to_vec(&reply)?);
+    *response.body_mut() = Body::from(serde_json::to_vec(&reply).map_err(HttpError::SerdeJson)?);
     Ok(response)
 }
 
@@ -890,4 +899,23 @@ pub async fn delete_handler(
         }
     }
     Ok(response)
+}
+
+fn remove_http_headers(headers: &mut HeaderMap) {
+    headers.remove(HOST);
+    headers.remove(ACCEPT_ENCODING);
+}
+async fn filer_request<U: AsRef<str>, B: Into<reqwest::Body>>(
+    url: U,
+    method: Method,
+    params: Option<&[(&str, &str)]>,
+    body: Option<B>,
+    mut headers: Option<HeaderMap>,
+    multipart: Option<Form>,
+) -> Result<reqwest::Response, HttpError> {
+    if let Some(headers) = headers.as_mut() {
+        // TODO: why need to remove accept-encoding header?
+        remove_http_headers(headers);
+    }
+    request(url, method, params, body, headers, multipart).await
 }
