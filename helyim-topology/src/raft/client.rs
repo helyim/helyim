@@ -129,14 +129,8 @@ impl RaftClient {
         };
 
         let fut = if let Some(r) = req {
-            debug!(
-                ">>> client send request to {}: {}",
-                url,
-                serde_json::to_string_pretty(&r).unwrap()
-            );
             self.inner.post(&url).json(r)
         } else {
-            debug!(">>> client send request to {}", url);
             self.inner.get(&url)
         }
         .send();
@@ -154,11 +148,6 @@ impl RaftClient {
             .json()
             .await
             .map_err(|e| RpcError::Network(NetworkError::new(&e)))?;
-        debug!(
-            "<<< client recv reply from {}: {}",
-            url,
-            serde_json::to_string_pretty(&response).unwrap()
-        );
 
         response.map_err(|e| {
             if leader_id == 0 {
