@@ -1,6 +1,4 @@
 use std::{
-    net::AddrParseError,
-    num::ParseIntError,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -18,12 +16,13 @@ use helyim_common::{
     file::{file_name, join_path},
     http::HttpError,
     parser::ParseError,
+    ttl::TtlError,
 };
 use moka::sync::Cache;
 use serde_json::json;
 use tokio::task::JoinError;
 use tonic::Status;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     deletion::loop_processing_deletion,
@@ -55,17 +54,16 @@ pub trait FilerStore: Send + Sync {
 pub struct Filer {
     store: Option<Box<dyn FilerStore>>,
     directories: Option<Cache<FastStr, Entry>>,
-    pub delete_file_id_tx: UnboundedSender<String>,
-    pub master_client: MasterClient,
+    pub delete_file_id_tx: UnboundedSender<FastStr>,
+    pub master_client: Arc<MasterClient>,
 }
 
 impl Filer {
-    pub fn new(masters: Vec<FastStr>) -> Result<FilerRef, FilerError> {
+    pub fn new(master_client: Arc<MasterClient>) -> Result<FilerRef, FilerError> {
         let directories = moka::sync::CacheBuilder::new(1000)
             .time_to_live(Duration::from_secs(60 * 60))
             .name("filer-directory-cache")
             .build();
-        let master_client = MasterClient::new("filer", masters);
         let (delete_file_id_tx, delete_file_id_rx) = unbounded();
 
         let filer = Arc::new(Self {
@@ -91,10 +89,6 @@ impl Filer {
         }
     }
 
-    pub async fn keep_connected_to_master(&self) -> Result<(), FilerError> {
-        Ok(self.master_client.try_all_masters().await?)
-    }
-
     pub async fn create_entry(&self, entry: &Entry) -> Result<(), FilerError> {
         if entry.full_path == "/" {
             return Ok(());
@@ -107,7 +101,7 @@ impl Filer {
             let dir_path = join_path(&dir_parts, i);
             let dir_entry = match self.get_directory(&dir_path) {
                 Some(dir) => {
-                    info!("find cached directory: {}", dir_path);
+                    debug!("find cached directory: {}", dir_path);
                     Some(dir)
                 }
                 None => {
@@ -160,17 +154,25 @@ impl Filer {
 
         let old_entry = self.find_entry(&entry.full_path).await?;
         match old_entry {
-            Some(ref old_entry) => {
-                if let Err(err) = self.update_entry(Some(old_entry), entry).await {
+            Some(ref old_entry) => match self.update_entry(Some(old_entry), entry).await {
+                Ok(_) => {
+                    debug!("updated entry: {}", entry.full_path);
+                }
+                Err(err) => {
                     error!("update entry: {}, {err}", entry.full_path);
                     return Err(err);
                 }
-            }
+            },
             None => {
                 let store = self.filer_store()?;
-                if let Err(err) = store.insert_entry(entry).await {
-                    error!("insert entry: {}, {err}", entry.full_path);
-                    return Err(err);
+                match store.insert_entry(entry).await {
+                    Ok(_) => {
+                        debug!("inserted entry: {}", entry.full_path);
+                    }
+                    Err(err) => {
+                        error!("insert entry: {}, {err}", entry.full_path);
+                        return Err(err);
+                    }
                 }
             }
         }
@@ -332,23 +334,18 @@ pub enum FilerError {
     #[error("Filer store is not initialized.")]
     StoreNotInitialized,
     #[error("Try send error: {0}")]
-    TrySend(#[from] TrySendError<String>),
+    TrySend(#[from] TrySendError<FastStr>),
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
+    #[error("Ttl error: {0}")]
+    Ttl(#[from] TtlError),
     #[error("Rustix errno: {0}")]
     Errno(#[from] rustix::io::Errno),
     #[error("Parse int error: {0}")]
     Parse(#[from] ParseError),
-    #[error("AddrParse error: {0}")]
-    AddrParse(#[from] AddrParseError),
-    #[error("ParseInt error: {0}")]
-    ParseInt(#[from] ParseIntError),
 
     #[error("Tokio task join error: {0}")]
     TokioJoin(#[from] JoinError),
-
-    #[error("Serde Json error: {0}")]
-    SerdeJson(#[from] serde_json::Error),
 
     #[error("Io error: {0}")]
     Io(#[from] std::io::Error),

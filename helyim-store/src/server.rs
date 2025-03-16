@@ -12,6 +12,7 @@ use helyim_common::{
     grpc_port,
     http::{default_handler, favicon_handler},
     operation::list_master,
+    parser::parse_addr,
     sys::exit,
     version::Version,
 };
@@ -42,7 +43,7 @@ use tokio::{net::TcpListener, time::sleep};
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     args::VolumeOptions,
@@ -89,7 +90,7 @@ impl VolumeServer {
         let (delta_volume_tx, delta_volume_rx) = delta_volume_channel();
         let store = Arc::new(Store::new(options.clone(), needle_map_type, delta_volume_tx).await?);
 
-        let addr = format!("{}:{}", options.ip, grpc_port(options.port)).parse()?;
+        let addr = parse_addr(&format!("{}:{}", options.ip, grpc_port(options.port)))?;
 
         // get leader from master
         let cluster_status = list_master(&options.master_server).await?;
@@ -151,7 +152,7 @@ impl VolumeServer {
             looker: Arc::new(Looker::new()),
         };
         // http server
-        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
+        let addr = parse_addr(&format!("{}:{}", self.options.ip, self.options.port))?;
         let shutdown_rx = self.shutdown.new_receiver();
 
         tokio::spawn(start_volume_server(state, addr, shutdown_rx));
@@ -274,7 +275,7 @@ impl VolumeServer {
                     match response {
                         Ok(response) => {
                             if let Ok(response) = serde_json::to_string(&response) {
-                                debug!("heartbeat reply: {response}");
+                                trace!("heartbeat reply: {response}");
                             }
                             let old_leader = store.current_master.read().await.clone();
                             if !response.leader.is_empty() && response.leader != old_leader {

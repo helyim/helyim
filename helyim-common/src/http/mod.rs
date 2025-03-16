@@ -23,6 +23,7 @@ use reqwest::{
     multipart::{Form, Part},
     Body, Response,
 };
+use tracing::debug;
 use url::Url;
 
 use crate::{anyhow, images::FAVICON_ICO};
@@ -67,18 +68,33 @@ pub async fn request<U: AsRef<str>, B: Into<Body>>(
         Some(params) => Url::parse_with_params(url.as_ref(), params)?,
         None => Url::parse(url.as_ref())?,
     };
+    debug!("http request -> method: {method}, url: {}", url.as_str());
+
     let mut builder = HTTP_CLIENT.request(method, url);
     if let Some(body) = body {
         builder = builder.body(body);
     }
     if let Some(headers) = headers {
+        for (name, value) in headers.iter() {
+            debug!("header -> name: {name}, value: {}", value.to_str()?);
+        }
         builder = builder.headers(headers);
     }
     if let Some(multipart) = multipart {
         builder = builder.multipart(multipart);
     }
 
-    Ok(builder.send().await?)
+    let resp = builder.send().await?;
+    debug!(
+        "http response -> url: {}, status: {}",
+        resp.url().as_str(),
+        resp.status()
+    );
+    for (name, value) in resp.headers().iter() {
+        debug!("header -> name: {name}, value: {}", value.to_str()?);
+    }
+
+    Ok(resp)
 }
 
 pub struct FormOrJson<T>(pub T);
@@ -116,6 +132,8 @@ pub enum HttpError {
     Reqwest(#[from] reqwest::Error),
     #[error("Multipart error: {0}")]
     Multipart(#[from] MultipartError),
+    #[error("Muter error: {0}")]
+    Multer(#[from] multer::Error),
 
     #[error("InvalidHeaderName: {0}")]
     InvalidHeaderName(#[from] InvalidHeaderName),
@@ -249,4 +267,20 @@ pub fn trim_trailing_slash(path: &str) -> &str {
     } else {
         path
     }
+}
+
+pub fn parse_boundary(headers: &HeaderMap) -> Result<String, HttpError> {
+    match headers.get(CONTENT_TYPE) {
+        Some(content_type) => {
+            let boundary = multer::parse_boundary(content_type.to_str()?)?;
+            debug!("parsed boundary: {boundary}");
+
+            Ok(boundary)
+        }
+        None => Err(HttpError::Multer(multer::Error::NoBoundary)),
+    }
+}
+
+pub fn header_value_str(value: &HeaderValue) -> Result<&str, HttpError> {
+    Ok(value.to_str()?)
 }

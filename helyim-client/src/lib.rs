@@ -7,7 +7,7 @@ use helyim_common::{parser::ParseError, types::VolumeId};
 use helyim_proto::directory::KeepConnectedRequest;
 use tokio_stream::StreamExt;
 use tonic::Status;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::location::{Location, LocationMap};
 
@@ -74,6 +74,7 @@ impl MasterClient {
             }
         };
 
+        debug!("connecting to master: {master}");
         let client = helyim_client(&master)?;
         let mut next_hinted_leader = FastStr::empty();
         match client.keep_connected(request_stream).await {

@@ -164,6 +164,8 @@ impl VolumeGrowth {
         topology: &Topology,
         mut target_count: usize,
     ) -> Result<usize, TopologyError> {
+        debug!("automatic grow by type: target count: {target_count}");
+
         let copy_count = option.replica_placement.copy_count();
         if target_count == 0 {
             target_count = self.find_volume_count(copy_count);

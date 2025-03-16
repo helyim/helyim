@@ -3,7 +3,7 @@ use std::{fs, path::Path, sync::Arc};
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
 use helyim_common::{
-    parser::{parse_collection_volume_id, ParseError},
+    parser::{parse_collection_volume_id, parse_int},
     types::VolumeId,
 };
 use helyim_ec::{EcVolume, EcVolumeError, EcVolumeShard, ShardId};
@@ -79,7 +79,7 @@ impl DiskLocation {
         for shard in shards {
             if let Some(index) = shard.find('.') {
                 let ext = &shard[index + 1..];
-                let shard_id = ext[2..].parse::<u64>().map_err(ParseError::ParseInt)?;
+                let shard_id = parse_int::<ShardId>(&ext[2..])?;
                 self.load_ec_shard(collection, vid, shard_id as ShardId)
                     .await?;
             }

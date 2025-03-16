@@ -20,7 +20,7 @@ use helyim_common::{
         TTL_BYTES_LENGTH,
     },
     crc,
-    parser::ParseError,
+    parser::{parse_int, ParseError},
     ttl::{Ttl, TtlError},
     types::{Cookie, NeedleId, Offset, Size, VolumeId},
     version::{Version, CURRENT_VERSION, VERSION2},
@@ -112,7 +112,7 @@ impl Needle {
         self.id = key;
         self.cookie = cookie;
         if !delta.is_empty() {
-            let id_delta: u64 = delta.parse()?;
+            let id_delta: u64 = parse_int(delta)?;
             self.id += id_delta;
         }
 
@@ -397,8 +397,6 @@ pub enum NeedleError {
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
-    #[error("Parse integer error: {0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
 
     #[error("Ttl error: {0}")]
     Ttl(#[from] TtlError),
@@ -441,8 +439,8 @@ fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie), NeedleError> {
 
     let key_end = hash.len() - 8;
 
-    let key: u64 = u64::from_str_radix(&hash[0..key_end], 16)?;
-    let cookie: u32 = u32::from_str_radix(&hash[key_end..], 16)?;
+    let key: u64 = u64::from_str_radix(&hash[0..key_end], 16).map_err(ParseError::ParseInt)?;
+    let cookie: u32 = u32::from_str_radix(&hash[key_end..], 16).map_err(ParseError::ParseInt)?;
 
     Ok((key, cookie))
 }

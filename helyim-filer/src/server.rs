@@ -1,12 +1,19 @@
 use std::{
     collections::HashMap, net::SocketAddr, path::MAIN_SEPARATOR, pin::Pin,
-    result::Result as StdResult, time::Duration,
+    result::Result as StdResult, sync::Arc, time::Duration,
 };
 
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use faststr::FastStr;
 use futures::Stream;
-use helyim_common::{grpc_port, http::default_handler, sys::exit, time::timestamp_to_time};
+use helyim_client::MasterClient;
+use helyim_common::{
+    grpc_port,
+    http::default_handler,
+    parser::{parse_addr, ParseError},
+    sys::exit,
+    time::timestamp_to_time,
+};
 use helyim_proto::filer::{
     filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
@@ -42,13 +49,15 @@ impl FilerServer {
     pub async fn new(filer_opts: FilerOptions) -> Result<FilerServer, FilerError> {
         let (shutdown, mut shutdown_rx) = async_broadcast::broadcast(16);
 
-        let filer = Filer::new(filer_opts.masters.clone())?;
+        let master_client = Arc::new(MasterClient::new("filer", filer_opts.masters.clone()));
+
+        let filer = Filer::new(master_client.clone())?;
         let filer_server = FilerServer {
             options: filer_opts.clone(),
             filer: filer.clone(),
             shutdown,
         };
-        let addr = format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port)).parse()?;
+        let addr = parse_addr(&format!("{}:{}", filer_opts.ip, grpc_port(filer_opts.port)))?;
 
         tokio::spawn(async move {
             info!("filer server starting up. binding addr: {addr}");
@@ -76,7 +85,7 @@ impl FilerServer {
         Ok(())
     }
 
-    pub async fn start(&mut self) -> Result<(), FilerError> {
+    pub async fn start(&mut self) -> Result<(), ParseError> {
         // http server
         let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
         let shutdown_rx = self.shutdown.new_receiver();
@@ -90,6 +99,11 @@ impl FilerServer {
             addr,
             shutdown_rx,
         ));
+
+        let master_client = self.filer.master_client.clone();
+        tokio::spawn(async move {
+            master_client.keep_connected_to_master().await;
+        });
         Ok(())
     }
 }
@@ -100,19 +114,21 @@ pub async fn start_filer_server(
     mut shutdown: async_broadcast::Receiver<()>,
 ) {
     let app = Router::new()
-        .route(
-            "/",
+        .fallback_service(
             get(get_or_head_handler)
                 .head(get_or_head_handler)
                 .post(post_handler)
                 .put(post_handler)
-                .delete(delete_handler),
+                .delete(delete_handler)
+                .fallback(default_handler)
+                .with_state(state.clone()),
         )
-        .fallback(default_handler)
         .layer((
             CompressionLayer::new(),
-            DefaultBodyLimit::max(1024 * 1024),
-            TimeoutLayer::new(Duration::from_secs(10)),
+            DefaultBodyLimit::max(30 * 1024 * 1024 * 1024),
+            // The timeout should be set as large as possible to ensure uninterrupted uploads of
+            // large files.
+            TimeoutLayer::new(Duration::from_secs(20 * 60)),
         ))
         .with_state(state);
 

@@ -73,8 +73,6 @@ impl NetworkFactory {
             .await
             .map_err(|e| openraft::error::RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        tracing::debug!("client.post() is sent");
-
         let res: Result<Resp, Err> = resp
             .json()
             .await

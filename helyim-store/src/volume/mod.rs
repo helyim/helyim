@@ -3,8 +3,6 @@ use std::{
     fs::{self, metadata, File},
     io,
     io::ErrorKind,
-    net::AddrParseError,
-    num::ParseIntError,
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     string::FromUtf8Error,
@@ -28,13 +26,12 @@ use helyim_common::{
     parser::ParseError,
     sequence::SequenceError,
     time::{get_time, now, TimeError},
-    ttl::{Ttl, TtlError},
+    ttl::Ttl,
     types::{NeedleId, NeedleValue, Offset, ReplicaPlacement, SuperBlock, VolumeId},
     version::Version,
 };
 use helyim_ec::EcVolumeError;
 use helyim_topology::{volume::VolumeInfo, TopologyError};
-use hyper::header::{InvalidHeaderName, InvalidHeaderValue, ToStrError};
 use parking_lot::RwLock;
 use rustix::fs::ftruncate;
 use serde_json::json;
@@ -192,7 +189,7 @@ impl Volume {
                 fs::OpenOptions::new()
                     .read(true)
                     .create(true)
-                    .truncate(true)
+                    .truncate(false)
                     .write(true)
                     .mode(0o644)
                     .open(self.index_filename())?
@@ -620,10 +617,6 @@ pub enum VolumeError {
     // parse
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
-    #[error("ParseInt error: {0}")]
-    ParseInt(#[from] ParseIntError),
-    #[error("AddrParse error: {0}")]
-    AddrParse(#[from] AddrParseError),
 
     #[error("FromUtf8 error: {0}")]
     FromUtf8(#[from] FromUtf8Error),
@@ -631,24 +624,6 @@ pub enum VolumeError {
     // http
     #[error("Http error: {0}")]
     Http(#[from] HttpError),
-    #[error("Invalid header value: {0}")]
-    InvalidHeaderValue(#[from] InvalidHeaderValue),
-    #[error("Invalid header name: {0}")]
-    InvalidHeaderName(#[from] InvalidHeaderName),
-    #[error("Tostr error: {0}")]
-    ToStr(#[from] ToStrError),
-    #[error("Url parse error: {0}")]
-    UrlParse(#[from] url::ParseError),
-    #[error("Timeout")]
-    Timeout,
-    #[error("Hyper error: {0}")]
-    Hyper(#[from] hyper::Error),
-    #[error("Axum http error: {0}")]
-    AxumHttp(#[from] axum::http::Error),
-    #[error("Multer error: {0}")]
-    Multer(#[from] multer::Error),
-    #[error("Serde json error: {0}")]
-    SerdeJson(#[from] serde_json::Error),
 
     #[error("EcVolume error: {0}")]
     EcVolume(#[from] EcVolumeError),
@@ -683,8 +658,6 @@ pub enum VolumeError {
     Compacting(VolumeId),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
-    #[error("Ttl error: {0}")]
-    Ttl(#[from] TtlError),
     #[error("Topology error: {0}")]
     Topology(#[from] TopologyError),
     #[error("NeedleMapper is not load, volume: {0}")]

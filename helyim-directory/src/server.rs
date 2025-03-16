@@ -11,7 +11,7 @@ use helyim_client::MasterClient;
 use helyim_common::{
     grpc_port,
     http::default_handler,
-    parser::{parse_vid_fid, ParseError},
+    parser::{parse_addr, parse_vid_fid},
     sequence::Sequencer,
     sys::exit,
     ttl::Ttl,
@@ -93,9 +93,11 @@ impl DirectoryServer {
             shutdown,
         };
 
-        let addr = format!("{}:{}", master.options.ip, grpc_port(master.options.port))
-            .parse()
-            .map_err(ParseError::AddrParse)?;
+        let addr = parse_addr(&format!(
+            "{}:{}",
+            master.options.ip,
+            grpc_port(master.options.port)
+        ))?;
         tokio::spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
@@ -138,7 +140,7 @@ impl DirectoryServer {
             volume_grow: self.volume_grow,
             options: self.options.clone(),
         };
-        let addr = format!("{}:{}", self.options.ip, self.options.port).parse()?;
+        let addr = parse_addr(&format!("{}:{}", self.options.ip, self.options.port))?;
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Multipart, Query},
+    extract::Query,
     http::{HeaderMap, Method, Uri},
 };
 use axum_macros::FromRequest;
@@ -21,8 +21,8 @@ pub struct GetOrHeadExtractor {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListDirQuery {
-    pub limit: u32,
-    pub last_file_name: FastStr,
+    pub limit: Option<u32>,
+    pub last_file_name: Option<FastStr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub struct PostExtractor {
     pub method: Method,
     #[from_request(via(Query))]
     pub query: PostQuery,
-    pub multipart: Multipart,
+    pub body: Bytes,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +52,7 @@ pub struct PostQuery {
     pub data_center: Option<FastStr>,
     pub ttl: Option<FastStr>,
     pub max_mb: Option<i32>,
-    // pub cm: Option<bool>,
+    pub cm: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

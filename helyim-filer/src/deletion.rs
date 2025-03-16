@@ -18,7 +18,8 @@ use crate::{
 impl Filer {
     pub fn delete_chunks(&self, chunks: &[FileChunk]) -> Result<(), FilerError> {
         for chunk in chunks {
-            self.delete_file_id_tx.unbounded_send(chunk.fid.clone())?;
+            self.delete_file_id_tx
+                .unbounded_send(FastStr::new(&chunk.fid))?;
         }
 
         Ok(())
@@ -72,7 +73,7 @@ impl Filer {
     }
 }
 
-pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<String>) {
+pub async fn loop_processing_deletion(mut rx: UnboundedReceiver<FastStr>) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
 
     let mut file_ids = vec![];

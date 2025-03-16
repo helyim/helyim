@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use faststr::FastStr;
 use helyim_common::{
     sequence::{Sequencer, SequencerType},

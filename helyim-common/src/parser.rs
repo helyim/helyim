@@ -1,4 +1,9 @@
-use std::{fmt::Debug, net::AddrParseError, num::ParseIntError};
+use std::{
+    fmt::Debug,
+    net::{AddrParseError, SocketAddr},
+    num::ParseIntError,
+    path::Path,
+};
 
 use nom::{
     branch::alt,
@@ -12,7 +17,7 @@ use nom::{
 
 use crate::types::VolumeId;
 
-pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str), ParseError> {
+pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, &str, &str), ParseError> {
     let (vid, fid, filename, ext) = tuple((
         char('/'),
         parse_vid_fid,
@@ -21,7 +26,7 @@ pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, Option<&str>, &str
     .map(|(input, (_, (vid, fid), filename))| {
         (vid, fid, filename.map(|(_, filename)| filename), input)
     })?;
-    Ok((vid.parse()?, fid, filename, ext))
+    Ok((vid.parse()?, fid, filename.unwrap_or(""), ext))
 }
 
 pub fn parse_vid_fid(input: &str) -> IResult<&str, (&str, &str)> {
@@ -55,6 +60,13 @@ pub fn parse_collection_volume_id(name: &str) -> Result<(VolumeId, &str), ParseI
     }
 }
 
+pub fn parse_ext(filename: &str) -> String {
+    match Path::new(filename).extension() {
+        Some(ext) => ext.to_str().unwrap_or("").to_string(),
+        None => String::new(),
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("ParseInt error: {0}")]
@@ -70,6 +82,17 @@ impl From<Err<Error<&str>>> for ParseError {
     fn from(value: Err<Error<&str>>) -> Self {
         Self::String(value.to_string())
     }
+}
+
+pub fn parse_int<I: std::str::FromStr>(num: &str) -> Result<I, ParseError>
+where
+    ParseError: From<<I as std::str::FromStr>::Err>,
+{
+    Ok(num.parse::<I>()?)
+}
+
+pub fn parse_addr(addr: &str) -> Result<SocketAddr, ParseError> {
+    Ok(addr.parse()?)
 }
 
 #[cfg(test)]
@@ -120,37 +143,37 @@ mod tests {
             parse_url_path("/3/01637037d6/my_preferred_name.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(filename, "my_preferred_name");
         assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6/my_preferred_name").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, Some("my_preferred_name"));
+        assert_eq!(filename, "my_preferred_name");
         assert_eq!(ext, "");
 
         let (vid, fid, filename, ext) = parse_url_path("/3/01637037d6.jpg").unwrap();
         assert_eq!(vid, 3);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
+        assert_eq!(filename, "");
         assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/30,01637037d6.jpg").unwrap();
         assert_eq!(vid, 30);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
+        assert_eq!(filename, "");
         assert_eq!(ext, ".jpg");
 
         let (vid, fid, filename, ext) = parse_url_path("/300/01637037d6").unwrap();
         assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
+        assert_eq!(filename, "");
         assert_eq!(ext, "");
 
         let (vid, fid, filename, ext) = parse_url_path("/300,01637037d6").unwrap();
         assert_eq!(vid, 300);
         assert_eq!(fid, "01637037d6");
-        assert_eq!(filename, None);
+        assert_eq!(filename, "");
         assert_eq!(ext, "");
     }
 }

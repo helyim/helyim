@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use helyim_common::sys::shutdown_signal;
 
 mod args;
