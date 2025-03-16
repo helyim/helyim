@@ -11,6 +11,7 @@ use tracing::error;
 
 use crate::{
     http::{get_etag, request, HttpError},
+    time::now,
     ttl::Ttl,
 };
 
@@ -61,8 +62,10 @@ pub async fn upload(
     mtype: &str,
     pairs: Option<HashMap<&str, &str>>,
 ) -> Result<UploadResult, HttpError> {
-    let part = Part::bytes(bytes).file_name(filename).mime_str(mtype)?;
-    let form = Form::new().part("part1", part);
+    let part = Part::bytes(bytes)
+        .file_name(filename.clone())
+        .mime_str(mtype)?;
+    let form = Form::new().part(format!("{filename}_part_{}", now().as_millis()), part);
 
     let mut headers = HeaderMap::new();
 

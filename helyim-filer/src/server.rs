@@ -126,7 +126,9 @@ pub async fn start_filer_server(
         .layer((
             CompressionLayer::new(),
             DefaultBodyLimit::max(30 * 1024 * 1024 * 1024),
-            TimeoutLayer::new(Duration::from_secs(10)),
+            // The timeout should be set as large as possible to ensure uninterrupted uploads of
+            // large files.
+            TimeoutLayer::new(Duration::from_secs(20 * 60)),
         ))
         .with_state(state);
 

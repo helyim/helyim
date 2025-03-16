@@ -18,7 +18,7 @@ use axum::{
 };
 use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
-use futures_util::StreamExt;
+use futures_util::{future::join_all, StreamExt};
 use helyim_common::{
     anyhow,
     file::file_name,
@@ -205,12 +205,8 @@ impl FilerState {
 
         let total_size = total_size(entry.chunks.as_slice());
 
-        let range = match extractor.headers.get(RANGE) {
-            Some(range) => range,
-            None => return Ok(()),
-        };
-
-        if range.is_empty() {
+        let range = extractor.headers.get(RANGE);
+        if range.is_none() || range.is_some_and(|range| range.is_empty()) {
             response
                 .headers_mut()
                 .insert(CONTENT_LENGTH, HeaderValue::from(total_size));
@@ -225,7 +221,8 @@ impl FilerState {
             }
             return Ok(());
         }
-        let ranges = match HttpRange::parse(header_value_str(range)?, total_size) {
+
+        let ranges = match HttpRange::parse(header_value_str(range.unwrap())?, total_size) {
             Ok(ranges) => ranges,
             Err(_) => {
                 http_error(
@@ -350,28 +347,33 @@ impl FilerState {
         size: u64,
     ) -> Result<Bytes, FilerError> {
         let chunk_views = ChunkView::view_from_chunks(entry.chunks.as_slice(), offset, size);
-
         let mut file_id_map = HashMap::new();
-
         for chunk_view in chunk_views.iter() {
             let url = self.filer.master_client.lookup_file_id(&chunk_view.fid)?;
             file_id_map.insert(&chunk_view.fid, url);
         }
 
         let mut buf = BytesMut::new();
+        let mut handles = vec![];
         for chunk_view in chunk_views.iter() {
             if let Some(url) = file_id_map.get(&chunk_view.fid) {
-                buf.extend_from_slice(&read_url(url, chunk_view.offset, chunk_view.size).await?);
+                let offset = chunk_view.offset;
+                let size = chunk_view.size;
+                let url = url.to_string();
+                let handle = tokio::spawn(async move { read_url(&url, offset, size).await });
+                handles.push(handle);
             }
         }
-
+        for handle in join_all(handles).await {
+            buf.extend_from_slice(&handle??);
+        }
         Ok(buf.freeze())
     }
 
     async fn auto_chunk(
         &self,
         response: &mut Response<Body>,
-        extractor: &mut PostExtractor,
+        extractor: &PostExtractor,
         replication: FastStr,
         collection: FastStr,
         data_center: FastStr,
@@ -394,11 +396,11 @@ impl FilerState {
         }
         info!("auto chunking level set to {max_mb} (MB)");
 
-        let chunk_size = 1024 * 1024 * max_mb;
+        let chunk_size = 1024 * 1024 * max_mb as u64;
         let mut content_len = 0;
 
         if let Some(len) = extractor.headers.get(CONTENT_LENGTH) {
-            content_len = parse_int::<i32>(header_value_str(len)?)?;
+            content_len = parse_int::<u64>(header_value_str(len)?)?;
             if content_len <= chunk_size {
                 info!("content-length: {content_len} is less than the chunk size: {chunk_size}");
                 return Ok(false);
@@ -418,7 +420,7 @@ impl FilerState {
             .do_auto_chunk(
                 response,
                 extractor,
-                content_len as u64,
+                content_len,
                 chunk_size as u32,
                 replication,
                 collection,
@@ -432,6 +434,7 @@ impl FilerState {
                     Body::from(serde_json::to_vec(&reply).map_err(HttpError::SerdeJson)?);
             }
             Err(err) => {
+                error!("auto chunk error: {err}");
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                 *response.body_mut() = Body::from(err.to_string());
             }
@@ -443,7 +446,7 @@ impl FilerState {
     async fn do_auto_chunk(
         &self,
         response: &mut Response<Body>,
-        extractor: &mut PostExtractor,
+        extractor: &PostExtractor,
         content_len: u64,
         chunk_size: u32,
         replication: FastStr,
@@ -475,7 +478,7 @@ impl FilerState {
 
         let mut file_chunks = vec![];
         let mut total_bytes_read = 0;
-        let tmp_buffer_size = 2048;
+        let tmp_buffer_size = 1024 * 1024;
         let mut tmp_buffer = vec![0u8; tmp_buffer_size];
         let mut chunk_buf = vec![0u8; chunk_size as usize + tmp_buffer_size];
         let mut chunk_buf_offset = 0;
@@ -493,8 +496,6 @@ impl FilerState {
         let mut part_reader = part_bytes.reader();
 
         while total_bytes_read < content_len {
-            tmp_buffer.clear();
-
             let bytes_read = match part_reader.read(&mut tmp_buffer) {
                 Ok(bytes_read) => bytes_read,
                 Err(err) => {
@@ -506,9 +507,8 @@ impl FilerState {
                 }
             };
 
-            let bytes_to_copy = &tmp_buffer[..bytes_read];
             chunk_buf[chunk_buf_offset..chunk_buf_offset + bytes_read]
-                .copy_from_slice(bytes_to_copy);
+                .copy_from_slice(&tmp_buffer[..bytes_read]);
             chunk_buf_offset += bytes_read;
 
             if chunk_buf_offset >= chunk_size as usize
@@ -536,8 +536,8 @@ impl FilerState {
                 .await
                 {
                     Ok(upload) => {
-                        info!(
-                            "chunk upload result. name: {}, size: {}, fid: {file_id}",
+                        debug!(
+                            "chunk upload. name: {}, size: {}, fid: {file_id}",
                             upload.name, upload.size
                         );
 
@@ -630,7 +630,6 @@ impl FilerState {
         match assign(&self.filer.current_master(), request).await {
             Ok(assign) => {
                 let url = format!("http://{}/{}", assign.url, assign.fid);
-
                 debug!("assign file id: {url}");
                 Ok((assign.fid, FastStr::new(url)))
             }
@@ -649,7 +648,6 @@ pub async fn get_or_head_handler(
     extractor: GetOrHeadExtractor,
 ) -> Result<Response<Body>, FilerError> {
     let path = trim_trailing_slash(extractor.uri.path());
-    debug!("getting path: {path}");
 
     let mut response = Response::new(Body::empty());
     match state.filer.find_entry(path).await {
