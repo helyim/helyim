@@ -20,7 +20,6 @@ use tracing::{error, info};
 
 use crate::http::DirectoryState;
 
-#[async_trait::async_trait]
 impl<T> FromRequest<DirectoryState> for FormOrJson<T>
 where
     Json<T>: FromRequest<DirectoryState>,
