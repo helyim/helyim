@@ -88,7 +88,6 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = "0.3"
-turmoil = "0.6"
 url = "2"
 
 # for macro
