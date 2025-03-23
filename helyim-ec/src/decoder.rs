@@ -1,7 +1,7 @@
 use std::{
     cmp::min,
     fs, io,
-    io::{copy, ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Write, copy},
     os::unix::fs::{FileExt, OpenOptionsExt},
     result::Result as StdResult,
 };
@@ -10,13 +10,13 @@ use bytes::Buf;
 use helyim_common::{
     consts::{NEEDLE_ENTRY_SIZE, NEEDLE_ID_SIZE, SUPER_BLOCK_SIZE},
     file::file_exists,
-    types::{read_index_entry, NeedleId, NeedleValue, Offset, Size, SuperBlock},
+    types::{NeedleId, NeedleValue, Offset, Size, SuperBlock, read_index_entry},
     version::Version,
 };
 
 use crate::{
-    to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
-    ERASURE_CODING_SMALL_BLOCK_SIZE,
+    DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE, ShardId,
+    to_ext,
 };
 
 pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<(), io::Error> {

@@ -8,8 +8,8 @@ use turmoil::net::TcpStream;
 
 type Fut = Pin<Box<dyn Future<Output = Result<TurmoilConnection, Error>> + Send>>;
 
-pub fn connector(
-) -> impl Service<Uri, Response = TurmoilConnection, Error = Error, Future = Fut> + Clone {
+pub fn connector()
+-> impl Service<Uri, Response = TurmoilConnection, Error = Error, Future = Fut> + Clone {
     tower::service_fn(|uri: Uri| {
         Box::pin(async move {
             let conn = TcpStream::connect(uri.authority().unwrap().as_str()).await?;

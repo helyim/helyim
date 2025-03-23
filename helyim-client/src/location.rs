@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::{DashMap, mapref::one::Ref};
 use faststr::FastStr;
 use helyim_common::{
-    parser::{parse_int, parse_vid_fid, ParseError},
+    parser::{parse_int, parse_vid_fid},
     types::VolumeId,
 };
 use rand::Rng;
@@ -36,13 +36,15 @@ impl LocationMap {
     }
 
     pub fn lookup_file_id(&self, file_id: &str) -> Result<String, ClientError> {
-        let (_, (vid, file_id)) = parse_vid_fid(file_id).map_err(Into::<ParseError>::into)?;
+        let (_, (vid, file_id)) =
+            parse_vid_fid(file_id).map_err(|err| ClientError::Box(Box::new(err.to_owned())))?;
         let url = self.lookup_volume_server_url(vid)?;
         Ok(format!("http://{url}/{vid},{file_id}"))
     }
 
     pub fn lookup_volume_server(&self, file_id: &str) -> Result<FastStr, ClientError> {
-        let (_, (vid, _file_id)) = parse_vid_fid(file_id).map_err(Into::<ParseError>::into)?;
+        let (_, (vid, _file_id)) =
+            parse_vid_fid(file_id).map_err(|err| ClientError::Box(Box::new(err.to_owned())))?;
         let url = self.lookup_volume_server_url(vid)?;
         Ok(url)
     }

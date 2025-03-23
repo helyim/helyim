@@ -3,19 +3,18 @@ use std::{
     result::Result as StdResult, sync::Arc, time::Duration,
 };
 
-use axum::{extract::DefaultBodyLimit, routing::get, Router};
+use axum::{Router, extract::DefaultBodyLimit, routing::get};
 use faststr::FastStr;
 use futures::Stream;
 use helyim_client::MasterClient;
 use helyim_common::{
     grpc_port,
     http::default_handler,
-    parser::{parse_addr, ParseError},
+    parser::{ParseError, parse_addr},
     sys::exit,
     time::timestamp_to_time,
 };
 use helyim_proto::filer::{
-    filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
     AppendToEntryRequest, AppendToEntryResponse, AssignVolumeRequest, AssignVolumeResponse,
     CollectionListRequest, CollectionListResponse, CreateEntryRequest, CreateEntryResponse,
     DeleteCollectionRequest, DeleteCollectionResponse, DeleteEntryRequest, DeleteEntryResponse,
@@ -23,20 +22,21 @@ use helyim_proto::filer::{
     ListEntriesResponse, Location, Locations, LookupDirectoryEntryRequest,
     LookupDirectoryEntryResponse, LookupVolumeRequest, LookupVolumeResponse, UpdateEntryRequest,
     UpdateEntryResponse,
+    filer_server::{Filer as HelyimFiler, FilerServer as HelyimFilerServer},
 };
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, transport::Server as TonicServer};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
-use super::http::{delete_handler, get_or_head_handler, post_handler, FilerState};
+use super::http::{FilerState, delete_handler, get_or_head_handler, post_handler};
 use crate::{
-    entry::{entry_attr_to_pb, pb_to_entry_attr, Entry},
+    FilerOptions,
+    entry::{Entry, entry_attr_to_pb, pb_to_entry_attr},
     file_chunk::{compact_file_chunks, find_unused_file_chunks, total_size},
     filer::{Filer, FilerError, FilerRef},
-    operation::{assign, AssignRequest},
-    FilerOptions,
+    operation::{AssignRequest, assign},
 };
 
 pub struct FilerServer {
@@ -304,7 +304,7 @@ impl HelyimFiler for FilerGrpcServer {
             None => {
                 return Err(Status::invalid_argument(
                     "can not create entry with empty attributes",
-                ))
+                ));
             }
         };
 
@@ -342,7 +342,7 @@ impl HelyimFiler for FilerGrpcServer {
                 return Err(Status::not_found(format!(
                     "entry {} not found under {}",
                     request_entry.name, request.directory
-                )))
+                )));
             }
         };
 

@@ -1,11 +1,12 @@
 use std::{net::SocketAddr, pin::Pin, result::Result as StdResult, sync::Arc, time::Duration};
 
-use axum::{extract::DefaultBodyLimit, middleware::from_fn_with_state, routing::get, Router};
+use async_broadcast::SendError;
+use axum::{Router, extract::DefaultBodyLimit, middleware::from_fn_with_state, routing::get};
 use dashmap::DashMap;
 use faststr::FastStr;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
     Stream, StreamExt,
+    channel::mpsc::{UnboundedSender, unbounded},
 };
 use helyim_client::MasterClient;
 use helyim_common::{
@@ -18,34 +19,34 @@ use helyim_common::{
     types::ReplicaPlacement,
 };
 use helyim_proto::directory::{
-    helyim_server::{Helyim, HelyimServer},
-    lookup_ec_volume_response::EcShardIdLocation,
-    lookup_volume_response::VolumeIdLocation,
     AssignRequest, AssignResponse, HeartbeatRequest, HeartbeatResponse, KeepConnectedRequest,
     Location, LookupEcVolumeRequest, LookupEcVolumeResponse, LookupVolumeRequest,
     LookupVolumeResponse, VolumeLocation,
+    helyim_server::{Helyim, HelyimServer},
+    lookup_ec_volume_response::EcShardIdLocation,
+    lookup_volume_response::VolumeIdLocation,
 };
 use helyim_topology::{
+    DataNodeRef, Topology, TopologyError, TopologyRef,
     node::Node,
-    raft::{create_raft_router, RaftServer},
+    raft::{RaftServer, create_raft_router},
     topology_vacuum_loop,
     volume_grow::{VolumeGrowOption, VolumeGrowth},
-    DataNodeRef, Topology, TopologyError, TopologyRef,
 };
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::{transport::Server as TonicServer, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, transport::Server as TonicServer};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{error, info};
 
 use crate::{
+    MasterOptions,
     errors::DirectoryError,
     get_or_default,
     http::{
-        assign_handler, cluster_status_handler, dir_status_handler, lookup_handler, require_leader,
-        DirectoryState,
+        DirectoryState, assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
+        require_leader,
     },
-    MasterOptions,
 };
 
 pub struct DirectoryServer {
@@ -97,7 +98,8 @@ impl DirectoryServer {
             "{}:{}",
             master.options.ip,
             grpc_port(master.options.port)
-        ))?;
+        ))
+        .map_err(|err| DirectoryError::Box(Box::new(err)))?;
         tokio::spawn(async move {
             info!("directory grpc server starting up. binding addr: {addr}");
             if let Err(err) = TonicServer::builder()
@@ -122,7 +124,7 @@ impl DirectoryServer {
         Ok(master)
     }
 
-    pub async fn stop(self) -> Result<(), DirectoryError> {
+    pub async fn stop(self) -> Result<(), SendError<()>> {
         self.shutdown.broadcast(()).await?;
         Ok(())
     }
@@ -140,7 +142,8 @@ impl DirectoryServer {
             volume_grow: self.volume_grow,
             options: self.options.clone(),
         };
-        let addr = parse_addr(&format!("{}:{}", self.options.ip, self.options.port))?;
+        let addr = parse_addr(&format!("{}:{}", self.options.ip, self.options.port))
+            .map_err(|err| DirectoryError::Box(Box::new(err)))?;
         let shutdown_rx = self.shutdown.new_receiver();
         let raft_router = create_raft_router(raft_server.clone());
 
@@ -467,7 +470,7 @@ impl Helyim for DirectoryGrpcServer {
                 return Err(Status::not_found(format!(
                     "ec volume {} not found",
                     request.volume_id
-                )))
+                )));
             }
         };
 

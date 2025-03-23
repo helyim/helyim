@@ -17,7 +17,7 @@ pub mod raft;
 
 mod topology;
 
-pub use topology::{tests, topology_vacuum_loop, Topology, TopologyError, TopologyRef};
+pub use topology::{Topology, TopologyError, TopologyRef, tests, topology_vacuum_loop};
 
 pub mod volume;
 pub mod volume_grow;

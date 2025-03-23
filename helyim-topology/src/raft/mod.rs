@@ -5,14 +5,15 @@ use std::{
 };
 
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     routing::{get, post},
-    Router,
 };
 use faststr::FastStr;
 use helyim_common::{parser::ParseError, types::VolumeId};
 use nom::{
     character::complete::{char, digit1},
+    error::Error,
     sequence::pair,
 };
 use openraft::{BasicNode, Config};
@@ -23,12 +24,12 @@ use crate::{
     raft::{
         client::RaftClient,
         network::{
+            NetworkFactory,
             api::{max_volume_id_handler, set_max_volume_id_handler},
             management::{
                 add_learner_handler, change_membership_handler, init_handler, metrics_handler,
             },
             raft::{append_entries_handler, install_snapshot_handler, vote_handler},
-            NetworkFactory,
         },
         store::{LogStore, StateMachineStore},
         types::{
@@ -232,7 +233,8 @@ impl RaftServer {
 }
 
 pub fn parse_raft_peer(input: &str) -> Result<(NodeId, &str), ParseError> {
-    let (input, (node_id, _)) = pair(digit1, char(':'))(input)?;
+    let (input, (node_id, _)) = pair(digit1, char(':'))(input)
+        .map_err(|err: nom::Err<Error<&str>>| ParseError::Box(Box::new(err.to_owned())))?;
     Ok((node_id.parse()?, input))
 }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::{mapref::one::RefMut, DashMap};
+use dashmap::{DashMap, mapref::one::RefMut};
 use helyim_common::{
     ttl::Ttl,
     types::{ReplicaPlacement, VolumeId},
@@ -11,7 +11,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    node::Node, volume::VolumeInfo, volume_grow::VolumeGrowOption, DataNodeRef, TopologyError,
+    DataNodeRef, TopologyError, node::Node, volume::VolumeInfo, volume_grow::VolumeGrowOption,
 };
 
 #[derive(Serialize)]

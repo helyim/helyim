@@ -3,16 +3,16 @@ use std::{
 };
 
 use axum::{
+    Json,
     body::Body,
     extract::State,
     http::{
-        header::{
-            HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
-            CONTENT_LENGTH, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
-        },
         Response, StatusCode,
+        header::{
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, HeaderName,
+            HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+        },
     },
-    Json,
 };
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -22,7 +22,7 @@ use helyim_common::{
     compression::ungzip,
     consts::PAIR_NAME_PREFIX,
     crc, http,
-    http::{header_value_str, parse_boundary, HttpError, HTTP_DATE_FORMAT},
+    http::{HTTP_DATE_FORMAT, HttpError, header_value_str, parse_boundary},
     operation::{ParseUpload, UploadResult},
     parser::{parse_ext, parse_url_path},
     time::now,
@@ -32,12 +32,12 @@ use helyim_common::{
 use helyim_topology::volume::VolumeInfo;
 use mime_guess::mime;
 use multer::Multipart;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, error, info};
 
 use crate::{
     http::extractor::{DeleteExtractor, GetOrHeadExtractor, PostExtractor},
-    needle::{Needle, NeedleError, NeedleMapType},
+    needle::{Needle, NeedleMapType},
     operation::Looker,
     store::StoreRef,
     volume::VolumeError,
@@ -74,7 +74,7 @@ pub async fn status_handler(State(state): State<StorageState>) -> Json<Value> {
 pub async fn delete_handler(
     State(state): State<StorageState>,
     extractor: DeleteExtractor,
-) -> Result<Json<Value>, NeedleError> {
+) -> Result<Json<Value>, VolumeError> {
     let (vid, fid, _, _) = parse_url_path(extractor.uri.path())?;
     let is_replicate = extractor.query.r#type == Some("replicate".into());
 
@@ -87,12 +87,11 @@ pub async fn delete_handler(
             "cookie not match from {:?} recv: {}, file is {}",
             extractor.host, cookie, needle.cookie
         );
-        return Err(NeedleError::CookieNotMatch(needle.cookie, cookie));
+        return Err(VolumeError::NeedleCookieNotMatch(needle.cookie, cookie));
     }
 
-    let size = replicate_delete(&state, extractor.uri.path(), vid, &mut needle, is_replicate)
-        .await
-        .map_err(|err| NeedleError::Box(err.into()))?;
+    let size =
+        replicate_delete(&state, extractor.uri.path(), vid, &mut needle, is_replicate).await?;
     let size = json!({ "size": size });
 
     Ok(Json(size))
@@ -416,7 +415,7 @@ pub async fn get_or_head_handler(
     }
 
     if needle.cookie != cookie {
-        return Err(NeedleError::CookieNotMatch(needle.cookie, cookie).into());
+        return Err(VolumeError::NeedleCookieNotMatch(needle.cookie, cookie));
     }
 
     // TODO: ignore datetime parsing error

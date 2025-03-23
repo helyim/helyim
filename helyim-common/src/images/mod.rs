@@ -15,10 +15,8 @@ impl Favicon {
         }
     }
     pub fn bytes(&self) -> &[u8] {
-        let buf = self
-            .cell
-            .get_or_init(|| Bytes::from_static(include_bytes!("favicon/favicon.ico")));
-        buf
+        self.cell
+            .get_or_init(|| Bytes::from_static(include_bytes!("favicon/favicon.ico")))
     }
 }
 

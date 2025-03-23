@@ -1,7 +1,7 @@
 use std::{io::Cursor, net::AddrParseError};
 
 use helyim_common::types::VolumeId;
-use openraft::{error::InstallSnapshotError, BasicNode, TokioRuntime};
+use openraft::{BasicNode, TokioRuntime, error::InstallSnapshotError};
 use serde::{Deserialize, Serialize};
 
 pub type NodeId = u64;
@@ -48,8 +48,6 @@ pub enum RaftError {
     Io(#[from] std::io::Error),
     #[error("error: {0}")]
     Box(#[from] Box<dyn std::error::Error + Sync + Send>),
-    #[error("{0}")]
-    String(String),
     #[error("Parse integer error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
     #[error("Addr parse error: {0}")]

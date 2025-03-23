@@ -9,24 +9,24 @@ use axum::{
     body::Body,
     extract::State,
     http::{
+        HeaderMap, HeaderValue, Method, Response,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE,
             CONTENT_TYPE, HOST, RANGE,
         },
-        HeaderMap, HeaderValue, Method, Response,
     },
 };
 use bytes::{Buf, Bytes, BytesMut};
 use faststr::FastStr;
-use futures_util::{future::join_all, StreamExt};
+use futures_util::{StreamExt, future::join_all};
 use helyim_common::{
     anyhow,
     file::file_name,
     http::{
-        content_range, get_etag, header_value_str, http_error, parse_boundary, range_header,
-        ranges_mime_size, read_url, request, set_etag, trim_trailing_slash, HttpError,
+        HttpError, content_range, get_etag, header_value_str, http_error, parse_boundary,
+        range_header, ranges_mime_size, read_url, request, set_etag, trim_trailing_slash,
     },
-    operation::{upload, UploadResult},
+    operation::{UploadResult, upload},
     parser::parse_int,
     time::now,
     ttl::Ttl,
@@ -36,8 +36,8 @@ use http_range::HttpRange;
 use hyper::StatusCode;
 use multer::Multipart;
 use reqwest::{
-    multipart::{Form, Part},
     Url,
+    multipart::{Form, Part},
 };
 use rustix::{
     path::Arg,
@@ -46,14 +46,14 @@ use rustix::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    FilerOptions,
     entry::{Attr, Entry},
-    file_chunk::{etag, total_size, ChunkView},
+    file_chunk::{ChunkView, etag, total_size},
     filer::{FilerError, FilerRef},
     http::extractor::{
         DeleteExtractor, FilerPostResult, GetOrHeadExtractor, ListDir, PostExtractor,
     },
-    operation::{assign, AssignRequest},
-    FilerOptions,
+    operation::{AssignRequest, assign},
 };
 
 mod extractor;
@@ -396,11 +396,11 @@ impl FilerState {
         }
         info!("auto chunking level set to {max_mb} (MB)");
 
-        let chunk_size = 1024 * 1024 * max_mb as u64;
-        let mut content_len = 0;
+        let chunk_size = 1024 * 1024 * max_mb as i64;
+        let mut content_len = 0i64;
 
         if let Some(len) = extractor.headers.get(CONTENT_LENGTH) {
-            content_len = parse_int::<u64>(header_value_str(len)?)?;
+            content_len = parse_int::<i64>(header_value_str(len)?)?;
             if content_len <= chunk_size {
                 info!("content-length: {content_len} is less than the chunk size: {chunk_size}");
                 return Ok(false);
@@ -420,7 +420,7 @@ impl FilerState {
             .do_auto_chunk(
                 response,
                 extractor,
-                content_len,
+                content_len as u64,
                 chunk_size as u32,
                 replication,
                 collection,
@@ -709,7 +709,7 @@ pub async fn get_or_head_handler(
 
 pub async fn post_handler(
     State(state): State<FilerState>,
-    mut extractor: PostExtractor,
+    extractor: PostExtractor,
 ) -> Result<Response<Body>, FilerError> {
     let replication = match &extractor.query.replication {
         Some(replication) => replication.clone(),
@@ -728,7 +728,7 @@ pub async fn post_handler(
     let auto_chunked = state
         .auto_chunk(
             &mut response,
-            &mut extractor,
+            &extractor,
             replication.clone(),
             collection.clone(),
             data_center.clone(),

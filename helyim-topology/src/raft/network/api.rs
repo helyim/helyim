@@ -1,12 +1,12 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use helyim_common::types::VolumeId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     node::Node,
     raft::{
-        types::{ClientWriteError, ClientWriteResponse, OpenRaftError, RaftRequest},
         RaftServer,
+        types::{ClientWriteError, ClientWriteResponse, OpenRaftError, RaftRequest},
     },
 };
 

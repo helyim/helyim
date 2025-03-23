@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_stream::stream;
-use axum::{extract::DefaultBodyLimit, routing::get, Router};
+use axum::{Router, extract::DefaultBodyLimit, routing::get};
 use faststr::FastStr;
 use helyim_client::helyim_client;
 use helyim_common::{
@@ -17,14 +17,13 @@ use helyim_common::{
     version::Version,
 };
 use helyim_ec::{
-    ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file,
+    ShardId, ec_shard_base_filename, find_data_filesize, rebuild_ec_files, rebuild_ecx_file,
     save_volume_info, to_ext, write_data_file, write_ec_files, write_index_file_from_ec_index,
-    write_sorted_file_from_index, ShardId,
+    write_sorted_file_from_index,
 };
 use helyim_proto::{
     directory::HeartbeatRequest,
     volume::{
-        volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
         AllocateVolumeRequest, AllocateVolumeResponse, BatchDeleteRequest, BatchDeleteResponse,
         VacuumVolumeCheckRequest, VacuumVolumeCheckResponse, VacuumVolumeCleanupRequest,
         VacuumVolumeCleanupResponse, VacuumVolumeCommitRequest, VacuumVolumeCommitResponse,
@@ -37,30 +36,31 @@ use helyim_proto::{
         VolumeEcShardsToVolumeRequest, VolumeEcShardsToVolumeResponse,
         VolumeEcShardsUnmountRequest, VolumeEcShardsUnmountResponse, VolumeInfo,
         VolumeMarkReadonlyRequest, VolumeMarkReadonlyResponse,
+        volume_server_server::{VolumeServer as HelyimVolumeServer, VolumeServerServer},
     },
 };
 use tokio::{net::TcpListener, time::sleep};
-use tokio_stream::{wrappers::UnboundedReceiverStream, Stream, StreamExt};
-use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tokio_stream::{Stream, StreamExt, wrappers::UnboundedReceiverStream};
+use tonic::{Request, Response, Status, transport::Server as TonicServer};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     args::VolumeOptions,
     http::{
-        delete_handler,
+        StorageState, delete_handler,
         erasure_coding::{
             generate_ec_shards_handler, generate_volume_from_ec_shards_handler,
             rebuild_missing_ec_shards_handler,
         },
-        get_or_head_handler, post_handler, status_handler, StorageState,
+        get_or_head_handler, post_handler, status_handler,
     },
     needle::NeedleMapType,
     operation::Looker,
     store::{Store, StoreRef},
     volume::{
-        delta_volume::{delta_volume_channel, DeltaVolumeInfoReceiver},
         VolumeError,
+        delta_volume::{DeltaVolumeInfoReceiver, delta_volume_channel},
     },
 };
 
@@ -266,7 +266,7 @@ impl VolumeServer {
             }
         };
 
-        let client = helyim_client(master)?;
+        let client = helyim_client(master).map_err(|err| VolumeError::Box(Box::new(err)))?;
         match client.heartbeat(request_stream).await {
             Ok(response) => {
                 let mut stream = response.into_inner();

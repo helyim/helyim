@@ -1,21 +1,21 @@
 use std::{
     fmt::Display,
-    fs::{self, metadata, File},
+    fs::{self, File, metadata},
     io,
     io::ErrorKind,
     os::unix::fs::{FileExt, OpenOptionsExt},
     path::Path,
     string::FromUtf8Error,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
     },
 };
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use faststr::FastStr;
 use helyim_common::{
@@ -25,13 +25,13 @@ use helyim_common::{
     http::HttpError,
     parser::ParseError,
     sequence::SequenceError,
-    time::{get_time, now, TimeError},
+    time::{TimeError, get_time, now},
     ttl::Ttl,
     types::{NeedleId, NeedleValue, Offset, ReplicaPlacement, SuperBlock, VolumeId},
     version::Version,
 };
 use helyim_ec::EcVolumeError;
-use helyim_topology::{volume::VolumeInfo, TopologyError};
+use helyim_topology::{TopologyError, volume::VolumeInfo};
 use parking_lot::RwLock;
 use rustix::fs::ftruncate;
 use serde_json::json;
@@ -39,7 +39,7 @@ use tonic::Status;
 use tracing::{debug, error, info};
 
 use crate::{
-    needle::{read_needle_header, Needle, NeedleError, NeedleMapType, NeedleMapper},
+    needle::{Needle, NeedleError, NeedleMapType, NeedleMapper, read_needle_header},
     volume::checking::check_volume_data_integrity,
 };
 
@@ -371,7 +371,7 @@ impl Volume {
     pub fn data_file(&self) -> Result<&File, io::Error> {
         match self.data_file.as_ref() {
             Some(data_file) => Ok(data_file),
-            None => Err(io::Error::new(ErrorKind::Other, "Data file is not loaded")),
+            None => Err(io::Error::other("Data file is not loaded")),
         }
     }
 
@@ -658,6 +658,9 @@ pub enum VolumeError {
     Compacting(VolumeId),
     #[error("Needle error: {0}")]
     Needle(#[from] NeedleError),
+    #[error("Needle cookie not match, required cookie is {0} but got {1}")]
+    NeedleCookieNotMatch(u32, u32),
+
     #[error("Topology error: {0}")]
     Topology(#[from] TopologyError),
     #[error("NeedleMapper is not load, volume: {0}")]
@@ -676,8 +679,6 @@ pub enum VolumeError {
     LeaderChanged(FastStr, FastStr),
     #[error("Broadcast send error: {0}")]
     BroadcastSend(#[from] async_broadcast::SendError<()>),
-    #[error("Tonic error: {0}")]
-    Tonic(#[from] Status),
 }
 
 impl From<VolumeError> for Status {
@@ -781,7 +782,7 @@ where
                 if err.kind() == ErrorKind::UnexpectedEof {
                     return Ok(());
                 }
-                return Err(VolumeError::Needle(NeedleError::Io(err)));
+                return Err(VolumeError::Io(err));
             }
         }
     }
@@ -803,7 +804,7 @@ pub mod tests {
 
     use crate::{
         needle::{Needle, NeedleMapType},
-        volume::{scan_volume_file, SuperBlock, Volume},
+        volume::{SuperBlock, Volume, scan_volume_file},
     };
 
     pub fn setup(dir: FastStr) -> Volume {

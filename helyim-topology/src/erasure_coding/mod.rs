@@ -4,7 +4,7 @@ use helyim_common::types::VolumeId;
 use helyim_ec::{EcVolumeInfo, ShardId, TOTAL_SHARDS_COUNT};
 use helyim_proto::directory::VolumeEcShardInformationMessage;
 
-use crate::{node::Node, DataNodeRef, Topology};
+use crate::{DataNodeRef, Topology, node::Node};
 
 mod data_node;
 

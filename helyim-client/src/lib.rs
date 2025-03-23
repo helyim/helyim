@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::{ops::Deref, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
@@ -6,7 +8,6 @@ use faststr::FastStr;
 use helyim_common::{parser::ParseError, types::VolumeId};
 use helyim_proto::directory::KeepConnectedRequest;
 use tokio_stream::StreamExt;
-use tonic::Status;
 use tracing::{debug, error, info, warn};
 
 use crate::location::{Location, LocationMap};
@@ -75,7 +76,7 @@ impl MasterClient {
         };
 
         debug!("connecting to master: {master}");
-        let client = helyim_client(&master)?;
+        let client = helyim_client(&master).map_err(|err| ClientError::Box(Box::new(err)))?;
         let mut next_hinted_leader = FastStr::empty();
         match client.keep_connected(request_stream).await {
             Ok(response) => {
@@ -106,7 +107,10 @@ impl MasterClient {
                         }
                         Err(err) => {
                             error!("{} failed to received from {master}", self.name);
-                            return Err(ClientError::KeepConnected(master, err));
+                            return Err(ClientError::KeepConnected(
+                                master.to_string(),
+                                err.to_string(),
+                            ));
                         }
                     }
                 }
@@ -114,7 +118,10 @@ impl MasterClient {
             }
             Err(status) => {
                 warn!("keep connected to {master} error: {}", status.message());
-                Err(ClientError::KeepConnected(master, status))
+                Err(ClientError::KeepConnected(
+                    master.to_string(),
+                    status.to_string(),
+                ))
             }
         }
     }
@@ -140,10 +147,7 @@ pub enum ClientError {
     VolumeNotFound(VolumeId),
 
     #[error("Keep connected to {0} error: {1}")]
-    KeepConnected(FastStr, Status),
-
-    #[error("Tonic error: {0}")]
-    Tonic(#[from] Status),
+    KeepConnected(String, String),
 
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),

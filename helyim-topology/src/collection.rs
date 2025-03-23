@@ -9,8 +9,8 @@ use helyim_common::{
 use serde::Serialize;
 
 use crate::{
-    volume_layout::{VolumeLayout, VolumeLayoutRef},
     DataNodeRef,
+    volume_layout::{VolumeLayout, VolumeLayoutRef},
 };
 
 #[derive(Clone, Serialize)]

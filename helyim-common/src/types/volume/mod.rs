@@ -9,7 +9,7 @@ use tokio::io;
 use crate::{
     consts::SUPER_BLOCK_SIZE,
     ttl::Ttl,
-    version::{Version, CURRENT_VERSION},
+    version::{CURRENT_VERSION, Version},
 };
 
 mod replica_placement;

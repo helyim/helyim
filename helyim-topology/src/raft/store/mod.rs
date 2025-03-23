@@ -5,9 +5,9 @@ use std::{
 };
 
 use openraft::{
-    storage::{RaftStateMachine, Snapshot},
     BasicNode, Entry, EntryPayload, LogId, RaftSnapshotBuilder, RaftTypeConfig, SnapshotMeta,
     StorageError, StorageIOError, StoredMembership,
+    storage::{RaftStateMachine, Snapshot},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;

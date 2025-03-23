@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use openraft::{
     error::InstallSnapshotError,
     raft::{
@@ -8,8 +8,8 @@ use openraft::{
 };
 
 use crate::raft::{
-    types::{NodeId, OpenRaftError, TypeConfig},
     RaftServer,
+    types::{NodeId, OpenRaftError, TypeConfig},
 };
 
 pub async fn vote_handler(

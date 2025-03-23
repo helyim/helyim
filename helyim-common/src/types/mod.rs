@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 mod file_id;
 pub use file_id::FileId;
 mod needle;
-pub use needle::{read_index_entry, walk_index_file, NeedleId, NeedleValue, Offset, Size};
+pub use needle::{NeedleId, NeedleValue, Offset, Size, read_index_entry, walk_index_file};
 
 mod volume;
 pub use volume::{ReplicaPlacement, SuperBlock, VolumeId};

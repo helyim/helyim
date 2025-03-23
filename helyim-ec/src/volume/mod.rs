@@ -13,18 +13,18 @@ use futures::io;
 use helyim_common::{
     consts::NEEDLE_ID_SIZE,
     types::{NeedleId, NeedleValue, VolumeId},
-    version::{Version, VERSION2},
+    version::{VERSION2, Version},
 };
 use helyim_proto::{directory::VolumeEcShardInformationMessage, volume::VolumeInfo};
 use tokio::sync::RwLock;
 
 use crate::{
+    DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE, ShardId,
     errors::EcVolumeError,
-    locate::{locate_data, Interval},
+    locate::{Interval, locate_data},
     mark_needle_deleted, search_needle_from_sorted_index,
-    shard::{ec_shard_filename, EcVolumeShard},
+    shard::{EcVolumeShard, ec_shard_filename},
     volume_info::{maybe_load_volume_info, save_volume_info},
-    ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
 };
 
 pub struct EcVolume {
@@ -178,7 +178,7 @@ impl EcVolume {
         self.collection.clone()
     }
 
-    pub async fn destroy(&self) -> Result<(), EcVolumeError> {
+    pub async fn destroy(&self) -> Result<(), io::Error> {
         let filename = self.filename();
         for shard in self.shards.read().await.iter() {
             shard.destroy()?;

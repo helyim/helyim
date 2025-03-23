@@ -1,5 +1,5 @@
 mod assign;
-pub use assign::{assign, AssignRequest};
+pub use assign::{AssignRequest, assign};
 
 mod lookup;
 pub use lookup::{Location, Lookup};

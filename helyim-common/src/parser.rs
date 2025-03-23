@@ -6,13 +6,12 @@ use std::{
 };
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::take_till,
     character::complete::{alphanumeric1, char, digit1},
     combinator::opt,
-    error::Error,
     sequence::{pair, tuple},
-    Err, IResult,
 };
 
 use crate::types::VolumeId;
@@ -25,7 +24,8 @@ pub fn parse_url_path(input: &str) -> Result<(VolumeId, &str, &str, &str), Parse
     ))(input)
     .map(|(input, (_, (vid, fid), filename))| {
         (vid, fid, filename.map(|(_, filename)| filename), input)
-    })?;
+    })
+    .map_err(|err| ParseError::Box(Box::new(err.to_owned())))?;
     Ok((vid.parse()?, fid, filename.unwrap_or(""), ext))
 }
 
@@ -69,19 +69,12 @@ pub fn parse_ext(filename: &str) -> String {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
+    #[error("{0}")]
+    Box(Box<dyn std::error::Error + Sync + Send>),
     #[error("ParseInt error: {0}")]
     ParseInt(#[from] ParseIntError),
     #[error("AddrParse error: {0}")]
     AddrParse(#[from] AddrParseError),
-
-    #[error("{0}")]
-    String(String),
-}
-
-impl From<Err<Error<&str>>> for ParseError {
-    fn from(value: Err<Error<&str>>) -> Self {
-        Self::String(value.to_string())
-    }
 }
 
 pub fn parse_int<I: std::str::FromStr>(num: &str) -> Result<I, ParseError>

@@ -1,4 +1,4 @@
-use rustix::process::{getpid, kill_process, Signal};
+use rustix::process::{Signal, getpid, kill_process};
 use tokio::signal;
 
 /// Exit by terminate signal

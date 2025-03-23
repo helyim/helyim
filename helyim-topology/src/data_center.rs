@@ -6,7 +6,7 @@ use helyim_common::types::VolumeId;
 use serde::Serialize;
 
 use crate::{
-    node::{downcast_rack, Node, NodeImpl},
+    node::{Node, NodeImpl, downcast_rack},
     rack::{Rack, RackRef},
     topology::TopologyError,
 };

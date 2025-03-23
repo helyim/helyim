@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use crate::types::{needle::NeedleId, VolumeId};
+use crate::types::{VolumeId, needle::NeedleId};
 
 #[derive(Copy, Clone)]
 pub struct FileId {

@@ -1,10 +1,10 @@
 use std::{fs::File, io, os::unix::fs::FileExt, sync::Arc};
 
-use helyim_common::types::{walk_index_file, NeedleId, NeedleValue, VolumeId};
+use helyim_common::types::{NeedleId, NeedleValue, VolumeId, walk_index_file};
 use tracing::{debug, error};
 
 use crate::{
-    needle::{metric::Metric, MemoryNeedleValueMap, NeedleValueMap},
+    needle::{MemoryNeedleValueMap, NeedleValueMap, metric::Metric},
     volume::VolumeError,
 };
 

@@ -24,23 +24,23 @@ use helyim_common::{
         TOMBSTONE_FILE_SIZE,
     },
     file::file_exists,
-    types::{read_index_entry, NeedleId, NeedleValue},
+    types::{NeedleId, NeedleValue, read_index_entry},
 };
 
 mod locate;
 pub use locate::Interval;
 
 mod shard;
-pub use shard::{ec_shard_base_filename, ec_shard_filename, EcVolumeShard};
+pub use shard::{EcVolumeShard, ec_shard_base_filename, ec_shard_filename};
 
 mod store;
 
 mod volume;
-pub use volume::{add_shard_id, EcVolume};
+pub use volume::{EcVolume, add_shard_id};
 
 mod needle;
 mod volume_info;
-pub use volume_info::{maybe_load_volume_info, save_volume_info, EcVolumeInfo, ShardBits};
+pub use volume_info::{EcVolumeInfo, ShardBits, maybe_load_volume_info, save_volume_info};
 pub type ShardId = u8;
 
 pub const DATA_SHARDS_COUNT: u32 = 10;

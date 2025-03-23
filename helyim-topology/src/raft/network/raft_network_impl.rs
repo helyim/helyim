@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 
 use openraft::{
+    BasicNode,
     error::{InstallSnapshotError, RemoteError, Unreachable},
     network::{RPCOption, RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
-    BasicNode,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tracing::{error, info};
 
 use crate::raft::{

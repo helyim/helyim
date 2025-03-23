@@ -15,16 +15,16 @@ use helyim_common::{
         NEEDLE_INDEX_SIZE, NEEDLE_PADDING_SIZE, SUPER_BLOCK_SIZE,
     },
     time::now,
-    types::{read_index_entry, walk_index_file, NeedleValue},
+    types::{NeedleValue, read_index_entry, walk_index_file},
 };
 use tracing::{debug, error, info};
 
 use crate::{
-    needle::{read_needle_blob, Needle, NeedleMapper},
+    needle::{Needle, NeedleMapper, read_needle_blob},
     volume::{
-        append_needle_at,
+        SuperBlock, Volume, VolumeError, append_needle_at,
         checking::{read_index_entry_at_offset, verify_index_file_integrity},
-        scan_volume_file, SuperBlock, Volume, VolumeError,
+        scan_volume_file,
     },
 };
 

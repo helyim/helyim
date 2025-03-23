@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug, ops::RangeBounds, sync::Arc};
 
 use openraft::{
-    storage::LogFlushed, LogId, LogState, RaftLogId, RaftTypeConfig, StorageError, Vote,
+    LogId, LogState, RaftLogId, RaftTypeConfig, StorageError, Vote, storage::LogFlushed,
 };
 use tokio::sync::Mutex;
 
@@ -54,17 +54,13 @@ impl<C: RaftTypeConfig> LogStoreInner<C> {
     }
 
     async fn get_log_state(&mut self) -> Result<LogState<C>, StorageError<C::NodeId>> {
-        let last = self
-            .log
-            .iter()
-            .next_back()
-            .map(|(_, ent)| ent.get_log_id().clone());
+        let last = self.log.iter().next_back().map(|(_, ent)| ent.get_log_id());
 
-        let last_purged = self.last_purged_log_id.clone();
+        let last_purged = self.last_purged_log_id;
 
         let last = match last {
-            None => last_purged.clone(),
-            Some(x) => Some(x),
+            None => last_purged,
+            Some(x) => Some(*x),
         };
 
         Ok(LogState {
@@ -84,16 +80,16 @@ impl<C: RaftTypeConfig> LogStoreInner<C> {
     async fn read_committed(
         &mut self,
     ) -> Result<Option<LogId<C::NodeId>>, StorageError<C::NodeId>> {
-        Ok(self.committed.clone())
+        Ok(self.committed)
     }
 
     async fn save_vote(&mut self, vote: &Vote<C::NodeId>) -> Result<(), StorageError<C::NodeId>> {
-        self.vote = Some(vote.clone());
+        self.vote = Some(*vote);
         Ok(())
     }
 
     async fn read_vote(&mut self) -> Result<Option<Vote<C::NodeId>>, StorageError<C::NodeId>> {
-        Ok(self.vote.clone())
+        Ok(self.vote)
     }
 
     async fn append<I>(
@@ -130,7 +126,7 @@ impl<C: RaftTypeConfig> LogStoreInner<C> {
         {
             let ld = &mut self.last_purged_log_id;
             assert!(ld.as_ref() <= Some(&log_id));
-            *ld = Some(log_id.clone());
+            *ld = Some(log_id);
         }
 
         {
@@ -152,8 +148,8 @@ mod impl_log_store {
     use std::{fmt::Debug, ops::RangeBounds};
 
     use openraft::{
-        storage::{LogFlushed, RaftLogStorage},
         LogId, LogState, RaftLogReader, RaftTypeConfig, StorageError, Vote,
+        storage::{LogFlushed, RaftLogStorage},
     };
 
     use crate::raft::store::log_store::LogStore;

@@ -12,10 +12,10 @@ use rand::Rng;
 use tracing::{debug, error};
 
 use crate::{
-    node::{downcast_node, Node},
+    DataNodeRef,
+    node::{Node, downcast_node},
     topology::{Topology, TopologyError},
     volume::VolumeInfo,
-    DataNodeRef,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -203,7 +203,8 @@ impl VolumeGrowth {
                 ttl: option.ttl.to_string(),
                 preallocate: option.preallocate,
             })
-            .await?;
+            .await
+            .map_err(|err| TopologyError::Box(Box::new(err)))?;
 
             let volume_info = VolumeInfo {
                 id: vid,
@@ -308,12 +309,12 @@ mod tests {
     use helyim_common::types::{ReplicaPlacement, VolumeId};
 
     use crate::{
+        DataNodeRef,
         data_node::DataNode,
-        node::{downcast_node, Node},
+        node::{Node, downcast_node},
         topology::tests::setup_topo,
         volume::VolumeInfo,
-        volume_grow::{randomly_pick_nodes, VolumeGrowOption, VolumeGrowth},
-        DataNodeRef,
+        volume_grow::{VolumeGrowOption, VolumeGrowth, randomly_pick_nodes},
     };
 
     fn data_node(volume_id: VolumeId, ip: &str, port: u16) -> DataNodeRef {

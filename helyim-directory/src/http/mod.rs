@@ -1,18 +1,18 @@
 mod extractor;
 use std::sync::Arc;
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 pub use extractor::require_leader;
 use faststr::FastStr;
 use helyim_common::{http::FormOrJson, operation::ClusterStatus};
 use helyim_topology::{
-    node::Node, volume_grow::VolumeGrowth, Topology, TopologyError, TopologyRef,
+    Topology, TopologyError, TopologyRef, node::Node, volume_grow::VolumeGrowth,
 };
 use tracing::debug;
 
 use crate::{
-    operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
     MasterOptions,
+    operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
 };
 
 #[derive(Clone)]
@@ -126,7 +126,7 @@ mod tests {
         time::Duration,
     };
 
-    use axum::{body::Body, http::Request, routing::get, Router};
+    use axum::{Router, body::Body, http::Request, routing::get};
     use faststr::FastStr;
     use futures::executor::block_on;
     use helyim_common::{connector, http::default_handler};
@@ -134,22 +134,22 @@ mod tests {
     use http_body_util::BodyExt as _;
     use hyper::Method;
     use hyper_util::{
-        client::legacy::{connect::Connect, Client},
+        client::legacy::{Client, connect::Connect},
         rt::TokioExecutor,
     };
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
-    use tracing::{info_span, Instrument};
+    use tracing::{Instrument, info_span};
     use turmoil::Builder;
 
     use crate::{
+        MasterOptions,
         args::RaftOptions,
         http::{
-            assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-            DirectoryState,
+            DirectoryState, assign_handler, cluster_status_handler, dir_status_handler,
+            lookup_handler,
         },
         operation::Assignment,
-        MasterOptions,
     };
 
     #[test]

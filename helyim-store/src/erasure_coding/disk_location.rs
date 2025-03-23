@@ -1,4 +1,4 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, io, path::Path, sync::Arc};
 
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
@@ -19,7 +19,7 @@ impl DiskLocation {
         self.ec_volumes.get(&vid)
     }
 
-    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
+    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), io::Error> {
         if let Some((_, volume)) = self.ec_volumes.remove(&vid) {
             volume.destroy().await?;
         }

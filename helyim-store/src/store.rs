@@ -3,8 +3,8 @@ use std::{
     io::ErrorKind,
     result::Result as StdResult,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -26,7 +26,7 @@ use crate::{
     args::VolumeOptions,
     disk_location::DiskLocation,
     needle::{Needle, NeedleError, NeedleMapType},
-    volume::{delta_volume::DeltaVolumeInfoSender, Volume, VolumeError},
+    volume::{Volume, VolumeError, delta_volume::DeltaVolumeInfoSender},
 };
 
 const MAX_TTL_VOLUME_REMOVAL_DELAY_MINUTES: u64 = 10;
@@ -160,7 +160,7 @@ impl Store {
         &self,
         vid: VolumeId,
         needle: &mut Needle,
-    ) -> Result<usize, NeedleError> {
+    ) -> Result<usize, VolumeError> {
         match self.find_volume(vid) {
             Some(volume) => Ok(volume.read_needle(needle)?),
             None => Err(io::Error::new(
@@ -432,7 +432,7 @@ pub type StoreRef = Arc<Store>;
 mod tests {
     use std::time::Duration;
 
-    use futures::{channel::mpsc::channel, SinkExt, StreamExt};
+    use futures::{SinkExt, StreamExt, channel::mpsc::channel};
     use tokio::time::timeout;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

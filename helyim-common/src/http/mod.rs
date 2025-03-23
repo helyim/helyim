@@ -4,8 +4,8 @@ use axum::{
     body::Body as AxumBody,
     extract::multipart::MultipartError,
     http::{
-        header::{ToStrError, CONTENT_RANGE, X_CONTENT_TYPE_OPTIONS},
         HeaderValue, Response as AxumResponse, StatusCode,
+        header::{CONTENT_RANGE, ToStrError, X_CONTENT_TYPE_OPTIONS},
     },
     response::Html,
 };
@@ -13,15 +13,15 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use http_range::HttpRange;
 use hyper::{
-    header::{InvalidHeaderName, InvalidHeaderValue, CONTENT_TYPE, RANGE},
-    http::uri::InvalidUri,
     HeaderMap, Method,
+    header::{CONTENT_TYPE, InvalidHeaderName, InvalidHeaderValue, RANGE},
+    http::uri::InvalidUri,
 };
 use once_cell::sync::Lazy;
 use reqwest::{
+    Body, Response,
     header::ETAG,
     multipart::{Form, Part},
-    Body, Response,
 };
 use tracing::debug;
 use url::Url;

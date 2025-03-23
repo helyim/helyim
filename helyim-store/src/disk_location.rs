@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use dashmap::{
-    mapref::one::{Ref, RefMut},
     DashMap,
+    mapref::one::{Ref, RefMut},
 };
 use faststr::FastStr;
 use futures::future::join_all;

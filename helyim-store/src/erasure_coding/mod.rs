@@ -1,4 +1,5 @@
 use std::{
+    io,
     io::ErrorKind,
     ops::Add,
     os::unix::fs::FileExt,
@@ -9,25 +10,23 @@ use std::{
 use bytes::Bytes;
 use dashmap::mapref::one::Ref;
 use faststr::FastStr;
-use futures::{channel::mpsc::channel, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, channel::mpsc::channel};
 use helyim_client::{helyim_client, volume_server_client};
 use helyim_common::types::{NeedleId, VolumeId};
 use helyim_ec::{
-    add_shard_id, EcShardError, EcVolume, EcVolumeError, EcVolumeShard, Interval, ShardId,
     DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
-    PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
+    EcShardError, EcVolume, EcVolumeError, EcVolumeShard, Interval, PARITY_SHARDS_COUNT, ShardId,
+    TOTAL_SHARDS_COUNT, add_shard_id,
 };
 use helyim_proto::{
     directory::{HeartbeatRequest, LookupEcVolumeRequest, VolumeEcShardInformationMessage},
     volume::VolumeEcShardReadRequest,
 };
-use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
+use reed_solomon_erasure::{ReedSolomon, galois_8::Field};
+use tonic::Status;
 use tracing::{error, info};
 
-use crate::{
-    needle::{Needle, NeedleError},
-    store::Store,
-};
+use crate::{needle::Needle, store::Store};
 
 mod disk_location;
 
@@ -59,7 +58,7 @@ impl Store {
         None
     }
 
-    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), EcVolumeError> {
+    pub async fn destroy_ec_volume(&self, vid: VolumeId) -> Result<(), io::Error> {
         for location in self.locations.iter() {
             location.destroy_ec_volume(vid).await?;
         }
@@ -138,9 +137,7 @@ impl Store {
                     .locate_ec_shard_needle(needle.id, volume.version)
                     .await?;
                 if index.size.is_deleted() {
-                    return Err(EcVolumeError::Box(
-                        NeedleError::Deleted(vid, needle.id).into(),
-                    ));
+                    return Err(EcVolumeError::NeedleNotFound(vid, needle.id));
                 }
 
                 info!(
@@ -153,11 +150,10 @@ impl Store {
 
                 let (bytes, is_deleted) = self
                     .read_ec_shard_intervals(needle.id, volume.value(), intervals)
-                    .await?;
+                    .await
+                    .map_err(|err| EcVolumeError::Box(Box::new(err)))?;
                 if is_deleted {
-                    return Err(EcVolumeError::Box(
-                        NeedleError::Deleted(vid, needle.id).into(),
-                    ));
+                    return Err(EcVolumeError::NeedleNotFound(vid, needle.id));
                 }
 
                 let bytes = Bytes::from(bytes);
@@ -175,10 +171,7 @@ impl Store {
         Err(EcVolumeError::ShardNotFound(vid, 0))
     }
 
-    async fn cached_lookup_ec_shard_locations(
-        &self,
-        volume: &EcVolume,
-    ) -> Result<(), EcVolumeError> {
+    async fn cached_lookup_ec_shard_locations(&self, volume: &EcVolume) -> Result<(), Status> {
         let shard_count = volume.shard_locations.len() as u32;
         let now = SystemTime::now();
         if shard_count < DATA_SHARDS_COUNT
@@ -282,7 +275,7 @@ impl Store {
         shard_id: ShardId,
         buf: &mut [u8],
         offset: u64,
-    ) -> Result<(usize, bool), EcVolumeError> {
+    ) -> Result<(usize, bool), Status> {
         let client = volume_server_client(src_node)?;
         let response = client
             .volume_ec_shard_read(VolumeEcShardReadRequest {
@@ -312,7 +305,7 @@ impl Store {
         needle_id: NeedleId,
         volume: &EcVolume,
         intervals: Vec<Interval>,
-    ) -> Result<(Vec<u8>, bool), EcVolumeError> {
+    ) -> Result<(Vec<u8>, bool), Status> {
         self.cached_lookup_ec_shard_locations(volume).await?;
 
         let mut data = Vec::new();
@@ -488,7 +481,9 @@ impl Store {
         // prevent reconstruct thread from staying alive indefinitely
         drop(tx);
 
-        let (data, is_deleted) = reconstruct.await?;
+        let (data, is_deleted) = reconstruct
+            .await
+            .map_err(|err| EcVolumeError::Box(Box::new(err)))?;
         if let Some(Some(data)) = data?.get(shard_id_to_recover as usize) {
             buf.copy_from_slice(data);
         }

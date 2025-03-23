@@ -7,13 +7,14 @@ use std::{
 };
 
 use helyim_common::file::file_exists;
-use reed_solomon_erasure::{galois_8::Field, ReedSolomon};
+use reed_solomon_erasure::{ReedSolomon, galois_8::Field};
 
 use crate::{
+    DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
+    PARITY_SHARDS_COUNT, ShardId, TOTAL_SHARDS_COUNT,
     errors::{EcShardError, EcVolumeError},
     needle::SortedIndexMap,
-    to_ext, ShardId, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
-    ERASURE_CODING_SMALL_BLOCK_SIZE, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
+    to_ext,
 };
 
 /// generates .ecx file from existing .idx file all keys are sorted in ascending order
@@ -136,9 +137,10 @@ fn encode_data(
     let buf_size = bufs[0].len() as u64;
     let batch_count = block_size / buf_size;
     if block_size % buf_size != 0 {
-        return Err(EcShardError::String(format!(
-            "unexpected block size {block_size}, buffer size {buf_size}"
-        )));
+        return Err(EcShardError::UnexpectedBlockSize(
+            block_size as usize,
+            buf_size as usize,
+        ));
     }
     for i in 0..batch_count {
         encode_data_one_batch(
@@ -271,10 +273,10 @@ fn rebuild_ec_files_inner(
                             input_buffer_data_size = n;
                         }
                         if input_buffer_data_size != n {
-                            return Err(EcShardError::String(format!(
-                                "ec shard size expected {input_buffer_data_size} but actually is \
-                                 {n}"
-                            )));
+                            return Err(EcShardError::UnexpectedEcShardSize(
+                                input_buffer_data_size,
+                                n,
+                            ));
                         }
                     }
                 }
@@ -291,8 +293,9 @@ fn rebuild_ec_files_inner(
                     if let Some(ref output) = outputs[i] {
                         let n = output.write_at(&buf[..input_buffer_data_size], start_offset)?;
                         if input_buffer_data_size != n {
-                            return Err(EcShardError::String(
-                                "failed to reconstruct data file.".to_string(),
+                            return Err(EcShardError::UnexpectedEcShardSize(
+                                input_buffer_data_size,
+                                n,
                             ));
                         }
                     }

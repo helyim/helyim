@@ -1,9 +1,9 @@
-use std::{fs, fs::File, os::unix::fs::OpenOptionsExt};
+use std::{fs, fs::File, io, os::unix::fs::OpenOptionsExt};
 
 use faststr::FastStr;
 use helyim_common::types::VolumeId;
 
-use crate::{to_ext, EcShardError, ShardId};
+use crate::{ShardId, to_ext};
 
 pub struct EcVolumeShard {
     pub shard_id: ShardId,
@@ -42,7 +42,7 @@ impl EcVolumeShard {
         ec_shard_filename(&self.collection, &self.dir, self.volume_id)
     }
 
-    pub fn destroy(&self) -> Result<(), EcShardError> {
+    pub fn destroy(&self) -> Result<(), io::Error> {
         fs::remove_file(format!("{}{}", self.filename(), to_ext(self.shard_id)))?;
         Ok(())
     }

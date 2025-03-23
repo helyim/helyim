@@ -1,13 +1,13 @@
 use std::{
     fmt::{Display, Formatter},
     sync::{
-        atomic::{AtomicI64, AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicI64, AtomicU32, Ordering},
     },
 };
 
 use dashmap::DashMap;
-use downcast_rs::{impl_downcast, DowncastSync};
+use downcast_rs::{DowncastSync, impl_downcast};
 use faststr::FastStr;
 use helyim_common::types::VolumeId;
 use helyim_ec::DATA_SHARDS_COUNT;
@@ -16,10 +16,10 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::{
+    DataNodeRef, TopologyError,
     data_center::{DataCenter, DataCenterRef},
     data_node::DataNode,
     rack::{Rack, RackRef},
-    DataNodeRef, TopologyError,
 };
 
 pub type NodeId = FastStr;

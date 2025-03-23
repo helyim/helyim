@@ -8,10 +8,10 @@ use helyim::{Command, LogOptions, Opts};
 use helyim_directory::start_master;
 use helyim_filer::start_filer;
 use helyim_store::start_volume;
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::{
-    fmt, fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
-    Registry,
+    EnvFilter, Registry, fmt, fmt::writer::MakeWriterExt, layer::SubscriberExt,
+    util::SubscriberInitExt,
 };
 
 fn log_init(opts: &LogOptions, log_prefix: String) -> Result<(), Box<dyn std::error::Error>> {
