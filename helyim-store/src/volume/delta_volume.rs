@@ -1,5 +1,5 @@
 use helyim_proto::directory::{VolumeEcShardInformationMessage, VolumeShortInformationMessage};
-use kanal::{unbounded_async, AsyncReceiver, AsyncSender};
+use kanal::{AsyncReceiver, AsyncSender, unbounded_async};
 use tracing::error;
 
 #[derive(Clone)]

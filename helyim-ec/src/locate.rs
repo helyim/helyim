@@ -1,4 +1,4 @@
-use crate::{ShardId, DATA_SHARDS_COUNT};
+use crate::{DATA_SHARDS_COUNT, ShardId};
 
 pub struct Interval {
     block_index: u64,

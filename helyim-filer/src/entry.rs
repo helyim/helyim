@@ -4,7 +4,7 @@ use std::{
 };
 
 use faststr::FastStr;
-use helyim_common::time::{get_time, timestamp_to_time, TimeError};
+use helyim_common::time::{TimeError, get_time, timestamp_to_time};
 use helyim_proto::filer::{FileChunk, FuseAttributes};
 use rustix::process::{getgid, getuid};
 use serde::{Deserialize, Serialize};

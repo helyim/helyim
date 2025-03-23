@@ -38,6 +38,5 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tower = { workspace = true, features = ["util"] }
 tracing.workspace = true
-turmoil.workspace = true
 url.workspace = true
 

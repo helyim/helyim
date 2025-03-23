@@ -5,7 +5,7 @@ use helyim_proto::volume::{
 };
 use tracing::{error, info};
 
-use crate::{volume_layout::VolumeLayoutRef, DataNodeRef};
+use crate::{DataNodeRef, volume_layout::VolumeLayoutRef};
 
 pub async fn batch_vacuum_volume_check(
     volume_id: VolumeId,

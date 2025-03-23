@@ -4,7 +4,7 @@ use std::{
     io,
     io::ErrorKind,
     os::unix::fs::MetadataExt,
-    path::{Path, MAIN_SEPARATOR},
+    path::{MAIN_SEPARATOR, Path},
     time::SystemTime,
 };
 

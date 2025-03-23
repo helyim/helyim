@@ -2,15 +2,15 @@ use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use bytes::Bytes;
 use reqwest::{
+    Method, Response,
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart::{Form, Part},
-    Method, Response,
 };
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::{
-    http::{get_etag, request, HttpError},
+    http::{HttpError, get_etag, request},
     time::now,
     ttl::Ttl,
 };

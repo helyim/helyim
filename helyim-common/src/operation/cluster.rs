@@ -7,7 +7,7 @@ use std::{
 use faststr::FastStr;
 use serde::{Deserialize, Serialize};
 
-use crate::http::{HttpError, HTTP_CLIENT};
+use crate::http::{HTTP_CLIENT, HttpError};
 
 #[derive(Serialize, Deserialize)]
 pub struct ClusterStatus {

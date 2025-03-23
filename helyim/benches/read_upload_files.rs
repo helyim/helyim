@@ -1,9 +1,9 @@
 use std::{collections::HashMap, time::Duration};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use helyim_benchmark::FlameGraphProfiler;
-use reqwest::blocking::{multipart::Form, Client};
+use reqwest::blocking::{Client, multipart::Form};
 use serde_json::Value;
 
 fn get_file_id(client: &Client) -> Result<HashMap<String, Value>, Box<dyn std::error::Error>> {

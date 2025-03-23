@@ -1,5 +1,5 @@
 mod cluster;
-pub use cluster::{list_master, ClusterStatus};
+pub use cluster::{ClusterStatus, list_master};
 
 mod upload;
-pub use upload::{upload, ParseUpload, UploadResult};
+pub use upload::{ParseUpload, UploadResult, upload};

@@ -6,9 +6,9 @@ use helyim_common::types::VolumeId;
 use serde::Serialize;
 
 use crate::{
-    data_node::DataNode,
-    node::{downcast_node, Node, NodeImpl},
     DataNodeRef,
+    data_node::DataNode,
+    node::{Node, NodeImpl, downcast_node},
 };
 
 #[derive(Serialize)]

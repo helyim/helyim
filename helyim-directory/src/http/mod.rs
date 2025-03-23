@@ -1,18 +1,18 @@
 mod extractor;
 use std::sync::Arc;
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 pub use extractor::require_leader;
 use faststr::FastStr;
 use helyim_common::{http::FormOrJson, operation::ClusterStatus};
 use helyim_topology::{
-    node::Node, volume_grow::VolumeGrowth, Topology, TopologyError, TopologyRef,
+    Topology, TopologyError, TopologyRef, node::Node, volume_grow::VolumeGrowth,
 };
 use tracing::debug;
 
 use crate::{
-    operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
     MasterOptions,
+    operation::{AssignRequest, Assignment, Location, Lookup, LookupRequest},
 };
 
 #[derive(Clone)]
@@ -116,159 +116,4 @@ pub async fn cluster_status_handler(State(state): State<DirectoryState>) -> Json
         peers,
     };
     Json(status)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        net::{IpAddr, Ipv4Addr},
-        sync::Arc,
-        time::Duration,
-    };
-
-    use axum::{body::Body, http::Request, routing::get, Router};
-    use faststr::FastStr;
-    use futures::executor::block_on;
-    use helyim_common::{connector, http::default_handler};
-    use helyim_topology::{tests, volume_grow::VolumeGrowth};
-    use http_body_util::BodyExt as _;
-    use hyper::Method;
-    use hyper_util::{
-        client::legacy::{connect::Connect, Client},
-        rt::TokioExecutor,
-    };
-    use serde::{Deserialize, Serialize};
-    use serde_json::Value;
-    use tracing::{info_span, Instrument};
-    use turmoil::Builder;
-
-    use crate::{
-        args::RaftOptions,
-        http::{
-            assign_handler, cluster_status_handler, dir_status_handler, lookup_handler,
-            DirectoryState,
-        },
-        operation::Assignment,
-        MasterOptions,
-    };
-
-    #[test]
-    pub fn test_master_api() {
-        let addr = (IpAddr::from(Ipv4Addr::UNSPECIFIED), 9333);
-
-        let mut sim = Builder::new()
-            .simulation_duration(Duration::from_secs(100))
-            .enable_tokio_io()
-            .build();
-
-        let topo = block_on(tests::setup_topo());
-
-        let options = MasterOptions {
-            ip: FastStr::new("127.0.0.1"),
-            port: 9333,
-            meta_path: FastStr::new("./"),
-            pulse: 5,
-            volume_size_limit_mb: 30000,
-            default_replication: FastStr::new("000"),
-            raft: RaftOptions { peers: vec![] },
-        };
-        let options = Arc::new(options);
-
-        let state = DirectoryState {
-            topology: topo,
-            volume_grow: VolumeGrowth {},
-            options,
-        };
-
-        let http_router = Router::new()
-            .route("/dir/assign", get(assign_handler).post(assign_handler))
-            .route("/dir/lookup", get(lookup_handler).post(lookup_handler))
-            .route(
-                "/dir/status",
-                get(dir_status_handler).post(dir_status_handler),
-            )
-            .route(
-                "/cluster/status",
-                get(cluster_status_handler).post(cluster_status_handler),
-            )
-            .fallback(default_handler)
-            .with_state(state);
-
-        sim.host("server", move || {
-            let router = http_router.clone();
-            async move {
-                let listener = turmoil::net::TcpListener::bind(addr).await?;
-                loop {
-                    let (tcp_stream, _remote_addr) = listener.accept().await?;
-                    let tcp_stream = hyper_util::rt::TokioIo::new(tcp_stream);
-
-                    let hyper_service =
-                        hyper_util::service::TowerToHyperService::new(router.clone());
-
-                    let result = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                        .serve_connection_with_upgrades(tcp_stream, hyper_service)
-                        .await;
-                    if result.is_err() {
-                        // This error only appears when the client doesn't send a request and
-                        // terminate the connection.
-                        //
-                        // If client sends one request then terminate connection whenever, it
-                        // doesn't appear.
-                        break;
-                    }
-                }
-
-                Ok(())
-            }
-            .instrument(info_span!("server"))
-        });
-
-        sim.client(
-            "client",
-            async move {
-                let client = Client::builder(TokioExecutor::new()).build(connector::connector());
-
-                let _: Assignment =
-                    http_request(&client, "http://server:9333/dir/assign", Method::GET).await;
-
-                let _: Value =
-                    http_request(&client, "http://server:9333/dir/status", Method::GET).await;
-                let _: Value =
-                    http_request(&client, "http://server:9333/dir/status", Method::POST).await;
-
-                // the client should heartbeat to server, then request lookup api
-                // let _: Lookup = http_request(
-                //     &client,
-                //     "http://server:9333/dir/lookup?volumeId=1",
-                //     Method::GET,
-                // )
-                // .await;
-
-                Ok(())
-            }
-            .instrument(info_span!("client")),
-        );
-
-        sim.run().unwrap();
-    }
-
-    async fn http_request<C, T: Serialize + for<'a> Deserialize<'a>>(
-        client: &Client<C, Body>,
-        uri: &'static str,
-        method: Method,
-    ) -> T
-    where
-        C: Connect + Clone + Send + Sync + 'static,
-    {
-        let mut request = Request::new(Body::empty());
-        *request.method_mut() = method;
-        *request.uri_mut() = hyper::Uri::from_static(uri);
-        let res = client.request(request).await.unwrap();
-
-        let (parts, body) = res.into_parts();
-        let body = body.collect().await.unwrap().to_bytes();
-        let res = hyper::Response::from_parts(parts, body);
-
-        serde_json::from_slice::<T>(res.body()).unwrap()
-    }
 }

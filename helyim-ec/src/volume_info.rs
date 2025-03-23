@@ -3,8 +3,8 @@ use std::{
     io,
     io::ErrorKind,
     sync::{
-        atomic::{AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     },
 };
 

@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["iamazy <iamazy.me@outlook.com>"]
@@ -31,9 +31,9 @@ async-recursion = "1"
 async-scoped = "0.9"
 async-stream = "0.3"
 async-trait = "0.1"
-axum = "0.7"
-axum-extra = "0.9"
-axum-macros = "0.4"
+axum = "0.8"
+axum-extra = "0.10"
+axum-macros = "0.5"
 bincode = "1"
 bytes = "1"
 chrono = "0.4"
@@ -88,7 +88,6 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = "0.3"
-turmoil = "0.6"
 url = "2"
 
 # for macro

@@ -1,12 +1,12 @@
 use std::collections::{BTreeSet, HashMap};
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use faststr::FastStr;
 use openraft::{BasicNode, RaftMetrics};
 
 use crate::raft::{
-    types::{ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError},
     RaftServer,
+    types::{ClientWriteError, ClientWriteResponse, InitializeError, NodeId, OpenRaftError},
 };
 
 pub async fn add_learner_handler(

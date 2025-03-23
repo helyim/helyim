@@ -1,6 +1,6 @@
 use std::{fs, io, os::unix::fs::OpenOptionsExt};
 
-use helyim_common::types::{walk_index_file, NeedleId, NeedleValue, Size};
+use helyim_common::types::{NeedleId, NeedleValue, Size, walk_index_file};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 use helyim_client::helyim_client;
 use helyim_common::{parser::parse_vid_fid, types::VolumeId};
 use helyim_proto::directory::{
-    lookup_volume_response::VolumeIdLocation, LookupVolumeRequest, LookupVolumeResponse,
+    LookupVolumeRequest, LookupVolumeResponse, lookup_volume_response::VolumeIdLocation,
 };
 use helyim_topology::TopologyError;
 use moka::sync::{Cache, CacheBuilder};
@@ -69,7 +69,7 @@ impl Looker {
                 }
                 Ok(volume_locations)
             }
-            Err(err) => Err(TopologyError::Tonic(err)),
+            Err(err) => Err(TopologyError::Box(Box::new(err))),
         }
     }
 }

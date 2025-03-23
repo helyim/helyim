@@ -4,12 +4,12 @@ use std::{
 };
 
 use axum::{
+    Json,
     http::{
-        header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
         StatusCode,
+        header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
     },
     response::{IntoResponse, Response},
-    Json,
 };
 use dashmap::DashMap;
 use faststr::FastStr;
@@ -24,27 +24,27 @@ use helyim_proto::directory::{
 use nom::error::Error;
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tokio::sync::{RwLock, mpsc::UnboundedSender};
 use tonic::Status;
 use tracing::{debug, error, info};
 
 use crate::{
+    DataNodeRef,
     collection::Collection,
     data_center::{DataCenter, DataCenterRef},
     data_node::DataNode,
     erasure_coding::EcShardLocations,
-    node::{downcast_data_center, Node, NodeImpl},
-    raft::{types::NodeId, RaftServer},
+    node::{Node, NodeImpl, downcast_data_center},
+    raft::{RaftServer, types::NodeId},
     volume::{
+        VolumeInfo,
         vacuum::{
             batch_vacuum_volume_check, batch_vacuum_volume_cleanup, batch_vacuum_volume_commit,
             batch_vacuum_volume_compact,
         },
-        VolumeInfo,
     },
     volume_grow::VolumeGrowOption,
     volume_layout::VolumeLayoutRef,
-    DataNodeRef,
 };
 
 #[derive(Serialize)]
@@ -476,9 +476,6 @@ pub enum TopologyError {
     Ttl(#[from] TtlError),
     #[error("Sequence error: {0}")]
     Sequence(#[from] SequenceError),
-
-    #[error("Tonic error: {0}")]
-    Tonic(#[from] Status),
 }
 
 impl From<nom::Err<Error<&str>>> for TopologyError {
@@ -536,8 +533,8 @@ pub mod tests {
     use serde::Deserialize;
 
     use crate::{
-        data_center::DataCenter, data_node::DataNode, node::Node, rack::Rack,
-        topology::TopologyRef, volume::VolumeInfo, Topology,
+        Topology, data_center::DataCenter, data_node::DataNode, node::Node, rack::Rack,
+        topology::TopologyRef, volume::VolumeInfo,
     };
 
     #[derive(Deserialize, Debug)]

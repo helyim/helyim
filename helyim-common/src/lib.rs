@@ -1,4 +1,3 @@
-pub mod connector;
 pub mod consts;
 pub mod crc;
 pub mod file;

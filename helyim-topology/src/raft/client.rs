@@ -7,10 +7,10 @@ use std::{
 use faststr::FastStr;
 use helyim_common::types::VolumeId;
 use openraft::{
-    error::{ForwardToLeader, NetworkError, RemoteError},
     BasicNode, RaftMetrics, TryAsRef,
+    error::{ForwardToLeader, NetworkError, RemoteError},
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tokio::time::timeout;
 use tracing::{debug, error, info};
 

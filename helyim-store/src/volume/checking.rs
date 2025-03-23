@@ -2,7 +2,7 @@ use std::{fs::File, io, io::ErrorKind, os::unix::fs::FileExt};
 
 use helyim_common::{
     consts::NEEDLE_INDEX_SIZE,
-    types::{read_index_entry, NeedleId, Offset, Size},
+    types::{NeedleId, Offset, Size, read_index_entry},
     version::Version,
 };
 
@@ -73,7 +73,7 @@ mod tests {
 
     use crate::{
         needle::{Needle, NeedleMapType},
-        volume::{checking::check_volume_data_integrity, Volume},
+        volume::{Volume, checking::check_volume_data_integrity},
     };
 
     #[test]

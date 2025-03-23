@@ -148,7 +148,7 @@ where
     let mut buf: Vec<u8> = vec![0; 16];
 
     // if there is a not complete entry, will err
-    for _ in 0..(len + 15) / 16 {
+    for _ in 0..len.div_ceil(16) {
         reader.read_exact(&mut buf)?;
 
         let (key, offset, size) = read_index_entry(&buf);

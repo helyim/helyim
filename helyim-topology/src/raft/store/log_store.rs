@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug, ops::RangeBounds, sync::Arc};
 
 use openraft::{
-    storage::LogFlushed, LogId, LogState, RaftLogId, RaftTypeConfig, StorageError, Vote,
+    LogId, LogState, RaftLogId, RaftTypeConfig, StorageError, Vote, storage::LogFlushed,
 };
 use tokio::sync::Mutex;
 
@@ -54,17 +54,13 @@ impl<C: RaftTypeConfig> LogStoreInner<C> {
     }
 
     async fn get_log_state(&mut self) -> Result<LogState<C>, StorageError<C::NodeId>> {
-        let last = self
-            .log
-            .iter()
-            .next_back()
-            .map(|(_, ent)| ent.get_log_id().clone());
+        let last = self.log.iter().next_back().map(|(_, ent)| ent.get_log_id());
 
         let last_purged = self.last_purged_log_id.clone();
 
         let last = match last {
             None => last_purged.clone(),
-            Some(x) => Some(x),
+            Some(x) => Some(x.clone()),
         };
 
         Ok(LogState {
@@ -152,8 +148,8 @@ mod impl_log_store {
     use std::{fmt::Debug, ops::RangeBounds};
 
     use openraft::{
-        storage::{LogFlushed, RaftLogStorage},
         LogId, LogState, RaftLogReader, RaftTypeConfig, StorageError, Vote,
+        storage::{LogFlushed, RaftLogStorage},
     };
 
     use crate::raft::store::log_store::LogStore;

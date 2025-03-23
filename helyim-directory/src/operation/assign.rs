@@ -1,6 +1,6 @@
 use faststr::FastStr;
 use helyim_common::{ttl::Ttl, types::ReplicaPlacement};
-use helyim_topology::{volume_grow::VolumeGrowOption, TopologyError};
+use helyim_topology::{TopologyError, volume_grow::VolumeGrowOption};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
