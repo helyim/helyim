@@ -2,8 +2,7 @@ use std::{
     fmt::Display,
     fs::{self, File, metadata},
     io,
-    io::ErrorKind,
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     path::Path,
     string::FromUtf8Error,
     sync::{
@@ -25,6 +24,7 @@ use helyim_common::{
     http::HttpError,
     parser::ParseError,
     sequence::SequenceError,
+    sync::SyncUnsafeCellWrapper,
     time::{TimeError, get_time, now},
     ttl::Ttl,
     types::{NeedleId, NeedleValue, Offset, ReplicaPlacement, SuperBlock, VolumeId},
@@ -53,7 +53,7 @@ pub struct Volume {
     dir: FastStr,
     pub collection: FastStr,
 
-    data_file: Option<File>,
+    data_file: Option<SyncUnsafeCellWrapper<File>>,
     data_file_lock: RwLock<()>,
 
     needle_mapper: Option<NeedleMapper>,
@@ -145,10 +145,8 @@ impl Volume {
                     // TODO support preallocate
                     fs::OpenOptions::new()
                         .read(true)
-                        .write(true)
                         .create(true)
-                        .truncate(true)
-                        .mode(0o644)
+                        .append(true)
                         .open(&name)?;
                     info!("create volume {} data file success", self.id);
                     metadata(&name)?
@@ -163,14 +161,9 @@ impl Volume {
             fs::OpenOptions::new().read(true).open(&name)?
         } else {
             self.set_last_modified(get_time(meta.modified()?)?.as_secs());
-            fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .mode(0o644)
-                .open(&name)?
+            fs::OpenOptions::new().read(true).append(true).open(&name)?
         };
-
-        self.data_file = Some(file);
+        self.data_file = Some(SyncUnsafeCellWrapper::new(file));
 
         if has_super_block {
             let super_block = self.read_super_block()?;
@@ -180,22 +173,20 @@ impl Volume {
         }
 
         if load_index {
-            let index_file = if self.no_write_or_delete() {
+            let mut index_file = if self.no_write_or_delete() {
                 fs::OpenOptions::new()
                     .read(true)
-                    .mode(0o644)
                     .open(self.index_filename())?
             } else {
                 fs::OpenOptions::new()
                     .read(true)
                     .create(true)
                     .truncate(false)
-                    .write(true)
-                    .mode(0o644)
+                    .append(true)
                     .open(self.index_filename())?
             };
 
-            if let Err(err) = check_volume_data_integrity(self, &index_file) {
+            if let Err(err) = check_volume_data_integrity(self, &mut index_file) {
                 self.set_no_write_or_delete(true);
                 error!(
                     "volume data integrity checking failed. volume: {}, filename: {}, {err}",
@@ -231,7 +222,7 @@ impl Volume {
 
         {
             let _lock = self.data_file_lock.write();
-            let file = self.data_file()?;
+            let file = self.data_file_mut()?;
 
             let offset = append_needle_at(file)?;
             if let Err(err) = needle.append(file, offset, version) {
@@ -271,7 +262,7 @@ impl Volume {
             nv.offset = Offset(0);
 
             let version = self.version();
-            let file = self.data_file()?;
+            let file = self.data_file_mut()?;
 
             let offset = append_needle_at(file)?;
             needle.append(file, offset, version)?;
@@ -293,7 +284,7 @@ impl Volume {
 
                 let version = self.version();
 
-                let data_file = self.data_file()?;
+                let data_file = self.data_file_mut()?;
                 needle.read_data(data_file, nv.offset, nv.size, version)?;
 
                 let data_size = needle.data_size();
@@ -375,6 +366,13 @@ impl Volume {
         }
     }
 
+    pub fn data_file_mut(&self) -> Result<&mut File, io::Error> {
+        match self.data_file.as_ref() {
+            Some(data_file) => Ok(data_file.mut_from_ref()),
+            None => Err(io::Error::other("Data file is not loaded")),
+        }
+    }
+
     pub fn data_filename(&self) -> String {
         format!("{}.{DATA_FILE_SUFFIX}", self.filename())
     }
@@ -435,11 +433,11 @@ impl Volume {
 impl Volume {
     fn write_super_block(&self) -> Result<(), io::Error> {
         let bytes = self.super_block.as_bytes();
-        let file = self.data_file()?;
+        let file = self.data_file_mut()?;
         if file.metadata()?.len() != 0 {
             return Ok(());
         }
-        file.write_all_at(&bytes, 0)?;
+        file.write_all(&bytes)?;
 
         self.set_no_write_or_delete(false);
         self.set_no_write_can_delete(false);
@@ -450,8 +448,10 @@ impl Volume {
 
     fn read_super_block(&self) -> Result<SuperBlock, io::Error> {
         let mut buf = [0; SUPER_BLOCK_SIZE];
-        let file = self.data_file()?;
-        file.read_exact_at(&mut buf, 0)?;
+        let file = self.data_file_mut()?;
+
+        file.seek(SeekFrom::Start(0))?;
+        file.read_exact(&mut buf)?;
         SuperBlock::parse(buf)
     }
 }
@@ -748,9 +748,9 @@ where
     let version = volume.version();
     let mut offset = SUPER_BLOCK_SIZE as u64;
 
-    let (mut needle, mut rest) = read_needle_header(volume.data_file()?, version, offset)?;
+    let (mut needle, mut rest) = read_needle_header(volume.data_file_mut()?, version, offset)?;
 
-    let data_file = volume.data_file()?;
+    let data_file = volume.data_file_mut()?;
     loop {
         if read_needle_body {
             if let Err(err) =

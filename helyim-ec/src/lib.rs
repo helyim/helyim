@@ -4,8 +4,7 @@ use std::{
     fs,
     fs::File,
     io,
-    io::{ErrorKind, Read},
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
 };
 
 use bytes::{Buf, BufMut};
@@ -49,10 +48,10 @@ pub const TOTAL_SHARDS_COUNT: u32 = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
 pub const ERASURE_CODING_LARGE_BLOCK_SIZE: u64 = 1024 * 1024 * 1024;
 pub const ERASURE_CODING_SMALL_BLOCK_SIZE: u64 = 1024 * 1024;
 
-type ProcessNeedleFn = Box<dyn FnMut(&File, u64) -> Result<(), io::Error>>;
+type ProcessNeedleFn = Box<dyn FnMut(&mut File, u64) -> Result<(), io::Error>>;
 
 fn search_needle_from_sorted_index(
-    ecx_file: &File,
+    ecx_file: &mut File,
     ecx_filesize: u64,
     needle_id: NeedleId,
     process_needle: Option<ProcessNeedleFn>,
@@ -61,7 +60,9 @@ fn search_needle_from_sorted_index(
     let (mut low, mut high) = (0u64, ecx_filesize / NEEDLE_ENTRY_SIZE as u64);
     while low < high {
         let middle = (low + high) / 2;
-        ecx_file.read_exact_at(&mut buf, middle * NEEDLE_ENTRY_SIZE as u64)?;
+
+        ecx_file.seek(SeekFrom::Start(middle * NEEDLE_ENTRY_SIZE as u64))?;
+        ecx_file.read_exact(&mut buf)?;
         let (key, offset, size) = read_index_entry(&buf);
         if key == needle_id {
             if let Some(mut process_needle) = process_needle {
@@ -85,10 +86,14 @@ pub fn to_ext(ec_idx: ShardId) -> String {
     format!(".ec{:02}", ec_idx)
 }
 
-fn mark_needle_deleted(file: &File, offset: u64) -> Result<(), io::Error> {
+fn mark_needle_deleted(file: &mut File, offset: u64) -> Result<(), io::Error> {
     let mut buf = vec![0u8; SIZE_SIZE as usize];
     buf.put_i32(TOMBSTONE_FILE_SIZE);
-    file.write_all_at(&buf, offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64)?;
+
+    file.seek(SeekFrom::Start(
+        offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64,
+    ))?;
+    file.write_all(&buf)?;
     Ok(())
 }
 
@@ -97,17 +102,15 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<(), io::Error> {
     if !file_exists(&ecj_filename)? {
         return Ok(());
     }
-    let ecx_file = fs::OpenOptions::new()
+    let mut ecx_file = fs::OpenOptions::new()
         .read(true)
-        .write(true)
-        .mode(0o644)
+        .append(true)
         .open(format!("{}.ecx", base_filename))?;
     let ecx_filesize = ecx_file.metadata()?.len();
 
     let mut ecj_file = fs::OpenOptions::new()
         .read(true)
-        .write(true)
-        .mode(0o644)
+        .append(true)
         .open(format!("{}.ecj", base_filename))?;
     let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
 
@@ -117,7 +120,7 @@ pub fn rebuild_ecx_file(base_filename: &str) -> Result<(), io::Error> {
         }
         let needle_id = (&buf[..]).get_u64();
         if let Err(err) = search_needle_from_sorted_index(
-            &ecx_file,
+            &mut ecx_file,
             ecx_filesize,
             needle_id,
             Some(Box::new(mark_needle_deleted)),

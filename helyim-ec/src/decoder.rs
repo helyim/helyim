@@ -1,8 +1,7 @@
 use std::{
     cmp::min,
     fs, io,
-    io::{ErrorKind, Read, Write, copy},
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write, copy},
     result::Result as StdResult,
 };
 
@@ -22,13 +21,10 @@ use crate::{
 pub fn write_index_file_from_ec_index(base_filename: &str) -> Result<(), io::Error> {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)
-        .mode(0o644)
         .open(format!("{}.ecx", base_filename))?;
     let mut idx_file = fs::OpenOptions::new()
-        .write(true)
         .create(true)
-        .truncate(true)
-        .mode(0o644)
+        .append(true)
         .open(format!("{}.idx", base_filename))?;
 
     copy(&mut ecx_file, &mut idx_file)?;
@@ -66,12 +62,13 @@ pub fn find_data_filesize(base_filename: &str) -> Result<u64, io::Error> {
 }
 
 fn read_ec_volume_version(base_filename: &str) -> Result<Version, io::Error> {
-    let data_file = fs::OpenOptions::new()
+    let mut data_file = fs::OpenOptions::new()
         .read(true)
-        .mode(0o644)
         .open(format!("{}.ec00", base_filename))?;
     let mut super_block = [0u8; SUPER_BLOCK_SIZE];
-    data_file.read_exact_at(&mut super_block, 0)?;
+
+    data_file.seek(SeekFrom::Start(0))?;
+    data_file.read_exact(&mut super_block)?;
     let super_block = SuperBlock::parse(super_block)?;
     Ok(super_block.version)
 }
@@ -82,7 +79,6 @@ where
 {
     let mut ecx_file = fs::OpenOptions::new()
         .read(true)
-        .mode(0o644)
         .open(format!("{}.ecx", base_filename))?;
     let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
 
@@ -113,10 +109,7 @@ where
     if !file_exists(&ecj_filename)? {
         return Ok(());
     }
-    let mut ecj_file = fs::OpenOptions::new()
-        .read(true)
-        .mode(0o644)
-        .open(ecj_filename)?;
+    let mut ecj_file = fs::OpenOptions::new().read(true).open(ecj_filename)?;
     let mut buf = [0u8; NEEDLE_ID_SIZE as usize];
 
     loop {
@@ -144,16 +137,12 @@ pub fn write_data_file(base_filename: &str, mut data_filesize: i64) -> Result<()
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o644)
         .open(format!("{}.dat", base_filename))?;
 
     let mut input_files = Vec::with_capacity(DATA_SHARDS_COUNT as usize);
     for shard_id in 0..DATA_SHARDS_COUNT {
         let shard_filename = format!("{}{}", base_filename, to_ext(shard_id as ShardId));
-        let shard_file = fs::OpenOptions::new()
-            .read(true)
-            .mode(0o0)
-            .open(shard_filename)?;
+        let shard_file = fs::OpenOptions::new().read(true).open(shard_filename)?;
         input_files.push(shard_file);
     }
 

@@ -1,6 +1,13 @@
 use std::{
-    ffi::OsString, fs, net::SocketAddr, os::unix::fs::FileExt, path::Path, pin::Pin,
-    result::Result as StdResult, sync::Arc, time::Duration,
+    ffi::OsString,
+    fs,
+    io::{Read, Seek, SeekFrom},
+    net::SocketAddr,
+    path::Path,
+    pin::Pin,
+    result::Result as StdResult,
+    sync::Arc,
+    time::Duration,
 };
 
 use async_stream::stream;
@@ -635,14 +642,19 @@ impl HelyimVolumeServer for StorageGrpcServer {
                     let mut buffer = vec![0u8; buf_size];
                     let mut start_offset = request.offset as u64;
                     let mut bytes_to_read = request.size as usize;
+                    let ecd_file = shard.ecd_file.mut_from_ref();
+
                     while bytes_to_read > 0 {
                         let mut buffer_size = buf_size;
                         if buffer_size > bytes_to_read {
                             buffer_size = bytes_to_read;
                         }
-                        let mut bytes_read = shard
-                            .ecd_file
-                            .read_at(&mut buffer[0..buffer_size], start_offset)
+                        if let Err(err) = ecd_file.seek(SeekFrom::Start(start_offset)) {
+                            error!("seeking file error: {:?}", err);
+                            break;
+                        }
+                        let mut bytes_read = ecd_file
+                            .read(&mut buffer[0..buffer_size])
                             .unwrap_or_default();
                         if bytes_read > 0 {
                             if bytes_read > bytes_to_read {

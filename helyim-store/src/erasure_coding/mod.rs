@@ -1,8 +1,7 @@
 use std::{
     io,
-    io::ErrorKind,
+    io::{ErrorKind, Read, Seek, SeekFrom},
     ops::Add,
-    os::unix::fs::FileExt,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -347,7 +346,10 @@ impl Store {
                     "read local ec shard success, shard id: {shard_id}, actual offset: \
                      {actual_offset}"
                 );
-                shard.ecd_file.read_exact_at(&mut data, actual_offset)?;
+
+                let ecd_file = shard.ecd_file.mut_from_ref();
+                ecd_file.seek(SeekFrom::Start(actual_offset))?;
+                ecd_file.read_exact(&mut data)?;
                 Ok((data, false))
             }
             None => {

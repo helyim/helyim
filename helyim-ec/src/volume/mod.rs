@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    fs::File,
-    os::unix::fs::{FileExt, OpenOptionsExt},
-    sync::Arc,
-    time::SystemTime,
-};
+use std::{fs, fs::File, io::Write, sync::Arc, time::SystemTime};
 
 use bytes::BufMut;
 use dashmap::DashMap;
@@ -12,6 +6,7 @@ use faststr::FastStr;
 use futures::io;
 use helyim_common::{
     consts::NEEDLE_ID_SIZE,
+    sync::SyncUnsafeCellWrapper,
     types::{NeedleId, NeedleValue, VolumeId},
     version::{VERSION2, Version},
 };
@@ -31,14 +26,14 @@ pub struct EcVolume {
     pub volume_id: VolumeId,
     dir: FastStr,
     pub collection: FastStr,
-    ecx_file: File,
+    ecx_file: SyncUnsafeCellWrapper<File>,
     ecx_filesize: u64,
     ecx_created_at: SystemTime,
     pub shards: RwLock<Vec<Arc<EcVolumeShard>>>,
     pub shard_locations: DashMap<ShardId, Vec<FastStr>>,
     pub shard_locations_refresh_time: RwLock<SystemTime>,
     pub version: Version,
-    ecj_file: File,
+    ecj_file: SyncUnsafeCellWrapper<File>,
 }
 
 impl EcVolume {
@@ -50,17 +45,15 @@ impl EcVolume {
         let base_filename = ec_shard_filename(&collection, &dir, vid);
         let ecx_file = fs::OpenOptions::new()
             .read(true)
-            .write(true)
-            .mode(0o644)
+            .append(true)
             .open(format!("{}.ecx", base_filename))?;
         let ecx_filesize = ecx_file.metadata()?.len();
         let ecx_created_at = ecx_file.metadata()?.created()?;
 
         let ecj_file = fs::OpenOptions::new()
             .read(true)
-            .write(true)
+            .append(true)
             .create(true)
-            .mode(0o644)
             .open(format!("{}.ecj", base_filename))?;
 
         // TODO: handle version
@@ -80,10 +73,10 @@ impl EcVolume {
             volume_id: vid,
             dir,
             collection,
-            ecx_file,
+            ecx_file: SyncUnsafeCellWrapper::new(ecx_file),
             ecx_filesize,
             ecx_created_at,
-            ecj_file,
+            ecj_file: SyncUnsafeCellWrapper::new(ecj_file),
             shards: RwLock::new(Vec::new()),
             shard_locations: DashMap::new(),
             shard_locations_refresh_time: RwLock::new(SystemTime::now()),
@@ -151,12 +144,17 @@ impl EcVolume {
     }
 
     pub fn find_needle_from_ecx(&self, needle_id: NeedleId) -> Result<NeedleValue, io::Error> {
-        search_needle_from_sorted_index(&self.ecx_file, self.ecx_filesize, needle_id, None)
+        search_needle_from_sorted_index(
+            self.ecx_file.mut_from_ref(),
+            self.ecx_filesize,
+            needle_id,
+            None,
+        )
     }
 
     pub fn delete_needle_from_ecx(&self, needle_id: NeedleId) -> Result<(), io::Error> {
         search_needle_from_sorted_index(
-            &self.ecx_file,
+            self.ecx_file.mut_from_ref(),
             self.ecx_filesize,
             needle_id,
             Some(Box::new(mark_needle_deleted)),
@@ -165,8 +163,7 @@ impl EcVolume {
         let mut buf = vec![0u8; NEEDLE_ID_SIZE as usize];
         buf.put_u64(needle_id);
 
-        let offset = self.ecj_file.metadata()?.len();
-        self.ecj_file.write_all_at(&buf, offset)?;
+        self.ecj_file.mut_from_ref().write_all(&buf)?;
         Ok(())
     }
 

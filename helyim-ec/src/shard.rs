@@ -1,7 +1,7 @@
-use std::{fs, fs::File, io, os::unix::fs::OpenOptionsExt};
+use std::{fs, fs::File, io};
 
 use faststr::FastStr;
-use helyim_common::types::VolumeId;
+use helyim_common::{sync::SyncUnsafeCellWrapper, types::VolumeId};
 
 use crate::{ShardId, to_ext};
 
@@ -10,7 +10,7 @@ pub struct EcVolumeShard {
     pub volume_id: VolumeId,
     pub collection: FastStr,
     dir: FastStr,
-    pub ecd_file: File,
+    pub ecd_file: SyncUnsafeCellWrapper<File>,
     pub ecd_filesize: u64,
 }
 
@@ -20,20 +20,17 @@ impl EcVolumeShard {
         collection: FastStr,
         volume_id: VolumeId,
         id: ShardId,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, io::Error> {
         let base_filename = ec_shard_filename(&collection, &dir, volume_id);
         let ecd_filename = format!("{}{}", base_filename, to_ext(id));
-        let ecd_file = fs::OpenOptions::new()
-            .read(true)
-            .mode(0o644)
-            .open(ecd_filename)?;
+        let ecd_file = fs::OpenOptions::new().read(true).open(ecd_filename)?;
         let ecd_filesize = ecd_file.metadata()?.len();
         Ok(EcVolumeShard {
             shard_id: id,
             volume_id,
             collection,
             dir,
-            ecd_file,
+            ecd_file: SyncUnsafeCellWrapper::new(ecd_file),
             ecd_filesize,
         })
     }

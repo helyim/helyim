@@ -3,8 +3,7 @@ use std::{
     fs,
     fs::File,
     io,
-    io::{Seek, SeekFrom},
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    io::{Read, Seek, SeekFrom, Write},
     sync::Arc,
 };
 
@@ -120,15 +119,15 @@ impl Volume {
         old_data_filename: &str,
         old_idx_filename: &str,
     ) -> Result<(), VolumeError> {
-        let old_idx_file = fs::OpenOptions::new().read(true).open(old_idx_filename)?;
-        let old_data_file = fs::OpenOptions::new().read(true).open(old_data_filename)?;
+        let mut old_idx_file = fs::OpenOptions::new().read(true).open(old_idx_filename)?;
+        let mut old_data_file = fs::OpenOptions::new().read(true).open(old_data_filename)?;
 
         let index_size = verify_index_file_integrity(&old_idx_file)?;
         if index_size == 0 || index_size <= self.last_compact_index_offset() {
             return Ok(());
         }
 
-        let old_compact_revision = fetch_compact_revision_from_data_file(&old_data_file)?;
+        let old_compact_revision = fetch_compact_revision_from_data_file(&mut old_data_file)?;
         if old_compact_revision != self.last_compact_revision() {
             return Err(VolumeError::String(format!(
                 "current old data file's compact revision {old_compact_revision} is not the \
@@ -143,7 +142,8 @@ impl Volume {
             let mut idx_offset = index_size as i64 - NEEDLE_INDEX_SIZE as i64;
             loop {
                 if idx_offset >= self.last_compact_index_offset() as i64 {
-                    let idx_entry = read_index_entry_at_offset(&old_idx_file, idx_offset as u64)?;
+                    let idx_entry =
+                        read_index_entry_at_offset(&mut old_idx_file, idx_offset as u64)?;
                     let (key, offset, size) = read_index_entry(&idx_entry);
                     incremented_has_updated_index_entry
                         .entry(key)
@@ -157,18 +157,16 @@ impl Volume {
         }
 
         if !incremented_has_updated_index_entry.is_empty() {
-            let new_idx_file = fs::OpenOptions::new()
-                .write(true)
+            let mut new_idx_file = fs::OpenOptions::new()
                 .read(true)
-                .mode(0o644)
+                .append(true)
                 .open(new_idx_filename)?;
-            let new_data_file = fs::OpenOptions::new()
-                .write(true)
+            let mut new_data_file = fs::OpenOptions::new()
                 .read(true)
-                .mode(0o644)
+                .append(true)
                 .open(new_data_filename)?;
 
-            let new_compact_revision = fetch_compact_revision_from_data_file(&new_data_file)?;
+            let new_compact_revision = fetch_compact_revision_from_data_file(&mut new_data_file)?;
             if old_compact_revision + 1 != new_compact_revision {
                 return Err(VolumeError::String(format!(
                     "old data file {}'s compact revision is {old_compact_revision} while new data \
@@ -198,8 +196,10 @@ impl Volume {
                 }
 
                 if value.offset != 0 && value.size != 0 {
-                    let needle_bytes = read_needle_blob(&old_data_file, value.offset, value.size)?;
-                    new_data_file.write_all_at(&needle_bytes, offset)?;
+                    let needle_bytes =
+                        read_needle_blob(&mut old_data_file, value.offset, value.size)?;
+                    new_data_file.seek(SeekFrom::Start(offset))?;
+                    new_data_file.write_all(&needle_bytes)?;
                     (&mut index_entry_buf[8..12]).put_u32(offset as u32 / NEEDLE_PADDING_SIZE);
                 } else {
                     let mut fake_del_needle = Needle {
@@ -208,12 +208,11 @@ impl Volume {
                         ..Default::default()
                     };
                     let version = self.version();
-                    fake_del_needle.append(&new_data_file, offset, version)?;
+                    fake_del_needle.append(&mut new_data_file, offset, version)?;
                     (&mut index_entry_buf[8..12]).put_u32(0);
                 }
 
-                let offset = new_idx_file.metadata()?.len();
-                new_idx_file.write_all_at(&index_entry_buf, offset)?;
+                new_idx_file.write_all(&index_entry_buf)?;
             }
         }
 
@@ -225,18 +224,14 @@ impl Volume {
         compact_data_filename: String,
         compact_index_filename: String,
     ) -> Result<(), VolumeError> {
-        let compact_data_file = fs::OpenOptions::new()
+        let mut compact_data_file = fs::OpenOptions::new()
             .read(true)
-            .write(true)
             .create(true)
-            .truncate(true)
-            .mode(0o644)
+            .append(true)
             .open(compact_data_filename)?;
         let compact_index_file = fs::OpenOptions::new()
-            .write(true)
             .create(true)
-            .truncate(true)
-            .mode(0o644)
+            .append(true)
             .open(compact_index_filename)?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
@@ -246,7 +241,7 @@ impl Volume {
         let now = now().as_millis() as u64;
         let mut version = self.version();
 
-        let dst = compact_data_file.try_clone()?;
+        let mut dst = compact_data_file.try_clone()?;
         scan_volume_file(
             self.dir.clone(),
             self.collection.clone(),
@@ -256,7 +251,7 @@ impl Volume {
             |super_block: &Arc<SuperBlock>| -> Result<(), io::Error> {
                 version = super_block.version;
                 super_block.add_compact_revision(1);
-                compact_data_file.write_all_at(&super_block.as_bytes(), 0)?;
+                compact_data_file.write_all(&super_block.as_bytes())?;
                 Ok(())
             },
             |needle, offset| -> Result<(), io::Error> {
@@ -274,7 +269,7 @@ impl Volume {
                         compact_nm.set(needle.id, nv)?;
 
                         let offset = append_needle_at(&dst)?;
-                        needle.append(&dst, offset, self.version())?;
+                        needle.append(&mut dst, offset, self.version())?;
                         new_offset += needle.disk_size();
                     }
                 }
@@ -289,22 +284,17 @@ impl Volume {
         compact_data_filename: String,
         compact_index_filename: String,
     ) -> Result<(), VolumeError> {
-        let compact_data_file = fs::OpenOptions::new()
-            .write(true)
+        let mut compact_data_file = fs::OpenOptions::new()
             .create(true)
-            .truncate(true)
-            .mode(0o644)
+            .append(true)
             .open(compact_data_filename)?;
         let compact_index_file = fs::OpenOptions::new()
-            .write(true)
             .create(true)
-            .truncate(true)
-            .mode(0o644)
+            .append(true)
             .open(compact_index_filename)?;
 
         let mut old_idx_file = fs::OpenOptions::new()
             .read(true)
-            .mode(0o644)
             .open(format!("{}.{IDX_FILE_SUFFIX}", self.filename()))?;
 
         let mut compact_nm = NeedleMapper::new(self.id, self.needle_map_type);
@@ -313,7 +303,9 @@ impl Volume {
         let now = now().as_millis() as u64;
 
         self.super_block.add_compact_revision(1);
-        compact_data_file.write_all_at(&self.super_block.as_bytes(), 0)?;
+
+        compact_data_file.seek(SeekFrom::Start(0))?;
+        compact_data_file.write_all(&self.super_block.as_bytes())?;
         let mut new_offset = SUPER_BLOCK_SIZE as u64;
 
         walk_index_file(
@@ -331,7 +323,7 @@ impl Volume {
                 let mut needle = Needle::default();
                 let version = self.version();
 
-                needle.read_data(self.data_file()?, offset, size, version)?;
+                needle.read_data(self.data_file_mut()?, offset, size, version)?;
 
                 if needle.has_ttl()
                     && now >= needle.last_modified + self.super_block.ttl.minutes() as u64 * 60
@@ -345,7 +337,7 @@ impl Volume {
                         size: needle.size,
                     };
                     compact_nm.set(needle.id, nv)?;
-                    needle.append(&compact_data_file, new_offset, version)?;
+                    needle.append(&mut compact_data_file, new_offset, version)?;
                     new_offset += needle.disk_size();
                 }
 
@@ -357,9 +349,9 @@ impl Volume {
     }
 }
 
-fn fetch_compact_revision_from_data_file(file: &File) -> Result<u16, VolumeError> {
+fn fetch_compact_revision_from_data_file(file: &mut File) -> Result<u16, VolumeError> {
     let mut buf = [0u8; SUPER_BLOCK_SIZE];
-    file.read_exact_at(&mut buf, 0)?;
+    file.read_exact(&mut buf)?;
     let sb = SuperBlock::parse(buf)?;
     Ok(sb.compact_revision())
 }

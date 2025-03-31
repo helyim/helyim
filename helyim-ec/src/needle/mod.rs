@@ -1,4 +1,4 @@
-use std::{fs, io, os::unix::fs::OpenOptionsExt};
+use std::{fs, io};
 
 use helyim_common::types::{NeedleId, NeedleValue, Size, walk_index_file};
 use indexmap::IndexMap;
@@ -13,10 +13,7 @@ impl SortedIndexMap {
         let nm = Self {
             map: RwLock::new(IndexMap::new()),
         };
-        let mut index_file = fs::OpenOptions::new()
-            .read(true)
-            .mode(0o644)
-            .open(index_filename)?;
+        let mut index_file = fs::OpenOptions::new().read(true).open(index_filename)?;
         walk_index_file(
             &mut index_file,
             |needle_id, offset, size: Size| -> Result<(), io::Error> {

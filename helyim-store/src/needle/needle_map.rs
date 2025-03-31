@@ -1,6 +1,9 @@
-use std::{fs::File, io, os::unix::fs::FileExt, sync::Arc};
+use std::{fs::File, io, io::Write, sync::Arc};
 
-use helyim_common::types::{NeedleId, NeedleValue, VolumeId, walk_index_file};
+use helyim_common::{
+    sync::SyncUnsafeCellWrapper,
+    types::{NeedleId, NeedleValue, VolumeId, walk_index_file},
+};
 use tracing::{debug, error};
 
 use crate::{
@@ -17,7 +20,7 @@ pub enum NeedleMapType {
 pub struct NeedleMapper {
     volume_id: VolumeId,
     needle_value_map: Box<dyn NeedleValueMap>,
-    index_file: Option<File>,
+    index_file: Option<SyncUnsafeCellWrapper<File>>,
     metric: Arc<Metric>,
 }
 
@@ -57,7 +60,7 @@ impl NeedleMapper {
                 Ok(())
             },
         )?;
-        self.index_file = Some(index_file);
+        self.index_file = Some(SyncUnsafeCellWrapper::new(index_file));
         Ok(())
     }
 
@@ -124,8 +127,7 @@ impl NeedleMapper {
     pub fn append_to_index_file(&self, key: NeedleId, value: NeedleValue) -> Result<(), io::Error> {
         if let Some(file) = self.index_file.as_ref() {
             let buf = value.as_bytes(key);
-            let offset = file.metadata()?.len();
-            if let Err(err) = file.write_all_at(&buf, offset) {
+            if let Err(err) = file.mut_from_ref().write_all(&buf) {
                 error!(
                     "failed to write index file, volume {}, error: {err}",
                     self.volume_id

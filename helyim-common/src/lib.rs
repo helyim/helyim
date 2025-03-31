@@ -1,3 +1,5 @@
+#![feature(sync_unsafe_cell)]
+
 pub mod consts;
 pub mod crc;
 pub mod file;
@@ -12,6 +14,7 @@ pub mod parser;
 
 pub mod compression;
 pub mod sequence;
+pub mod sync;
 pub mod sys;
 pub mod time;
 pub mod ttl;

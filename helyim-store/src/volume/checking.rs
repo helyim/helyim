@@ -1,4 +1,8 @@
-use std::{fs::File, io, io::ErrorKind, os::unix::fs::FileExt};
+use std::{
+    fs::File,
+    io,
+    io::{ErrorKind, Read, Seek, SeekFrom},
+};
 
 use helyim_common::{
     consts::NEEDLE_INDEX_SIZE,
@@ -20,7 +24,10 @@ pub fn verify_index_file_integrity(index_file: &File) -> Result<u64, io::Error> 
     Ok(size)
 }
 
-pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result<(), io::Error> {
+pub fn check_volume_data_integrity(
+    volume: &Volume,
+    index_file: &mut File,
+) -> Result<(), io::Error> {
     let index_size = verify_index_file_integrity(index_file)?;
     if index_size == 0 {
         return Ok(());
@@ -32,17 +39,22 @@ pub fn check_volume_data_integrity(volume: &Volume, index_file: &File) -> Result
         return Ok(());
     }
     let version = volume.version();
-    verify_needle_integrity(volume.data_file()?, version, key, offset, size)
+    verify_needle_integrity(volume.data_file_mut()?, version, key, offset, size)
 }
 
-pub fn read_index_entry_at_offset(index_file: &File, offset: u64) -> Result<Vec<u8>, io::Error> {
+pub fn read_index_entry_at_offset(
+    index_file: &mut File,
+    offset: u64,
+) -> Result<Vec<u8>, io::Error> {
     let mut buf = vec![0u8; NEEDLE_INDEX_SIZE as usize];
-    index_file.read_exact_at(&mut buf, offset)?;
+
+    index_file.seek(SeekFrom::Start(offset))?;
+    index_file.read_exact(&mut buf)?;
     Ok(buf)
 }
 
 fn verify_needle_integrity(
-    data_file: &File,
+    data_file: &mut File,
     version: Version,
     key: NeedleId,
     offset: Offset,
@@ -109,11 +121,11 @@ mod tests {
             volume.write_needle(&mut needle).unwrap();
         }
 
-        let index_file = std::fs::OpenOptions::new()
+        let mut index_file = std::fs::OpenOptions::new()
             .read(true)
             .open(volume.index_filename())
             .unwrap();
 
-        assert!(check_volume_data_integrity(&volume, &index_file).is_ok());
+        assert!(check_volume_data_integrity(&volume, &mut index_file).is_ok());
     }
 }

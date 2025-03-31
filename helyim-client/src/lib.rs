@@ -139,16 +139,12 @@ impl Deref for MasterClient {
 pub enum ClientError {
     #[error("{0}")]
     Box(Box<dyn std::error::Error>),
-    #[error("{0}")]
-    String(String),
     #[error("Unknown volume id: {0}")]
     UnknownVolumeId(String),
     #[error("Volume {0} not found")]
     VolumeNotFound(VolumeId),
-
     #[error("Keep connected to {0} error: {1}")]
     KeepConnected(String, String),
-
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
 }

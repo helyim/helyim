@@ -2,11 +2,10 @@ use std::{
     fs,
     fs::File,
     io,
-    io::{ErrorKind, Write},
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
 };
 
-use helyim_common::file::file_exists;
+use helyim_common::{file::file_exists, sync::SyncUnsafeCellWrapper};
 use reed_solomon_erasure::{ReedSolomon, galois_8::Field};
 
 use crate::{
@@ -21,10 +20,8 @@ use crate::{
 pub fn write_sorted_file_from_index(base_filename: &str, ext: &str) -> Result<(), EcVolumeError> {
     let nm = SortedIndexMap::load_from_index(&format!("{}.idx", base_filename))?;
     let mut ecx_file = fs::OpenOptions::new()
-        .write(true)
+        .append(true)
         .create(true)
-        .truncate(true)
-        .mode(0o644)
         .open(format!("{}{}", base_filename, ext))?;
 
     nm.ascending_visit(|key, value| -> std::io::Result<()> {
@@ -55,9 +52,8 @@ fn generate_ec_files(
     large_block_size: u64,
     small_block_size: u64,
 ) -> Result<(), EcShardError> {
-    let data_file = fs::OpenOptions::new()
+    let mut data_file = fs::OpenOptions::new()
         .read(true)
-        .mode(0o0)
         .open(format!("{}.dat", base_filename))?;
     let remaining = data_file.metadata()?.len() as i64;
     encode_data_file(
@@ -66,14 +62,14 @@ fn generate_ec_files(
         buf_size,
         large_block_size,
         small_block_size,
-        &data_file,
+        &mut data_file,
     )
 }
 
 fn generate_missing_ec_files(base_filename: &str) -> Result<Vec<u32>, EcShardError> {
     let mut shard_has_data = vec![false; TOTAL_SHARDS_COUNT as usize];
 
-    fn create_file_slice(capacity: usize) -> Vec<Option<File>> {
+    fn create_file_slice(capacity: usize) -> Vec<Option<SyncUnsafeCellWrapper<File>>> {
         let mut files = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             files.push(None);
@@ -88,19 +84,14 @@ fn generate_missing_ec_files(base_filename: &str) -> Result<Vec<u32>, EcShardErr
         let shard_filename = format!("{}{}", base_filename, to_ext(shard_id));
         if file_exists(&shard_filename)? {
             shard_has_data[shard_id as usize] = true;
-            let input = fs::OpenOptions::new()
-                .read(true)
-                .mode(0o0)
-                .open(shard_filename)?;
-            inputs[shard_id as usize] = Some(input);
+            let input = fs::OpenOptions::new().read(true).open(shard_filename)?;
+            inputs[shard_id as usize] = Some(SyncUnsafeCellWrapper::new(input));
         } else {
             let output = fs::OpenOptions::new()
-                .write(true)
                 .create(true)
-                .truncate(true)
-                .mode(0o644)
+                .append(true)
                 .open(shard_filename)?;
-            outputs[shard_id as usize] = Some(output);
+            outputs[shard_id as usize] = Some(SyncUnsafeCellWrapper::new(output));
             shards.push(shard_id as u32);
         }
     }
@@ -118,7 +109,6 @@ fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, io::E
         } else {
             options.write(true).create(true).truncate(true);
         }
-        options.mode(0o644);
 
         let file = options.open(filename)?;
         files.push(file);
@@ -127,7 +117,7 @@ fn open_ec_files(base_filename: &str, readonly: bool) -> Result<Vec<File>, io::E
 }
 
 fn encode_data(
-    data_file: &File,
+    data_file: &mut File,
     reed_solomon: &ReedSolomon<Field>,
     start_offset: u64,
     block_size: u64,
@@ -156,7 +146,7 @@ fn encode_data(
 }
 
 fn encode_data_one_batch(
-    data_file: &File,
+    data_file: &mut File,
     reed_solomon: &ReedSolomon<Field>,
     start_offset: u64,
     block_size: u64,
@@ -168,7 +158,9 @@ fn encode_data_one_batch(
 
     for (i, buf) in bufs.iter_mut().enumerate().take(DATA_SHARDS_COUNT as usize) {
         let mut n = 0;
-        match data_file.read_at(buf, start_offset + block_size * i as u64) {
+
+        data_file.seek(SeekFrom::Start(start_offset + block_size * i as u64))?;
+        match data_file.read(buf) {
             Ok(size) => n = size,
             Err(err) => {
                 if err.kind() != ErrorKind::UnexpectedEof {
@@ -203,7 +195,7 @@ fn encode_data_file(
     buf_size: u64,
     large_block_size: u64,
     small_block_size: u64,
-    data_file: &File,
+    data_file: &mut File,
 ) -> Result<(), EcShardError> {
     let reed_solomon: ReedSolomon<Field> =
         ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
@@ -243,8 +235,8 @@ fn encode_data_file(
 
 fn rebuild_ec_files_inner(
     shard_has_data: &[bool],
-    inputs: &[Option<File>],
-    outputs: &[Option<File>],
+    inputs: &[Option<SyncUnsafeCellWrapper<File>>],
+    outputs: &[Option<SyncUnsafeCellWrapper<File>>],
 ) -> Result<(), EcShardError> {
     let reed_solomon: ReedSolomon<Field> =
         ReedSolomon::new(DATA_SHARDS_COUNT as usize, PARITY_SHARDS_COUNT as usize)?;
@@ -265,7 +257,9 @@ fn rebuild_ec_files_inner(
             if shard_has_data[i] {
                 if let Some(buf) = bufs[i].as_mut() {
                     if let Some(input) = inputs[i].as_ref() {
-                        let n = input.read_at(buf, start_offset)?;
+                        let input = input.mut_from_ref();
+                        input.seek(SeekFrom::Start(start_offset))?;
+                        let n = input.read(buf)?;
                         if n == 0 {
                             return Ok(());
                         }
@@ -291,7 +285,9 @@ fn rebuild_ec_files_inner(
                 // filled by `reconstruct`
                 if let Some(ref buf) = bufs[i] {
                     if let Some(ref output) = outputs[i] {
-                        let n = output.write_at(&buf[..input_buffer_data_size], start_offset)?;
+                        let output = output.mut_from_ref();
+                        output.seek(SeekFrom::Start(start_offset))?;
+                        let n = output.write(&buf[..input_buffer_data_size])?;
                         if input_buffer_data_size != n {
                             return Err(EcShardError::UnexpectedEcShardSize(
                                 input_buffer_data_size,

@@ -3,7 +3,6 @@ use std::{
     fs::metadata,
     io,
     io::ErrorKind,
-    os::unix::fs::MetadataExt,
     path::{MAIN_SEPARATOR, Path},
     time::SystemTime,
 };
@@ -11,11 +10,27 @@ use std::{
 pub fn check_file(filename: &str) -> Result<Option<(bool, bool, SystemTime, u64)>, io::Error> {
     match metadata(filename) {
         Ok(metadata) => {
-            let mode = metadata.mode();
-            let can_read = mode & 0o400 != 0;
-            let can_write = mode & 0o200 != 0;
+            // 处理不同 OS 的权限判断
+            let (can_read, can_write) = {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let mode = metadata.mode();
+                    (
+                        mode & 0o400 != 0, // 用户可读
+                        mode & 0o200 != 0, // 用户可写
+                    )
+                }
+                #[cfg(windows)]
+                {
+                    let readonly = metadata.permissions().readonly();
+                    (true, !readonly)
+                }
+            };
+
             let modified = metadata.modified()?;
             let filesize = metadata.len();
+
             Ok(Some((can_read, can_write, modified, filesize)))
         }
         Err(err) => {

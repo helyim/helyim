@@ -1,8 +1,7 @@
 use std::{
     fmt::{Display, Formatter},
     fs::File,
-    io::ErrorKind,
-    os::unix::fs::FileExt,
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
 };
 
 use axum::{
@@ -72,12 +71,14 @@ impl Display for Needle {
     }
 }
 
-pub fn read_needle_blob(file: &File, offset: Offset, size: Size) -> Result<Bytes, io::Error> {
+pub fn read_needle_blob(file: &mut File, offset: Offset, size: Size) -> Result<Bytes, io::Error> {
     let size = size.actual_size();
     let mut buf = vec![0; size as usize];
 
     let offset = offset.actual_offset();
-    file.read_exact_at(&mut buf, offset)?;
+
+    file.seek(SeekFrom::Start(offset))?;
+    file.read_exact(&mut buf)?;
     Ok(Bytes::from(buf))
 }
 
@@ -121,7 +122,7 @@ impl Needle {
 
     pub fn read_needle_body(
         &mut self,
-        data_file: &File,
+        data_file: &mut File,
         offset: u64,
         body_len: u32,
         version: Version,
@@ -132,7 +133,9 @@ impl Needle {
         match version {
             VERSION2 => {
                 let mut buf = vec![0u8; body_len as usize];
-                data_file.read_exact_at(&mut buf, offset)?;
+
+                data_file.seek(SeekFrom::Start(offset))?;
+                data_file.read_exact(&mut buf)?;
                 self.read_needle_data(Bytes::from(buf))?;
                 self.checksum = crc::checksum(&self.data);
             }
@@ -189,9 +192,9 @@ impl Needle {
         Ok(())
     }
 
-    pub fn append<W: FileExt>(
+    pub fn append(
         &mut self,
-        w: &W,
+        file: &mut File,
         offset: u64,
         version: Version,
     ) -> Result<(), io::Error> {
@@ -250,7 +253,9 @@ impl Needle {
 
         let padding = self.size.padding_len();
         buf.put_slice(&vec![0; padding as usize]);
-        w.write_all_at(&buf, offset)?;
+
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&buf)?;
 
         Ok(())
     }
@@ -296,7 +301,7 @@ impl Needle {
 
     pub fn read_data(
         &mut self,
-        file: &File,
+        file: &mut File,
         offset: Offset,
         size: Size,
         version: Version,
@@ -446,7 +451,7 @@ fn parse_key_hash(hash: &str) -> Result<(NeedleId, Cookie), NeedleError> {
 }
 
 pub fn read_needle_header(
-    file: &File,
+    file: &mut File,
     version: Version,
     offset: u64,
 ) -> Result<(Needle, u32), io::Error> {
@@ -455,7 +460,9 @@ pub fn read_needle_header(
 
     if version == VERSION2 {
         let mut buf = vec![0u8; NEEDLE_ENTRY_SIZE as usize];
-        file.read_exact_at(&mut buf, offset)?;
+
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(&mut buf)?;
         needle.parse_needle_header(&buf);
         body_len = needle.body_len();
     }
