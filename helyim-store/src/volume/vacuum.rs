@@ -268,7 +268,7 @@ impl Volume {
                         };
                         compact_nm.set(needle.id, nv)?;
 
-                        let offset = append_needle_at(&dst)?;
+                        let offset = append_needle_at(&mut dst)?;
                         needle.append(&mut dst, offset, self.version())?;
                         new_offset += needle.disk_size();
                     }

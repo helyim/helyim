@@ -721,10 +721,11 @@ fn load_volume_without_index(
     Ok(volume)
 }
 
-fn append_needle_at(file: &File) -> io::Result<u64> {
-    let mut offset = file.metadata()?.len();
+fn append_needle_at(file: &mut File) -> io::Result<u64> {
+    let mut offset = file.seek(SeekFrom::End(0))?;
     if offset % NEEDLE_PADDING_SIZE as u64 != 0 {
         offset = offset + (NEEDLE_PADDING_SIZE as u64 - offset % NEEDLE_PADDING_SIZE as u64);
+        offset = file.seek(SeekFrom::Start(offset))?;
     }
     Ok(offset)
 }

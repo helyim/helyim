@@ -165,8 +165,8 @@ mod tests {
         let parse = parse_volume_id_from_path(path);
         assert!(parse.is_err());
 
-        let path = String::from_utf8(vec![0xC3, 0x28, 0x20, 0xC2, 0x29]).unwrap();
-        let path = Path::new(OsStr::new(&path));
+        let path = String::from_utf8_lossy(&[0xC3, 0x28, 0x20, 0xC2, 0x29]);
+        let path = Path::new(OsStr::new(path.as_ref()));
         let parse = parse_volume_id_from_path(path);
         assert!(parse.is_err());
     }
